@@ -1,0 +1,88 @@
+workspace "ConnectSphere" "Container Diagram for the ConnectSphere Platform" {
+
+    model {
+        # System Users / Actors
+        organiser = person "Event Organiser" "Creates event requests, manages drafts, and submits change requests."
+        coordinator = person "Event Coordinator" "Reviews and approves event requests, manages details, and handles change requests."
+        venueStaff = person "Venue Staff" "Manages venue catalogues, calendar availability, layout suitability, and venue booking approvals."
+        techStaff = person "Tech Support Staff" "Manages equipment inventories, tech availability, and fulfills equipment reservations."
+        attendee = person "Attendee" "Browses upcoming events and registers for participation."
+
+        # External Systems
+        emailSystem = softwareSystem "Email Gateway / SMTP" "External notification service used to send automated email alerts."
+
+        # ConnectSphere System Scope
+        connectSphere = softwareSystem "ConnectSphere Platform" "Handles end-to-end event planning, venue booking, resource allocation, and attendee registration." {
+            
+            # Front-End Layer
+            webApp = container "Web Client / UI" "Single-page application delivering user interfaces, built with React." "React / JavaScript" "WebClient"
+
+            # Core Execution Layer
+            monolithApp = container "ConnectSphere Monolithic Application" "Hosts core web application, API routes, and domain modules (Auth, Events, Venues, Resources, Registrations)." "Python / Flask" "CoreApp"
+            celeryWorker = container "Celery Worker Process" "Executes asynchronous background tasks such as compiling and sending notification emails." "Python / Celery" "Worker"
+
+            # Data & Messaging Layer
+            supabaseDb = container "Supabase Database & Storage" "Relational database storing system entities (Events, Venues, Resources, Users) and static assets." "Managed PostgreSQL / Supabase" "Database"
+            redisBroker = container "Redis Queue" "Message broker acting as a temporary task queue for background jobs." "Redis" "Broker"
+        }
+
+        # User Connections to Client
+        organiser -> webApp "Uses" "HTTP"
+        coordinator -> webApp "Uses" "HTTP"
+        venueStaff -> webApp "Uses" "HTTP"
+        techStaff -> webApp "Uses" "HTTP"
+        attendee -> webApp "Uses" "HTTP"
+
+        # Application Connections
+        webApp -> monolithApp "Sends API requests to" "HTTP / JSON"
+        monolithApp -> supabaseDb "Reads & writes data" "SQL / TCP"
+        monolithApp -> redisBroker "Queues background tasks" "Redis Protocol"
+
+        # Background Processing & Notification Flow
+        redisBroker -> celeryWorker "Delivers tasks to" "Redis Protocol"
+        celeryWorker -> supabaseDb "Reads task data" "SQL / TCP"
+        celeryWorker -> emailSystem "Dispatches emails via" "SMTP / HTTP"
+    }
+
+    views {
+        container connectSphere "Containers_View" {
+            include *
+            autolayout tb
+        }
+
+        styles {
+            element "Person" {
+                shape Person
+                background #1b365d
+                color #ffffff
+            }
+            element "Container" {
+                background #2b6cb0
+                color #ffffff
+            }
+            element "WebClient" {
+                shape WebBrowser
+                background #319795
+                color #ffffff
+            }
+            element "Database" {
+                shape Cylinder
+                background #2d3748
+                color #ffffff
+            }
+            element "Broker" {
+                shape Pipe
+                background #d69e2e
+                color #ffffff
+            }
+            element "Worker" {
+                background #4a5568
+                color #ffffff
+            }
+            element "Software System" {
+                background #718096
+                color #ffffff
+            }
+        }
+    }
+}
