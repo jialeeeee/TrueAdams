@@ -8,6 +8,23 @@ ConnectSphere — event planning, venue booking, resource allocation, and attend
 - `backend/` — Flask monolith exposing REST routes for Auth, Events, Venues, Resources, Registrations, backed by a Supabase Postgres database
 - `backend/celery_worker.py` — Celery worker consuming background jobs (e.g. notification emails) off Redis
 
+## Tests
+
+Backend tests are pytest, run from `backend/`:
+
+```bash
+cd backend
+source .venv/bin/activate
+pip install -r requirements-dev.txt
+pytest                      # whole suite
+pytest --cov=app            # with coverage
+pytest tests/test_models.py # one file
+```
+
+They use an in-memory SQLite database and run Celery tasks inline, so no
+Postgres, Redis, or SMTP server is needed. Fixtures live in
+`backend/tests/conftest.py`.
+
 ## Local development
 
 Backend:

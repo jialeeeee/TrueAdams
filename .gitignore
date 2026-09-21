@@ -13,3 +13,8 @@ dist/
 
 # OS
 .DS_Store
+
+# Tests
+.pytest_cache/
+.coverage
+htmlcov/

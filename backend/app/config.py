@@ -15,3 +15,24 @@ class Config:
     SMTP_USER = os.environ.get("SMTP_USER")
     SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD")
     MAIL_FROM = os.environ.get("MAIL_FROM", "no-reply@connectsphere.io")
+
+
+class TestConfig(Config):
+    """Config for the test suite: no Postgres, no Redis, no real SMTP."""
+
+    TESTING = True
+    SECRET_KEY = "test-secret-key"
+    JWT_SECRET_KEY = "test-jwt-secret-key"
+
+    # In-memory SQLite keeps tests fast and isolated from the Supabase database.
+    SQLALCHEMY_DATABASE_URI = "sqlite:///:memory:"
+
+    # Run Celery tasks inline instead of dispatching them to a broker.
+    CELERY_BROKER_URL = "memory://"
+    CELERY_RESULT_BACKEND = "cache+memory://"
+
+    SMTP_HOST = "smtp.test.invalid"
+    SMTP_PORT = 587
+    SMTP_USER = "test-user"
+    SMTP_PASSWORD = "test-password"
+    MAIL_FROM = "no-reply@test.invalid"
