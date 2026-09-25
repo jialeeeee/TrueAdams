@@ -1,4 +1,5 @@
-import pytest
+import unittest
+from unittest import mock
 
 from app import tasks
 from app.config import Config
@@ -33,41 +34,46 @@ class FakeSMTP:
         self.sent_messages.append(message)
 
 
-@pytest.fixture
-def smtp(monkeypatch):
-    FakeSMTP.instances = []
-    monkeypatch.setattr(tasks.smtplib, "SMTP", FakeSMTP)
-    monkeypatch.setattr(Config, "SMTP_HOST", "smtp.test.invalid")
-    monkeypatch.setattr(Config, "SMTP_PORT", 587)
-    monkeypatch.setattr(Config, "SMTP_USER", "test-user")
-    monkeypatch.setattr(Config, "SMTP_PASSWORD", "test-password")
-    monkeypatch.setattr(Config, "MAIL_FROM", "no-reply@test.invalid")
-    return FakeSMTP
+class SendNotificationEmailTests(unittest.TestCase):
+    def setUp(self):
+        FakeSMTP.instances = []
+        patches = [
+            mock.patch.object(tasks.smtplib, "SMTP", FakeSMTP),
+            mock.patch.object(Config, "SMTP_HOST", "smtp.test.invalid"),
+            mock.patch.object(Config, "SMTP_PORT", 587),
+            mock.patch.object(Config, "SMTP_USER", "test-user"),
+            mock.patch.object(Config, "SMTP_PASSWORD", "test-password"),
+            mock.patch.object(Config, "MAIL_FROM", "no-reply@test.invalid"),
+        ]
+        for patch in patches:
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def test_send_notification_email_builds_the_expected_message(self):
+        tasks.send_notification_email(
+            "attendee@test.invalid", "Event approved", "Your event was approved."
+        )
+
+        connection = FakeSMTP.instances[0]
+        message = connection.sent_messages[0]
+
+        self.assertEqual(message["To"], "attendee@test.invalid")
+        self.assertEqual(message["From"], "no-reply@test.invalid")
+        self.assertEqual(message["Subject"], "Event approved")
+        self.assertEqual(message.get_content().strip(), "Your event was approved.")
+
+    def test_send_notification_email_uses_tls_and_authenticates(self):
+        tasks.send_notification_email("a@test.invalid", "Subject", "Body")
+
+        connection = FakeSMTP.instances[0]
+
+        self.assertEqual((connection.host, connection.port), ("smtp.test.invalid", 587))
+        self.assertIs(connection.started_tls, True)
+        self.assertEqual(connection.login_args, ("test-user", "test-password"))
 
 
-def test_send_notification_email_builds_the_expected_message(smtp):
-    tasks.send_notification_email(
-        "attendee@test.invalid", "Event approved", "Your event was approved."
-    )
-
-    connection = smtp.instances[0]
-    message = connection.sent_messages[0]
-
-    assert message["To"] == "attendee@test.invalid"
-    assert message["From"] == "no-reply@test.invalid"
-    assert message["Subject"] == "Event approved"
-    assert message.get_content().strip() == "Your event was approved."
-
-
-def test_send_notification_email_uses_tls_and_authenticates(smtp):
-    tasks.send_notification_email("a@test.invalid", "Subject", "Body")
-
-    connection = smtp.instances[0]
-
-    assert (connection.host, connection.port) == ("smtp.test.invalid", 587)
-    assert connection.started_tls is True
-    assert connection.login_args == ("test-user", "test-password")
-
-
-def test_task_is_registered_with_celery_under_a_stable_name():
-    assert tasks.send_notification_email.name == "tasks.send_notification_email"
+class CeleryRegistrationTests(unittest.TestCase):
+    def test_task_is_registered_with_celery_under_a_stable_name(self):
+        self.assertEqual(
+            tasks.send_notification_email.name, "tasks.send_notification_email"
+        )
