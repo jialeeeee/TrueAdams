@@ -10,20 +10,20 @@ ConnectSphere — event planning, venue booking, resource allocation, and attend
 
 ## Tests
 
-Backend tests are pytest, run from `backend/`:
+Backend tests use Python's built-in `unittest`, run from `backend/`:
 
 ```bash
 cd backend
 source .venv/bin/activate
 pip install -r requirements-dev.txt
-pytest                      # whole suite
-pytest --cov=app            # with coverage
-pytest tests/test_models.py # one file
+python -m unittest                          # whole suite
+python -m unittest -v tests.test_models     # one file
+coverage run -m unittest && coverage report # with coverage
 ```
 
 They use an in-memory SQLite database and run Celery tasks inline, so no
-Postgres, Redis, or SMTP server is needed. Fixtures live in
-`backend/tests/conftest.py`.
+Postgres, Redis, or SMTP server is needed. Shared setup and the `make_*`
+helpers live on `AppTestCase` in `backend/tests/base.py`.
 
 ## Local development
 
