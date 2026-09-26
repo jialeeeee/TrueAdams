@@ -1,24 +1,66 @@
 import unittest
+import uuid
 from datetime import datetime, timedelta
 
 from flask_jwt_extended import create_access_token
+from sqlalchemy import func
+from sqlalchemy.orm import scoped_session, sessionmaker
 
 from app import create_app
 from app.config import TestConfig
 from app.extensions import celery, db
 from app.models import Event, Registration, Resource, User, Venue
 
+_app = None
+
+# Added to test emails so concurrent runs (CI, teammates) never collide on the
+# unique email constraint while their uncommitted rows exist.
+RUN_ID = uuid.uuid4().hex[:8]
+
+
+def run_email(email):
+    local, domain = email.split("@")
+    return f"{local}+{RUN_ID}@{domain}"
+
+
+def get_test_app():
+    """One app (and so one connection pool) per test run, not per test."""
+    global _app
+    if _app is None:
+        _app = create_app(TestConfig)
+        celery.conf.task_always_eager = True
+    return _app
+
 
 class AppTestCase(unittest.TestCase):
-    """Base class giving each test a Flask app backed by a fresh in-memory database."""
+    """Base class running each test against the Supabase `public` tables.
+
+    Each test inserts the rows it needs inside a transaction that is rolled back
+    afterwards, so nothing a test writes is ever saved or seen by the live app.
+    Routes can still commit and roll back as usual: their session works inside a
+    savepoint. Real data may be present, so tests must not assume their rows are
+    the only ones.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        if not TestConfig.SQLALCHEMY_DATABASE_URI:
+            raise RuntimeError(
+                "TEST_DATABASE_URL is not set. Add it to backend/.env (see README)."
+            )
 
     def setUp(self):
-        self.app = create_app(TestConfig)
-        celery.conf.task_always_eager = True
-
+        self.app = get_test_app()
         self.app_context = self.app.app_context()
         self.app_context.push()
-        db.create_all()
+
+        self.connection = db.engine.connect()
+        self.transaction = self.connection.begin()
+        self._app_session = db.session
+        db.session = scoped_session(
+            sessionmaker(bind=self.connection, join_transaction_mode="create_savepoint")
+        )
 
         self.db = db
         self.client = self.app.test_client()
@@ -26,13 +68,14 @@ class AppTestCase(unittest.TestCase):
 
     def tearDown(self):
         db.session.remove()
-        db.drop_all()
-        db.engine.dispose()
+        db.session = self._app_session
+        self.transaction.rollback()
+        self.connection.close()
         self.app_context.pop()
 
     def make_user(self, email=None, role="attendee", password_hash="not-a-real-hash"):
-        """Create a persisted User. Emails are unique per call unless given."""
-        email = email or f"user{self._user_count}@test.invalid"
+        """Create a User for this test only. Emails are unique per call unless given."""
+        email = email or run_email(f"user{self._user_count}@test.invalid")
         self._user_count += 1
         user = User(email=email, password_hash=password_hash, role=role)
         db.session.add(user)
@@ -88,12 +131,50 @@ class AppTestCase(unittest.TestCase):
         db.session.commit()
         return registration
 
-    def auth_headers(self, user):
-        """Bearer-token headers for a given user.
+    # ---------- Seeding (see tests/seed_data.py) ----------
 
-        Unused until the auth routes are implemented, but this is how protected
-        endpoints should be exercised once they are.
-        """
+    def _insert(self, model, objects):
+        """Insert rows for this test only, reloading them in one query afterwards."""
+        db.session.add_all(objects)
+        db.session.flush()
+        ids = [obj.id for obj in objects]
+        db.session.commit()
+        model.query.filter(model.id.in_(ids)).all()  # refresh the expired objects
+        return objects
+
+    def seed_users(self, rows):
+        users = {
+            row["key"]: User(email=run_email(row["email"]), password_hash="not-a-real-hash",
+                             role=row["role"])
+            for row in rows
+        }
+        self._insert(User, list(users.values()))
+        return users
+
+    def seed_events(self, rows, users):
+        events = {}
+        for row in rows:
+            fields = {k: v for k, v in row.items() if k not in ("key", "organiser", "coordinator")}
+            coordinator = users[row["coordinator"]] if row["coordinator"] else None
+            events[row["key"]] = Event(
+                organiser_id=users[row["organiser"]].id,
+                coordinator_id=coordinator.id if coordinator else None,
+                **fields,
+            )
+        self._insert(Event, list(events.values()))
+        return events
+
+    def seed_venues(self, rows):
+        venues = {row["key"]: Venue(**{k: v for k, v in row.items() if k != "key"}) for row in rows}
+        self._insert(Venue, list(venues.values()))
+        return venues
+
+    def missing_id(self, model):
+        """An id no row of `model` has, whatever real data the table holds."""
+        return (db.session.query(func.max(model.id)).scalar() or 0) + 1_000_000
+
+    def auth_headers(self, user):
+        """Bearer-token headers for a given user."""
         token = create_access_token(
             identity=str(user.id), additional_claims={"role": user.role}
         )

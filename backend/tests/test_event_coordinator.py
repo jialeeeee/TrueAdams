@@ -26,6 +26,10 @@ Assignment rules
     - Events in NON_ASSIGNABLE_STATUSES cannot be (re)assigned.
     - The current coordinator is visible to ASSIGNER_ROLES, the event's own
       organiser, and venue / tech staff (who arrange things with the coordinator).
+
+Each test inserts the users and events in tests/seed_data.py into the public
+tables and rolls them back afterwards. Real rows may exist alongside them, so
+assertions about "who is eligible" only look at this test's own users.
 """
 
 import unittest
@@ -35,15 +39,15 @@ from unittest import mock
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.models import Event, User
+from tests import seed_data
 from tests.base import AppTestCase
-from tests.fixtures import coordinator_data
 
 ASSIGNER_ROLES = ("admin", "coordinator")
 NON_ASSIGNABLE_STATUSES = ("draft", "cancelled")
 
 
 def as_naive_utc(value):
-    """Normalise a datetime or ISO string to naive UTC, as SQLite stores it."""
+    """Normalise a datetime or ISO string to naive UTC, as the database stores it."""
     if isinstance(value, str):
         value = datetime.fromisoformat(value.replace("Z", "+00:00"))
     if value.tzinfo is not None:
@@ -52,35 +56,12 @@ def as_naive_utc(value):
 
 
 class CoordinatorTestCase(AppTestCase):
-    """Seeds the shared fixture data and wraps the coordinator endpoints."""
+    """Inserts this test's users and events and wraps the coordinator endpoints."""
 
     def setUp(self):
         super().setUp()
-        self.users = self.seed_users(coordinator_data.USERS)
-        self.events = self.seed_events(coordinator_data.EVENTS)
-
-    # ---------- Seeding ----------
-
-    def seed_users(self, rows):
-        users = {}
-        for row in rows:
-            users[row["key"]] = self.make_user(email=row["email"], role=row["role"])
-        return users
-
-    def seed_events(self, rows):
-        events = {}
-        for row in rows:
-            coordinator = self.users[row["coordinator"]] if row["coordinator"] else None
-            events[row["key"]] = self.make_event(
-                organiser=self.users[row["organiser"]],
-                title=row["title"],
-                status=row["status"],
-                start_time=row["start_time"],
-                duration=row["end_time"] - row["start_time"],
-                coordinator_id=coordinator.id if coordinator else None,
-                coordinator_assigned_at=row["coordinator_assigned_at"],
-            )
-        return events
+        self.users = self.seed_users(seed_data.USERS)
+        self.events = self.seed_events(seed_data.EVENTS, self.users)
 
     # ---------- Requests ----------
 
@@ -127,14 +108,17 @@ class CoordinatorTestCase(AppTestCase):
         self.assertEqual(payload, {"id": user.id, "email": user.email})
 
     def eligible_ids(self, response):
+        """Eligible ids among this test's own users (real coordinators are ignored)."""
         self.assertEqual(response.status_code, 200)
-        return {c["id"] for c in response.get_json()["coordinators"]}
+        own_ids = {user.id for user in self.users.values()}
+        return {c["id"] for c in response.get_json()["coordinators"]} & own_ids
 
     def demote_other_coordinators(self, *keep):
-        """Leave only the given coordinators in the system."""
-        for key in ("alice", "ben", "chloe"):
-            if key not in keep:
-                self.users[key].role = "organiser"
+        """Leave only the given coordinators, including real ones (rolled back after)."""
+        keep_ids = [self.users[key].id for key in keep]
+        User.query.filter(User.role == "coordinator", User.id.notin_(keep_ids)).update(
+            {"role": "organiser"}, synchronize_session="fetch"
+        )
         self.db.session.commit()
 
 
@@ -234,7 +218,7 @@ class ViewCurrentCoordinatorTests(CoordinatorTestCase):
                 self.assert_unchanged(event, before)
 
     def test_viewing_an_unknown_event_returns_not_found(self):
-        self.assert_error(self.get_coordinator(9999, self.users["admin"]), 404)
+        self.assert_error(self.get_coordinator(self.missing_id(Event), self.users["admin"]), 404)
 
 
 class EligibleCoordinatorTests(CoordinatorTestCase):
@@ -316,7 +300,7 @@ class EligibleCoordinatorTests(CoordinatorTestCase):
         self.assertEqual(response.status_code, 401)
 
     def test_listing_for_an_unknown_event_returns_not_found(self):
-        self.assert_error(self.get_eligible(9999, self.users["admin"]), 404)
+        self.assert_error(self.get_eligible(self.missing_id(Event), self.users["admin"]), 404)
 
 
 class AssignCoordinatorTests(CoordinatorTestCase):
@@ -396,7 +380,7 @@ class AssignCoordinatorTests(CoordinatorTestCase):
         event = self.events["unassigned"]
         before = self.snapshot(event)
 
-        self.assert_error(self.assign(event.id, 9999), 422)
+        self.assert_error(self.assign(event.id, self.missing_id(User)), 422)
         self.assert_unchanged(event, before)
 
     def test_rejects_events_that_cannot_be_assigned(self):
@@ -452,7 +436,7 @@ class AssignCoordinatorTests(CoordinatorTestCase):
         self.assert_unchanged(event, before)
 
     def test_assigning_to_an_unknown_event_returns_not_found(self):
-        self.assert_error(self.assign(9999, self.users["alice"].id), 404)
+        self.assert_error(self.assign(self.missing_id(Event), self.users["alice"].id), 404)
 
 
 class ReassignCoordinatorTests(CoordinatorTestCase):

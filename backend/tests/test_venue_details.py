@@ -25,44 +25,59 @@ Endpoints (JWT required, else 401; caller's role not in VIEWER_ROLES -> 403)
         404 unknown venue
     Either endpoint -> 503 {"error": str, "retryable": true} if the database fails.
     Other errors are {"error": "<message shown to the user>"}.
+
+Each test inserts the users and venues in tests/seed_data.py into the public
+tables and rolls them back afterwards. Real venues may be listed alongside them.
 """
 
-import sqlite3
 import unittest
 from contextlib import contextmanager
 
+import psycopg2
 from sqlalchemy import event as sa_event
 from sqlalchemy.exc import OperationalError
 
-from app.models import Venue
+from app.models import Event, Venue
+from tests import seed_data
 from tests.base import AppTestCase
-from tests.fixtures import venue_data
-from tests.fixtures.venue_data import DETAIL_FIELDS
 
 VIEWER_ROLES = ("coordinator", "venue_staff")
 
+# Planning fields whose absence must be reported as "not recorded", in order.
+DETAIL_FIELDS = [
+    "description",
+    "location",
+    "capacity",
+    "area_sqm",
+    "facilities",
+    "accessibility_features",
+    "room_layouts",
+    "operating_hours",
+    "contact_email",
+    "contact_phone",
+    "parking_spaces",
+    "catering_available",
+]
+
+# The seed user acting in each role.
+USER_FOR_ROLE = {
+    "coordinator": "alice",
+    "venue_staff": "gus",
+    "organiser": "dana",
+    "attendee": "farah",
+    "tech_staff": "hana",
+}
+
 
 class VenueTestCase(AppTestCase):
-    """Seeds the shared fixture data and wraps the venue endpoints."""
+    """Inserts this test's users and venues and wraps the venue endpoints."""
 
     def setUp(self):
         super().setUp()
-        self.users = {
-            row["key"]: self.make_user(email=row["email"], role=row["role"])
-            for row in venue_data.USERS
-        }
-        self.venues = {}
-
-    # ---------- Seeding ----------
-
-    def seed_venues(self, rows=venue_data.VENUES):
-        for row in rows:
-            fields = {k: v for k, v in row.items() if k != "key"}
-            venue = Venue(**fields)
-            self.db.session.add(venue)
-            self.db.session.commit()
-            self.venues[row["key"]] = venue
-        return self.venues
+        rows = [row for row in seed_data.USERS if row["key"] in USER_FOR_ROLE.values()]
+        users = self.seed_users(rows)
+        self.users = {role: users[key] for role, key in USER_FOR_ROLE.items()}
+        self.venues = self.seed_venues(seed_data.VENUES)
 
     # ---------- Requests ----------
 
@@ -81,11 +96,16 @@ class VenueTestCase(AppTestCase):
 
     @contextmanager
     def database_unavailable(self):
-        """Make every SQL statement fail, as a dropped Supabase connection would."""
+        """Make every query fail, as a dropped Supabase connection would.
+
+        Savepoint statements still run so the test's own transaction survives.
+        """
 
         def fail(conn, cursor, statement, parameters, context, executemany):
+            if statement.lstrip().upper().startswith(("SAVEPOINT", "ROLLBACK", "RELEASE")):
+                return
             raise OperationalError(
-                statement, parameters, sqlite3.OperationalError("simulated database outage")
+                statement, parameters, psycopg2.OperationalError("simulated database outage")
             )
 
         sa_event.listen(self.db.engine, "before_cursor_execute", fail)
@@ -135,17 +155,27 @@ class VenueModelTests(VenueTestCase):
                 self.assertTrue(Venue.__table__.c[field].nullable)
 
     def test_list_fields_round_trip_through_the_database(self):
-        self.seed_venues([venue_data.AURORA_BALLROOM])
+        venue = Venue(name="Round Trip Hall", facilities=["Stage", "Wi-Fi"], room_layouts=[])
+        self.db.session.add(venue)
+        self.db.session.commit()
         self.db.session.expire_all()
-        venue = self.db.session.get(Venue, self.venues["fully_recorded"].id)
 
-        self.assertEqual(venue.facilities, venue_data.AURORA_BALLROOM["facilities"])
-        self.assertEqual(venue.room_layouts, venue_data.AURORA_BALLROOM["room_layouts"])
+        stored = self.db.session.get(Venue, venue.id)
+        self.assertEqual(stored.facilities, ["Stage", "Wi-Fi"])
+        self.assertEqual(stored.room_layouts, [])
+
+    def test_unset_list_fields_are_stored_as_sql_null(self):
+        venue = Venue(name="Null Hall", facilities=None)
+        self.db.session.add(venue)
+        self.db.session.commit()
+
+        stored_nulls = self.db.session.query(Venue.id).filter(
+            Venue.id == venue.id, Venue.facilities.is_(None)
+        )
+        self.assertEqual(stored_nulls.count(), 1)
 
     def test_recorded_absences_are_stored_distinctly_from_not_recorded(self):
-        self.seed_venues([venue_data.CIVIC_HALL])
-        self.db.session.expire_all()
-        venue = self.db.session.get(Venue, self.venues["recorded_as_none"].id)
+        venue = self.venues["recorded_as_none"]
 
         self.assertEqual(venue.facilities, [])
         self.assertIs(venue.catering_available, False)
@@ -153,17 +183,13 @@ class VenueModelTests(VenueTestCase):
 
 
 class BrowseVenuesTests(VenueTestCase):
-    def setUp(self):
-        super().setUp()
-        self.seed_venues()
-
     def test_authorised_roles_can_browse_venues(self):
         for role in VIEWER_ROLES:
             with self.subTest(role=role):
                 response = self.list_venues(self.users[role])
 
                 self.assertEqual(response.status_code, 200)
-                self.assertEqual(len(response.get_json()["venues"]), len(venue_data.VENUES))
+                self.assertEqual(len(response.get_json()["venues"]), Venue.query.count())
 
     def test_other_roles_cannot_browse_venues(self):
         for key in ("organiser", "attendee", "tech_staff"):
@@ -186,15 +212,17 @@ class BrowseVenuesTests(VenueTestCase):
     def test_lists_every_recorded_venue_including_unavailable_ones(self):
         body = self.list_venues().get_json()
 
-        self.assertEqual(
-            {v["id"] for v in body["venues"]}, {v.id for v in self.venues.values()}
-        )
+        listed = {v["id"] for v in body["venues"]}
+        self.assertEqual(listed, {v.id for v in Venue.query})
+        self.assertIn(self.venues["unavailable"].id, listed)
         self.assertIsNone(body["message"])
 
     def test_venues_are_sorted_by_name(self):
+        own_names = {v.name for v in self.venues.values()}
         names = [v["name"] for v in self.list_venues().get_json()["venues"]]
 
-        self.assertEqual(names, sorted(row["name"] for row in venue_data.VENUES))
+        own_in_listed_order = [name for name in names if name in own_names]
+        self.assertEqual(own_in_listed_order, sorted(own_names))
 
     def test_summary_contains_the_fields_needed_to_pick_a_venue(self):
         venue = self.venues["fully_recorded"]
@@ -226,7 +254,11 @@ class BrowseVenuesTests(VenueTestCase):
         self.assertIsNone(by_id[self.venues["blank_values"].id]["location"])
 
     def test_every_listed_venue_can_be_opened(self):
-        for summary in self.list_venues().get_json()["venues"]:
+        own_ids = {v.id for v in self.venues.values()}
+        listed = [v for v in self.list_venues().get_json()["venues"] if v["id"] in own_ids]
+
+        self.assertEqual(len(listed), len(own_ids))
+        for summary in listed:
             with self.subTest(venue=summary["name"]):
                 response = self.get_venue(summary["id"])
 
@@ -235,6 +267,15 @@ class BrowseVenuesTests(VenueTestCase):
 
 
 class EmptyVenueListTests(VenueTestCase):
+    def setUp(self):
+        super().setUp()
+        # Hide every venue, real ones included; rolled back after each test.
+        Event.query.filter(Event.venue_id.isnot(None)).update(
+            {"venue_id": None}, synchronize_session=False
+        )
+        Venue.query.delete(synchronize_session=False)
+        self.db.session.commit()
+
     def test_shows_an_empty_state_message_when_no_venues_are_recorded(self):
         response = self.list_venues()
 
@@ -254,10 +295,6 @@ class EmptyVenueListTests(VenueTestCase):
 
 
 class VenueDetailTests(VenueTestCase):
-    def setUp(self):
-        super().setUp()
-        self.seed_venues()
-
     def test_authorised_roles_can_open_venue_details(self):
         venue = self.venues["fully_recorded"]
 
@@ -281,15 +318,33 @@ class VenueDetailTests(VenueTestCase):
         self.assertEqual(response.status_code, 401)
 
     def test_unknown_venue_returns_not_found(self):
-        self.assert_error(self.get_venue(9999), 404)
+        self.assert_error(self.get_venue(self.missing_id(Venue)), 404)
 
     def test_fully_recorded_venue_shows_every_planning_characteristic(self):
         body = self.details("fully_recorded")
-        expected = {k: v for k, v in venue_data.AURORA_BALLROOM.items() if k != "key"}
 
         self.assertEqual(
             body,
-            {"id": self.venues["fully_recorded"].id, **expected, "not_recorded": []},
+            {
+                "id": self.venues["fully_recorded"].id,
+                "name": "Aurora Ballroom",
+                "is_available": True,
+                "description": "Pillarless ballroom with a sprung dance floor and harbour views.",
+                "location": "Level 3, Marina Tower, 10 Bayfront Ave",
+                "capacity": 400,
+                "area_sqm": 850,
+                "facilities": ["Stage", "Projector", "PA system", "Wi-Fi", "Green room"],
+                "accessibility_features": [
+                    "Wheelchair ramp", "Accessible toilets", "Hearing loop",
+                ],
+                "room_layouts": ["theatre", "banquet", "cabaret", "cocktail"],
+                "operating_hours": "Mon-Sun 08:00-23:00",
+                "contact_email": "events@marinatower.test",
+                "contact_phone": "+65 6123 4567",
+                "parking_spaces": 120,
+                "catering_available": True,
+                "not_recorded": [],
+            },
         )
 
     def test_details_always_include_every_planning_field(self):
@@ -319,13 +374,9 @@ class VenueDetailTests(VenueTestCase):
 class NotRecordedInformationTests(VenueTestCase):
     """Missing information must never look like a confirmed capability."""
 
-    def setUp(self):
-        super().setUp()
-        self.seed_venues()
-
     def test_unrecorded_fields_are_null_and_listed_as_not_recorded(self):
         body = self.details("partially_recorded")
-        missing = [f for f in DETAIL_FIELDS if venue_data.BAYFRONT_PAVILION[f] is None]
+        missing = [f for f in DETAIL_FIELDS if f not in ("location", "facilities")]
 
         self.assertEqual(body["not_recorded"], missing)
         for field in missing:
@@ -393,10 +444,6 @@ class NotRecordedInformationTests(VenueTestCase):
 class VenueLoadFailureTests(VenueTestCase):
     """The user is told what went wrong and can retry once the database is back."""
 
-    def setUp(self):
-        super().setUp()
-        self.seed_venues()
-
     def test_list_failure_informs_the_user_and_offers_retry(self):
         response = self.get_during_outage("/api/venues/")
 
@@ -423,7 +470,7 @@ class VenueLoadFailureTests(VenueTestCase):
         response = self.list_venues()
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(len(response.get_json()["venues"]), len(venue_data.VENUES))
+        self.assertEqual(len(response.get_json()["venues"]), Venue.query.count())
 
     def test_retrying_details_succeeds_once_the_database_recovers(self):
         url = self.venue_url("fully_recorded")

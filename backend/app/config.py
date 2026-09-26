@@ -1,5 +1,10 @@
 import os
 
+from dotenv import load_dotenv
+
+# Load backend/.env before any setting below is read from the environment.
+load_dotenv()
+
 
 class Config:
     SECRET_KEY = os.environ.get("SECRET_KEY", "dev")
@@ -18,14 +23,16 @@ class Config:
 
 
 class TestConfig(Config):
-    """Config for the test suite: no Postgres, no Redis, no real SMTP."""
+    """Config for the test suite: Supabase via a restricted role, no Redis, no real SMTP."""
 
     TESTING = True
     SECRET_KEY = "test-secret-key"
     JWT_SECRET_KEY = "test-jwt-secret-key"
 
-    # In-memory SQLite keeps tests fast and isolated from the Supabase database.
-    SQLALCHEMY_DATABASE_URI = "sqlite:///:memory:"
+    # Connects as the `connectsphere_test` role (db/test_role.sql), which can read
+    # and write rows in the public tables but never change them. Each test's rows
+    # are rolled back (tests/base.py). Never DATABASE_URL.
+    SQLALCHEMY_DATABASE_URI = os.environ.get("TEST_DATABASE_URL")
 
     # Run Celery tasks inline instead of dispatching them to a broker.
     CELERY_BROKER_URL = "memory://"
