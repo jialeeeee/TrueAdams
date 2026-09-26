@@ -22,6 +22,19 @@ class Venue(db.Model):
     location = db.Column(db.String(255))
     is_available = db.Column(db.Boolean, default=True)
 
+    # Planning characteristics. NULL means "not recorded"; an empty list, False
+    # or 0 is a recorded absence, so none of these may have a default.
+    description = db.Column(db.Text)
+    area_sqm = db.Column(db.Integer)
+    facilities = db.Column(db.JSON)
+    accessibility_features = db.Column(db.JSON)
+    room_layouts = db.Column(db.JSON)
+    operating_hours = db.Column(db.Text)
+    contact_email = db.Column(db.String(255))
+    contact_phone = db.Column(db.String(50))
+    parking_spaces = db.Column(db.Integer)
+    catering_available = db.Column(db.Boolean)
+
 
 class Resource(db.Model):
     __tablename__ = "resources"
@@ -44,6 +57,10 @@ class Event(db.Model):
     start_time = db.Column(db.DateTime, nullable=False)
     end_time = db.Column(db.DateTime, nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    # A single column, so an event can never have two current main coordinators.
+    coordinator_id = db.Column(db.Integer, db.ForeignKey("users.id"))
+    coordinator_assigned_at = db.Column(db.DateTime)
 
 
 class Registration(db.Model):
