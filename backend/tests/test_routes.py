@@ -10,7 +10,6 @@ from tests.base import AppTestCase
 
 COLLECTION_ENDPOINTS = [
     "/api/events/",
-    "/api/venues/",
     "/api/resources/",
     "/api/registrations/",
 ]
@@ -21,8 +20,12 @@ ALL_ROUTES = [
     ("GET", "/api/events/"),
     ("POST", "/api/events/"),
     ("POST", "/api/events/1/change-requests"),
+    ("GET", "/api/events/1/coordinator"),
+    ("PUT", "/api/events/1/coordinator"),
+    ("GET", "/api/events/1/eligible-coordinators"),
     ("GET", "/api/venues/"),
     ("POST", "/api/venues/"),
+    ("GET", "/api/venues/1"),
     ("GET", "/api/venues/1/availability"),
     ("GET", "/api/resources/"),
     ("POST", "/api/resources/1/reservations"),
