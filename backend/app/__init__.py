@@ -1,4 +1,3 @@
-from dotenv import load_dotenv
 from flask import Flask
 
 from .auth.routes import auth_bp
@@ -8,8 +7,6 @@ from .extensions import celery, cors, db, jwt
 from .registrations.routes import registrations_bp
 from .resources.routes import resources_bp
 from .venues.routes import venues_bp
-
-load_dotenv()
 
 
 def create_app(config_class=Config):

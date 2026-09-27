@@ -1,5 +1,7 @@
 from datetime import datetime
 
+from sqlalchemy.dialects.postgresql import JSONB
+
 from .extensions import db
 
 
@@ -26,9 +28,9 @@ class Venue(db.Model):
     # or 0 is a recorded absence, so none of these may have a default.
     description = db.Column(db.Text)
     area_sqm = db.Column(db.Integer)
-    facilities = db.Column(db.JSON)
-    accessibility_features = db.Column(db.JSON)
-    room_layouts = db.Column(db.JSON)
+    facilities = db.Column(JSONB(none_as_null=True))
+    accessibility_features = db.Column(JSONB(none_as_null=True))
+    room_layouts = db.Column(JSONB(none_as_null=True))
     operating_hours = db.Column(db.Text)
     contact_email = db.Column(db.String(255))
     contact_phone = db.Column(db.String(50))
