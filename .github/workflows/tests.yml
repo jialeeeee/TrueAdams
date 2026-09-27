@@ -28,4 +28,7 @@ jobs:
         run: pip install -r requirements-dev.txt
 
       - name: Run tests
+        env:
+          # Supabase public tables via the restricted connectsphere_test role.
+          TEST_DATABASE_URL: ${{ secrets.TEST_DATABASE_URL }}
         run: python -m unittest discover -v
