@@ -34,7 +34,6 @@ ALL_ROUTES = [
 ]
 
 UNIMPLEMENTED_ROUTES = [
-    ("POST", "/api/auth/login"),
     ("POST", "/api/auth/register"),
     ("POST", "/api/events/"),
     ("POST", "/api/events/1/change-requests"),
