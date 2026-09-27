@@ -5,7 +5,7 @@ from flask_jwt_extended import get_jwt_identity, jwt_required
 from sqlalchemy.exc import SQLAlchemyError
 
 from ..extensions import db
-from ..models import Event, User
+from ..models import Event, User, Venue
 
 events_bp = Blueprint("events", __name__)
 
@@ -16,6 +16,19 @@ ASSIGNER_ROLES = {"admin", COORDINATOR_ROLE}
 # own organiser can also view its coordinator.
 COORDINATOR_VIEWER_ROLES = ASSIGNER_ROLES | {"venue_staff", "tech_staff"}
 NON_ASSIGNABLE_STATUSES = {"draft", "cancelled"}
+# Fields on the coordinator's planning view, in display order.
+PLANNING_FIELDS = [
+    "title",
+    "description",
+    "status",
+    "start_time",
+    "end_time",
+    "venue",
+    "organiser",
+    "coordinator",
+    "coordinator_assigned_at",
+    "created_at",
+]
 
 
 @events_bp.get("/")
@@ -33,8 +46,8 @@ def submit_change_request(event_id: int):
     return jsonify({"message": "change request not yet implemented"}), 501
 
 
-def _error(message, status_code):
-    return jsonify({"error": message}), status_code
+def _error(message, status_code, **extra):
+    return jsonify({"error": message, **extra}), status_code
 
 
 def _current_user():
@@ -66,6 +79,73 @@ def _assignment_payload(event):
         "coordinator": _user_summary(coordinator) if coordinator else None,
         "assigned_at": assigned_at.isoformat() if assigned_at else None,
     }
+
+
+def _recorded(value):
+    """Return the value, or None if it was never recorded (NULL or blank text)."""
+    if isinstance(value, str) and not value.strip():
+        return None
+    return value
+
+
+def _isoformat(value):
+    return value.isoformat() if value else None
+
+
+def _planning_payload(event):
+    venue = db.session.get(Venue, event.venue_id) if event.venue_id else None
+    organiser = db.session.get(User, event.organiser_id)
+    coordinator = db.session.get(User, event.coordinator_id)
+    fields = {
+        "title": _recorded(event.title),
+        "description": _recorded(event.description),
+        "status": _recorded(event.status),
+        "start_time": _isoformat(event.start_time),
+        "end_time": _isoformat(event.end_time),
+        "venue": {"id": venue.id, "name": venue.name, "location": venue.location}
+        if venue
+        else None,
+        "organiser": _user_summary(organiser) if organiser else None,
+        "coordinator": _user_summary(coordinator) if coordinator else None,
+        "coordinator_assigned_at": _isoformat(event.coordinator_assigned_at),
+        "created_at": _isoformat(event.created_at),
+    }
+    return {
+        "id": event.id,
+        **fields,
+        "not_recorded": [name for name in PLANNING_FIELDS if fields[name] is None],
+    }
+
+
+@events_bp.get("/<int:event_id>/planning")
+@jwt_required()
+def get_planning(event_id: int):
+    # Every read sits inside the try, so a partial failure (e.g. only the venue)
+    # is reported as a failure rather than as a field that was never recorded.
+    try:
+        user = _current_user()
+        if user is None:
+            return _error("Your session is no longer valid. Please log in again.", 401)
+
+        event = db.session.get(Event, event_id)
+        if event is None:
+            return _error("Event not found.", 404)
+
+        if user.role != COORDINATOR_ROLE or event.coordinator_id != user.id:
+            return _error(
+                "You are not allowed to view this event's planning information.", 403
+            )
+
+        payload = _planning_payload(event)
+    except SQLAlchemyError:
+        db.session.rollback()
+        return _error(
+            "The event's information could not be loaded. Please try again.",
+            503,
+            retryable=True,
+        )
+
+    return jsonify(payload)
 
 
 @events_bp.get("/<int:event_id>/coordinator")
