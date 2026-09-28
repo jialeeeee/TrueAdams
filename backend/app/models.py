@@ -72,6 +72,12 @@ class Event(db.Model):
     last_saved_at = db.Column(db.DateTime)
     submitted_at = db.Column(db.DateTime)
 
+    # The coordinator's decision on a submitted request (SCRUM-32): the rejection
+    # reason or optional approval note, when (naive UTC) and by whom.
+    decision_note = db.Column(db.Text)
+    decided_at = db.Column(db.DateTime)
+    decided_by_id = db.Column(db.Integer, db.ForeignKey("users.id"))
+
     # A single column, so an event can never have two current main coordinators.
     coordinator_id = db.Column(db.Integer, db.ForeignKey("users.id"))
     coordinator_assigned_at = db.Column(db.DateTime)
