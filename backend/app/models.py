@@ -72,3 +72,29 @@ class Registration(db.Model):
     event_id = db.Column(db.Integer, db.ForeignKey("events.id"), nullable=False)
     attendee_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
     registered_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+class EventClarification(db.Model):
+    """A question a coordinator sent to an event's organiser about their request."""
+
+    __tablename__ = "event_clarifications"
+
+    id = db.Column(db.Integer, primary_key=True)
+    event_id = db.Column(db.Integer, db.ForeignKey("events.id"), nullable=False)
+    sender_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    message = db.Column(db.Text, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+class Notification(db.Model):
+    """An in-app notification for one user, e.g. a new clarification question."""
+
+    __tablename__ = "notifications"
+
+    id = db.Column(db.Integer, primary_key=True)
+    recipient_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    kind = db.Column(db.String(50), nullable=False)
+    message = db.Column(db.Text, nullable=False)
+    event_id = db.Column(db.Integer, db.ForeignKey("events.id"))
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    read_at = db.Column(db.DateTime)
