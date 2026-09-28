@@ -4,6 +4,7 @@ from .auth.routes import auth_bp
 from .config import Config
 from .events.routes import events_bp
 from .extensions import celery, cors, db, jwt
+from .notifications.routes import notifications_bp
 from .registrations.routes import registrations_bp
 from .resources.routes import resources_bp
 from .venues.routes import venues_bp
@@ -26,6 +27,7 @@ def create_app(config_class=Config):
     app.register_blueprint(venues_bp, url_prefix="/api/venues")
     app.register_blueprint(resources_bp, url_prefix="/api/resources")
     app.register_blueprint(registrations_bp, url_prefix="/api/registrations")
+    app.register_blueprint(notifications_bp, url_prefix="/api/notifications")
 
     @app.get("/api/health")
     def health():
