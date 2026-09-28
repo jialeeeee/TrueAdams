@@ -29,6 +29,11 @@ PLANNING_FIELDS = [
     "coordinator_assigned_at",
     "created_at",
 ]
+# Limits on the fields a coordinator may change directly (the normal editing rules).
+TITLE_MAX_LENGTH = 255
+DESCRIPTION_MAX_LENGTH = 5000
+# Statuses in which an event's planning information can no longer be edited.
+NON_EDITABLE_STATUSES = {"cancelled"}
 
 
 @events_bp.get("/")
@@ -146,6 +151,93 @@ def get_planning(event_id: int):
         )
 
     return jsonify(payload)
+
+
+def _validate_title(value):
+    if value is not None and not isinstance(value, str):
+        return None, "Title must be text."
+    title = (value or "").strip()
+    if not title:
+        return None, "Enter a title."
+    if len(title) > TITLE_MAX_LENGTH:
+        return None, f"Title must be {TITLE_MAX_LENGTH} characters or fewer."
+    return title, None
+
+
+def _validate_description(value):
+    if value is not None and not isinstance(value, str):
+        return None, "Description must be text."
+    description = (value or "").strip()
+    if len(description) > DESCRIPTION_MAX_LENGTH:
+        return None, f"Description must be {DESCRIPTION_MAX_LENGTH} characters or fewer."
+    return description or None, None  # Blank clears it.
+
+
+NORMAL_FIELD_VALIDATORS = {
+    "title": _validate_title,
+    "description": _validate_description,
+}
+
+
+def _validate_planning_edits(body):
+    """Split the requested edits into values to save and corrections to make."""
+    changes, corrections = {}, {}
+    for name, value in body.items():
+        validate = NORMAL_FIELD_VALIDATORS.get(name)
+        if validate is None:
+            corrections[name] = "This field can't be changed here."
+            continue
+        cleaned, problem = validate(value)
+        if problem:
+            corrections[name] = problem
+        else:
+            changes[name] = cleaned
+    return changes, corrections
+
+
+@events_bp.patch("/<int:event_id>")
+@jwt_required()
+def update_planning(event_id: int):
+    try:
+        user = _current_user()
+        if user is None:
+            return _error("Your session is no longer valid. Please log in again.", 401)
+
+        event = db.session.get(Event, event_id)
+        if event is None:
+            return _error("Event not found.", 404)
+
+        if user.role != COORDINATOR_ROLE or event.coordinator_id != user.id:
+            return _error("You are not allowed to edit this event.", 403)
+
+        if event.status in NON_EDITABLE_STATUSES:
+            return _error(f"This event is {event.status} and can no longer be edited.", 409)
+
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            return _error("Send the changes as a JSON object.", 400)
+        if not body:
+            return _error("There are no changes to save.", 422, fields={})
+
+        changes, corrections = _validate_planning_edits(body)
+        if corrections:
+            return _error(
+                "Some changes could not be saved. Please correct them and try again.",
+                422,
+                fields=corrections,
+            )
+
+        for name, value in changes.items():
+            setattr(event, name, value)
+        db.session.commit()
+        payload = _planning_payload(event)
+    except SQLAlchemyError:
+        db.session.rollback()
+        return _error(
+            "Your changes could not be saved. Please try again.", 503, retryable=True
+        )
+
+    return jsonify({"message": "Changes saved.", **payload})
 
 
 @events_bp.get("/<int:event_id>/coordinator")
