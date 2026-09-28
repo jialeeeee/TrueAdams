@@ -52,7 +52,7 @@ class AppFactoryTests(AppTestCase):
     def test_all_blueprints_are_registered_under_api(self):
         self.assertEqual(
             set(self.app.blueprints),
-            {"auth", "events", "venues", "resources", "registrations"},
+            {"auth", "events", "venues", "resources", "registrations", "notifications"},
         )
 
         prefixes = {rule.rule for rule in self.app.url_map.iter_rules()}

@@ -3,7 +3,7 @@ workspace "ConnectSphere" "Container Diagram for the ConnectSphere Platform" {
     model {
         # System Users / Actors
         organiser = person "Event Organiser" "Creates event requests, manages drafts, and submits change requests."
-        coordinator = person "Event Coordinator" "Reviews and approves event requests, manages details, and handles change requests."
+        coordinator = person "Event Coordinator" "Reviews and approves event requests, asks organisers clarification questions, manages details, and handles change requests."
         venueStaff = person "Venue Staff" "Manages venue catalogues, calendar availability, layout suitability, and venue booking approvals."
         techStaff = person "Tech Support Staff" "Manages equipment inventories, tech availability, and fulfills equipment reservations."
         attendee = person "Attendee" "Browses upcoming events and registers for participation."
@@ -18,11 +18,11 @@ workspace "ConnectSphere" "Container Diagram for the ConnectSphere Platform" {
             webApp = container "Web Client / UI" "Single-page application delivering user interfaces, built with React." "React / JavaScript" "WebClient"
 
             # Core Execution Layer
-            monolithApp = container "ConnectSphere Monolithic Application" "Hosts core web application, API routes, and domain modules (Auth, Events, Venues, Resources, Registrations)." "Python / Flask" "CoreApp"
+            monolithApp = container "ConnectSphere Monolithic Application" "Hosts core web application, API routes, and domain modules (Auth, Events, Venues, Resources, Registrations, Notifications)." "Python / Flask" "CoreApp"
             celeryWorker = container "Celery Worker Process" "Executes asynchronous background tasks such as compiling and sending notification emails." "Python / Celery" "Worker"
 
             # Data & Messaging Layer
-            supabaseDb = container "Supabase Database & Storage" "Relational database storing system entities (Events, Venues, Resources, Users) and static assets." "Managed PostgreSQL / Supabase" "Database"
+            supabaseDb = container "Supabase Database & Storage" "Relational database storing system entities (Events, Venues, Venue bookings and unavailability blocks, Resources, Users, Clarification questions, In-app notifications) and static assets." "Managed PostgreSQL / Supabase" "Database"
             redisBroker = container "Redis Queue" "Message broker acting as a temporary task queue for background jobs." "Redis" "Broker"
         }
 
