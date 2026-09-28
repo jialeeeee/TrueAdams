@@ -1,4 +1,5 @@
 import { Link, Route, Routes } from "react-router-dom";
+import ClarificationPage from "./pages/ClarificationPage.jsx";
 import EventsPage from "./pages/EventsPage.jsx";
 import LoginPage from "./pages/LoginPage.jsx";
 import RegistrationsPage from "./pages/RegistrationsPage.jsx";
@@ -17,6 +18,7 @@ export default function App() {
       </nav>
       <Routes>
         <Route path="/" element={<EventsPage />} />
+        <Route path="/events/:eventId/clarifications" element={<ClarificationPage />} />
         <Route path="/venues" element={<VenuesPage />} />
         <Route path="/resources" element={<ResourcesPage />} />
         <Route path="/registrations" element={<RegistrationsPage />} />
