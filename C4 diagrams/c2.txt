@@ -22,7 +22,7 @@ workspace "ConnectSphere" "Container Diagram for the ConnectSphere Platform" {
             celeryWorker = container "Celery Worker Process" "Executes asynchronous background tasks such as compiling and sending notification emails." "Python / Celery" "Worker"
 
             # Data & Messaging Layer
-            supabaseDb = container "Supabase Database & Storage" "Relational database storing system entities (Events, Venues, Resources, Users, Clarification questions, In-app notifications) and static assets." "Managed PostgreSQL / Supabase" "Database"
+            supabaseDb = container "Supabase Database & Storage" "Relational database storing system entities (Events, Venues, Venue bookings and unavailability blocks, Resources, Users, Clarification questions, In-app notifications) and static assets." "Managed PostgreSQL / Supabase" "Database"
             redisBroker = container "Redis Queue" "Message broker acting as a temporary task queue for background jobs." "Redis" "Broker"
         }
 

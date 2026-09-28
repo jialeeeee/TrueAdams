@@ -6,6 +6,7 @@ import LoginPage from "./pages/LoginPage.jsx";
 import MyDraftsPage from "./pages/MyDraftsPage.jsx";
 import RegistrationsPage from "./pages/RegistrationsPage.jsx";
 import ResourcesPage from "./pages/ResourcesPage.jsx";
+import VenueAvailabilityPage from "./pages/VenueAvailabilityPage.jsx";
 import VenuesPage from "./pages/VenuesPage.jsx";
 
 export default function App() {
@@ -15,6 +16,7 @@ export default function App() {
         <Link to="/">Events</Link>
         <Link to="/events/drafts">My drafts</Link>
         <Link to="/venues">Venues</Link>
+        <Link to="/venues/availability">Venue availability</Link>
         <Link to="/resources">Resources</Link>
         <Link to="/registrations">Registrations</Link>
         <Link to="/login">Login</Link>
@@ -26,6 +28,7 @@ export default function App() {
         <Route path="/events/drafts/:draftId" element={<DraftEventPage />} />
         <Route path="/events/:eventId/clarifications" element={<ClarificationPage />} />
         <Route path="/venues" element={<VenuesPage />} />
+        <Route path="/venues/availability" element={<VenueAvailabilityPage />} />
         <Route path="/resources" element={<ResourcesPage />} />
         <Route path="/registrations" element={<RegistrationsPage />} />
         <Route path="/login" element={<LoginPage />} />
