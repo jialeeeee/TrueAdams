@@ -3,7 +3,7 @@ workspace "ConnectSphere" "Container Diagram for the ConnectSphere Platform" {
     model {
         # System Users / Actors
         organiser = person "Event Organiser" "Creates event requests, manages drafts, and submits change requests."
-        coordinator = person "Event Coordinator" "Reviews and approves event requests, asks organisers clarification questions, manages details, and handles change requests."
+        coordinator = person "Event Coordinator" "Reviews and approves event requests, asks organisers clarification questions, searches for suitable venues, manages details, and handles change requests."
         venueStaff = person "Venue Staff" "Manages venue catalogues, calendar availability, layout suitability, and venue booking approvals."
         techStaff = person "Tech Support Staff" "Manages equipment inventories, tech availability, and fulfills equipment reservations."
         attendee = person "Attendee" "Browses upcoming events and registers for participation."
