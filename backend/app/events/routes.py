@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, url_for
 from flask_jwt_extended import get_jwt_identity, jwt_required
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -178,11 +178,44 @@ NORMAL_FIELD_VALIDATORS = {
     "description": _validate_description,
 }
 
+# Fields whose changes affect existing arrangements, so they go through the review
+# process (a change request) instead of being saved directly. In display order.
+RESTRICTED_FIELD_LABELS = {
+    "venue_id": "venue",
+    "start_time": "start time",
+    "end_time": "end time",
+}
 
-def _validate_planning_edits(body):
-    """Split the requested edits into values to save and corrections to make."""
-    changes, corrections = {}, {}
+
+def _parse_restricted(name, value):
+    """Read a restricted field's value so it can be compared with the saved one."""
+    if value is None:
+        return None, None
+    if name == "venue_id":
+        if isinstance(value, bool) or not isinstance(value, int):
+            return None, "Choose a venue."
+        return value, None
+    problem = f"Enter the {RESTRICTED_FIELD_LABELS[name]} as a date and time."
+    if not isinstance(value, str):
+        return None, problem
+    try:
+        return datetime.fromisoformat(value), None
+    except ValueError:
+        return None, problem
+
+
+def _validate_planning_edits(event, body):
+    """Split the requested edits into values to save, corrections to make, and
+    restricted changes that need review."""
+    changes, corrections, needs_review = {}, {}, {}
     for name, value in body.items():
+        if name in RESTRICTED_FIELD_LABELS:
+            parsed, problem = _parse_restricted(name, value)
+            if problem:
+                corrections[name] = problem
+            elif parsed != getattr(event, name):  # Unchanged values are ignored.
+                needs_review[name] = value
+            continue
         validate = NORMAL_FIELD_VALIDATORS.get(name)
         if validate is None:
             corrections[name] = "This field can't be changed here."
@@ -192,7 +225,30 @@ def _validate_planning_edits(body):
             corrections[name] = problem
         else:
             changes[name] = cleaned
-    return changes, corrections
+    return changes, corrections, needs_review
+
+
+def _join_words(words):
+    return words[0] if len(words) == 1 else f"{', '.join(words[:-1])} and {words[-1]}"
+
+
+def _review_required(event, needs_review):
+    fields = [name for name in RESTRICTED_FIELD_LABELS if name in needs_review]
+    labels = _join_words([RESTRICTED_FIELD_LABELS[name] for name in fields])
+    verb, pronoun = ("affects", "it") if len(fields) == 1 else ("affect", "them")
+    return {
+        "fields": fields,
+        "requested": {name: needs_review[name] for name in fields},
+        "message": (
+            f"The {labels} {verb} existing arrangements, so {pronoun} can't be changed "
+            f"directly. Submit a change request to have {pronoun} reviewed."
+        ),
+        "next_step": {
+            "action": "Submit a change request",
+            "method": "POST",
+            "url": url_for("events.submit_change_request", event_id=event.id),
+        },
+    }
 
 
 @events_bp.patch("/<int:event_id>")
@@ -219,13 +275,18 @@ def update_planning(event_id: int):
         if not body:
             return _error("There are no changes to save.", 422, fields={})
 
-        changes, corrections = _validate_planning_edits(body)
+        changes, corrections, needs_review = _validate_planning_edits(event, body)
+        review = _review_required(event, needs_review) if needs_review else None
+        extra = {"requires_review": review} if review else {}
         if corrections:
             return _error(
                 "Some changes could not be saved. Please correct them and try again.",
                 422,
                 fields=corrections,
+                **extra,
             )
+        if review and not changes:
+            return _error(review["message"], 409, **extra)
 
         for name, value in changes.items():
             setattr(event, name, value)
@@ -237,7 +298,8 @@ def update_planning(event_id: int):
             "Your changes could not be saved. Please try again.", 503, retryable=True
         )
 
-    return jsonify({"message": "Changes saved.", **payload})
+    message = f"Changes saved. {review['message']}" if review else "Changes saved."
+    return jsonify({"message": message, **payload, **extra})
 
 
 @events_bp.get("/<int:event_id>/coordinator")
