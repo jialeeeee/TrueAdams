@@ -26,6 +26,9 @@ CLARIFICATION_NOTIFICATION = "clarification_requested"
 ORGANISER_ROLE = "organiser"
 DRAFT_STATUS = "draft"
 SUBMITTED_STATUS = "submitted"
+# A coordinator's decision on a submitted request, and the status it leads to (SCRUM-32).
+DECISION_STATUSES = {"approve": "approved", "reject": "rejected"}
+MAX_DECISION_WORDS = 1000
 # Every field an organiser fills in on an event request, in display order, with the
 # label used in error messages.
 DRAFT_FIELDS = {
@@ -588,3 +591,192 @@ def submit_draft(event_id: int):
         )
 
     return jsonify(payload)
+
+
+# ---------- Approving or rejecting a request (SCRUM-32) ----------
+
+
+def _request_payload(event):
+    """The full request with its decision, for the coordinator reviewing it."""
+    fields = {}
+    for field in DRAFT_FIELDS:
+        value = getattr(event, field)
+        fields[field] = _isoformat(value) if field in DRAFT_TIME_FIELDS else value
+    decided_by = db.session.get(User, event.decided_by_id) if event.decided_by_id else None
+    return {
+        "id": event.id,
+        "status": event.status,
+        **fields,
+        "submitted_at": _isoformat(event.submitted_at),
+        "decided_at": _isoformat(event.decided_at),
+        "decided_by": _user_summary(decided_by) if decided_by else None,
+        "decision_note": event.decision_note,
+    }
+
+
+def _assigned_request(event_id, denied):
+    """The request, for its assigned coordinator only; checked 401, 404, 403."""
+    user = _current_user()
+    if user is None:
+        raise _Rejected("Your session is no longer valid. Please log in again.", 401)
+    event = db.session.get(Event, event_id)
+    if event is None:
+        raise _Rejected("Event request not found.", 404)
+    if not _is_current_coordinator(user, event):
+        raise _Rejected(denied, 403)
+    return user, event
+
+
+def _parse_decision(body):
+    """(status, note) from the request body; raises _Rejected if it is invalid."""
+    decision = body.get("decision") if isinstance(body, dict) else None
+    if decision not in DECISION_STATUSES:
+        raise _Rejected("Choose whether to approve or reject the request.", 400)
+
+    rejecting = decision == "reject"
+    reason = body.get("reason")
+    if reason is not None and not isinstance(reason, str):
+        raise _Rejected("The reason must be text.", 400)
+    note = reason.strip() if reason else None
+    note = note or None
+    if rejecting and note is None:
+        raise _Rejected("Enter a reason for rejecting the request.", 400)
+
+    if note is not None:
+        word_count = len(note.split())
+        if word_count > MAX_DECISION_WORDS:
+            kind = "reason" if rejecting else "note"
+            raise _Rejected(
+                f"Your {kind} is {word_count:,} words long. The limit is "
+                f"{MAX_DECISION_WORDS:,} words, so remove "
+                f"{word_count - MAX_DECISION_WORDS:,} and try again.",
+                400,
+            )
+    return DECISION_STATUSES[decision], note
+
+
+def _decision_message(event, status, note):
+    message = f'Your event request "{event.title}" was {status}.'
+    if note:
+        message += f" {'Reason' if status == 'rejected' else 'Note'}: {note}"
+    return message
+
+
+def _queue_decision_email(organiser, event, status, note):
+    """Queue the organiser's email; False if the queue could not be reached.
+
+    The decision and in-app notification are already saved by then, so a broker
+    outage must not undo or hide a decision that was made.
+    """
+    try:
+        tasks.send_notification_email.delay(
+            organiser.email,
+            f"Your event request was {status}: {event.title}",
+            f"{_decision_message(event, status, note)}\n\n"
+            "Sign in to ConnectSphere to see your event requests.",
+        )
+    except Exception:
+        current_app.logger.exception("Could not queue decision email for event %s", event.id)
+        return False
+    return True
+
+
+@events_bp.get("/<int:event_id>/review")
+@jwt_required()
+def review_request(event_id: int):
+    try:
+        _, event = _assigned_request(
+            event_id, "Only the event's assigned coordinator can review this request."
+        )
+        payload = _request_payload(event)
+    except _Rejected as rejected:
+        return _error(rejected.message, rejected.status_code, **rejected.extra)
+    except SQLAlchemyError:
+        db.session.rollback()
+        return _error("The request could not be loaded. Please try again.", 503, retryable=True)
+
+    return jsonify({"request": payload})
+
+
+@events_bp.post("/<int:event_id>/decision")
+@jwt_required()
+def decide_request(event_id: int):
+    try:
+        user, event = _assigned_request(
+            event_id, "Only the event's assigned coordinator can approve or reject this request."
+        )
+        status, note = _parse_decision(request.get_json(silent=True))
+        if event.status != SUBMITTED_STATUS:
+            raise _Rejected(
+                f"This request is {event.status}; only submitted requests can be "
+                "approved or rejected.",
+                409,
+            )
+
+        organiser = db.session.get(User, event.organiser_id)
+        event.status = status
+        event.decision_note = note
+        event.decided_at = datetime.utcnow()
+        event.decided_by_id = user.id
+        # Saved in the same commit, so the organiser is never told about a decision
+        # that was not saved, and a saved decision always has its notification.
+        db.session.add(
+            Notification(
+                recipient_id=organiser.id,
+                kind=f"request_{status}",
+                message=_decision_message(event, status, note),
+                event_id=event.id,
+            )
+        )
+        db.session.commit()
+        payload = _request_payload(event)
+    except _Rejected as rejected:
+        return _error(rejected.message, rejected.status_code, **rejected.extra)
+    except SQLAlchemyError:
+        db.session.rollback()
+        return _error(
+            "The decision was not saved, so the request is still submitted. Please try again.",
+            503,
+            retryable=True,
+        )
+
+    email_queued = _queue_decision_email(organiser, event, status, note)
+    return jsonify(
+        {
+            "message": f"The request was {status}. {organiser.email} has been notified.",
+            "request": payload,
+            "notification": {"in_app": True, "email_queued": email_queued},
+        }
+    )
+
+
+@events_bp.get("/requests")
+@jwt_required()
+def list_my_requests():
+    """The organiser's submitted, approved and rejected requests (drafts are separate)."""
+    try:
+        user = _require_organiser("Only event organisers have event requests.")
+        requests = (
+            Event.query.filter(Event.organiser_id == user.id, Event.status != DRAFT_STATUS)
+            .order_by(Event.submitted_at.desc().nulls_last(), Event.id.desc())
+            .all()
+        )
+    except _Rejected as rejected:
+        return _error(rejected.message, rejected.status_code, **rejected.extra)
+    except SQLAlchemyError:
+        db.session.rollback()
+        return _error(
+            "Your event requests could not be loaded. Please try again.", 503, retryable=True
+        )
+
+    return jsonify(
+        {
+            "requests": [
+                {"id": r.id, "title": r.title, "status": r.status,
+                 "submitted_at": _isoformat(r.submitted_at),
+                 "decided_at": _isoformat(r.decided_at), "decision_note": r.decision_note}
+                for r in requests
+            ],
+            "message": None if requests else "You have not submitted any event requests yet.",
+        }
+    )
