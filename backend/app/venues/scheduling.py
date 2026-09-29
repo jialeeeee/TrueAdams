@@ -79,6 +79,15 @@ def blocks(venue_ids, start, end):
     return overlapping(query, VenueBlock, start, end).all()
 
 
+def within_hours(hours, start, end):
+    """Whether [start, end), within one day, falls inside the venue's opening hours."""
+    opening = hours.get(start.weekday()) if hours is not None else None
+    if opening is None:
+        return False
+    opens, closes = opening
+    return opens <= start.time() and end.time() <= closes
+
+
 def day_slots(day, hours, periods):
     """Split one day into slots of consistent status, covering 00:00 to next 00:00.
 

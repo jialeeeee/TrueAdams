@@ -1,5 +1,5 @@
 import re
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 
 from flask import Blueprint, jsonify, request
 from flask_jwt_extended import get_jwt_identity, jwt_required
@@ -13,9 +13,22 @@ venues_bp = Blueprint("venues", __name__)
 
 # Roles allowed to browse venues, open their details and view their availability.
 VENUE_VIEWER_ROLES = {"coordinator", "venue_staff"}
+# Roles allowed to search for available venues (SCRUM-37 assumption A1).
+VENUE_SEARCH_ROLES = {"coordinator"}
 # Longest availability range in days. A placeholder until the customer answers Q5.
 MAX_RANGE_DAYS = 31
+# Layouts a search can ask for.
+SUPPORTED_LAYOUTS = ["theatre", "banquet", "cabaret", "cocktail", "classroom", "boardroom",
+                     "u_shape"]
+# List fields a search can filter on: query parameter -> Venue column.
+LIST_FILTERS = {
+    "facility": "facilities",
+    "accessibility": "accessibility_features",
+    "layout": "room_layouts",
+}
 _ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_CLOCK = re.compile(r"^\d{2}:\d{2}$")
+_WHOLE_NUMBER = re.compile(r"^\d+$")
 # Planning fields reported on the details page, in display order.
 DETAIL_FIELDS = [
     "description",
@@ -46,15 +59,15 @@ def _error(message, status_code, **extra):
     return jsonify({"error": message, **extra}), status_code
 
 
-def _require_viewer():
+def _require_viewer(roles=VENUE_VIEWER_ROLES, denied="You are not allowed to view venues."):
     try:
         user = db.session.get(User, int(get_jwt_identity()))
     except (TypeError, ValueError):
         user = None
     if user is None:
         raise _Rejected("Your session is no longer valid. Please log in again.", 401)
-    if user.role not in VENUE_VIEWER_ROLES:
-        raise _Rejected("You are not allowed to view venues.", 403)
+    if user.role not in roles:
+        raise _Rejected(denied, 403)
 
 
 def _recorded(value):
@@ -85,11 +98,9 @@ def _details(venue):
     }
 
 
-def _load_failed():
+def _load_failed(message="Venue information could not be loaded. Please try again."):
     db.session.rollback()
-    return _error(
-        "Venue information could not be loaded. Please try again.", 503, retryable=True
-    )
+    return _error(message, 503, retryable=True)
 
 
 @venues_bp.get("/")
@@ -210,3 +221,135 @@ def check_availability(venue_id: int):
     if body is None:
         return _error("Venue not found.", 404)
     return jsonify(body)
+
+
+def _parse_clock(value, name):
+    if not isinstance(value, str) or not _CLOCK.match(value):
+        raise _Rejected(f"{name} must be a valid time (HH:MM).", 400)
+    try:
+        return time.fromisoformat(value)
+    except ValueError:
+        raise _Rejected(f"{name} must be a valid time (HH:MM).", 400) from None
+
+
+def _search_filters(args):
+    filters = {}
+
+    if "min_capacity" in args:
+        value = args["min_capacity"].strip()
+        if not _WHOLE_NUMBER.match(value) or int(value) < 1:
+            raise _Rejected("Minimum capacity must be a whole number of at least 1.", 400)
+        filters["min_capacity"] = int(value)
+
+    location = args.get("location", "").strip()
+    if location:
+        filters["location"] = location
+
+    for param in LIST_FILTERS:
+        wanted = [v.strip() for v in args.getlist(param) if v.strip()]
+        if wanted:
+            filters[param] = wanted
+    for layout in filters.get("layout", []):
+        if layout.lower() not in SUPPORTED_LAYOUTS:
+            raise _Rejected(
+                f"Layout must be one of: {', '.join(SUPPORTED_LAYOUTS)}.", 400
+            )
+
+    timing = [key for key in ("date", "start", "end") if key in args]
+    if timing and len(timing) < 3:
+        raise _Rejected("Enter the date, start time and end time together.", 400)
+    if timing:
+        day = _parse_date(args["date"], "The date")
+        starts = _parse_clock(args["start"], "The start time")
+        ends = _parse_clock(args["end"], "The end time")
+        if ends <= starts:
+            raise _Rejected("The end time must be after the start time.", 400)
+        filters["period"] = (datetime.combine(day, starts), datetime.combine(day, ends))
+
+    return filters
+
+
+def _matching(recorded, wanted):
+    """The recorded values matching every wanted value (ignoring case), or None.
+
+    Values that were never recorded, or recorded as none, match nothing.
+    """
+    if not recorded:
+        return None
+    wanted_keys = {w.lower() for w in wanted}
+    matched = [r for r in recorded if str(r).lower() in wanted_keys]
+    if {str(m).lower() for m in matched} != wanted_keys:
+        return None
+    return matched
+
+
+def _search_result(venue, filters):
+    """The search result for a venue, or None if it misses any filter."""
+    if "min_capacity" in filters and (
+        venue.capacity is None or venue.capacity < filters["min_capacity"]
+    ):
+        return None
+
+    location = _recorded(venue.location)
+    if "location" in filters and (
+        location is None or filters["location"].lower() not in location.lower()
+    ):
+        return None
+
+    matches = {}
+    for param, field in LIST_FILTERS.items():
+        if param in filters:
+            matched = _matching(getattr(venue, field), filters[param])
+            if matched is None:
+                return None
+            matches[field] = matched
+
+    if "period" in filters:
+        hours = scheduling.parse_operating_hours(venue.operating_hours)
+        if not scheduling.within_hours(hours, *filters["period"]):
+            return None
+
+    return {
+        "id": venue.id,
+        "name": venue.name,
+        "location": location,
+        "capacity": venue.capacity,
+        "matches": matches,
+        "details_url": f"/api/venues/{venue.id}",
+    }
+
+
+def _search(filters):
+    # Venues marked as not bookable never appear (SCRUM-37 assumption A8).
+    venues = Venue.query.filter(Venue.is_available.isnot(False)).order_by(Venue.name).all()
+    results = [r for r in (_search_result(v, filters) for v in venues) if r is not None]
+
+    if "period" in filters and results:
+        start, end = filters["period"]
+        ids = [r["id"] for r in results]
+        taken = {b.venue_id for b in scheduling.blocking_bookings(ids, start, end)}
+        taken |= {b.venue_id for b in scheduling.blocks(ids, start, end)}
+        results = [r for r in results if r["id"] not in taken]
+
+    return results
+
+
+@venues_bp.get("/search")
+@jwt_required()
+def search_venues():
+    try:
+        _require_viewer(VENUE_SEARCH_ROLES, "You are not allowed to search venues.")
+        results = _search(_search_filters(request.args))
+    except _Rejected as rejected:
+        return _error(rejected.message, rejected.status_code)
+    except SQLAlchemyError:
+        # Without the availability check, booked venues could look free, so fail the lot.
+        return _load_failed("The venue search could not be completed. Please try again.")
+
+    return jsonify(
+        {
+            "venues": results,
+            "message": None if results
+            else "No venues match your filters. Try changing or removing some.",
+        }
+    )
