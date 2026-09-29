@@ -83,6 +83,41 @@ class Event(db.Model):
     coordinator_assigned_at = db.Column(db.DateTime)
 
 
+class VenueBooking(db.Model):
+    """A request to use a venue for a period. Only confirmed bookings block time."""
+
+    __tablename__ = "venue_bookings"
+    __table_args__ = (
+        db.CheckConstraint("end_time > start_time", name="venue_bookings_end_after_start"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    venue_id = db.Column(db.Integer, db.ForeignKey("venues.id"), nullable=False)
+    # The event the venue is booked for, once the booking request story records it.
+    event_id = db.Column(db.Integer, db.ForeignKey("events.id"))
+    status = db.Column(db.String(20), nullable=False, default="pending")
+    # Singapore time, stored without a time zone.
+    start_time = db.Column(db.DateTime, nullable=False)
+    end_time = db.Column(db.DateTime, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+class VenueBlock(db.Model):
+    """A recorded period when a venue cannot be used, e.g. maintenance."""
+
+    __tablename__ = "venue_blocks"
+    __table_args__ = (
+        db.CheckConstraint("end_time > start_time", name="venue_blocks_end_after_start"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    venue_id = db.Column(db.Integer, db.ForeignKey("venues.id"), nullable=False)
+    reason = db.Column(db.Text)
+    start_time = db.Column(db.DateTime, nullable=False)
+    end_time = db.Column(db.DateTime, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+
 class Registration(db.Model):
     __tablename__ = "registrations"
 
