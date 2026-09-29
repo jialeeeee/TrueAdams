@@ -51,27 +51,30 @@ class AppTestCase(unittest.TestCase):
             )
 
     def setUp(self):
+        # Cleanups, not tearDown: they also run when a subclass's setUp fails part-way,
+        # so a half-seeded transaction can never stay open holding row locks.
         self.app = get_test_app()
         self.app_context = self.app.app_context()
         self.app_context.push()
+        self.addCleanup(self.app_context.pop)
 
         self.connection = db.engine.connect()
+        self.addCleanup(self.connection.close)
         self.transaction = self.connection.begin()
+        self.addCleanup(self.transaction.rollback)
         self._app_session = db.session
         db.session = scoped_session(
             sessionmaker(bind=self.connection, join_transaction_mode="create_savepoint")
         )
+        self.addCleanup(self._restore_app_session)
 
         self.db = db
         self.client = self.app.test_client()
         self._user_count = 0
 
-    def tearDown(self):
+    def _restore_app_session(self):
         db.session.remove()
         db.session = self._app_session
-        self.transaction.rollback()
-        self.connection.close()
-        self.app_context.pop()
 
     def make_user(self, email=None, role="attendee", password_hash="not-a-real-hash"):
         """Create a User for this test only. Emails are unique per call unless given."""

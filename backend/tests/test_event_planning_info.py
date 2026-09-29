@@ -5,6 +5,8 @@ Endpoint (JWT required, else 401; unknown event -> 404)
         200 {"id", <every PLANNING_FIELDS key>, "not_recorded": [...]}
             organiser, coordinator      {"id", "email"}
             venue                       {"id", "name", "location"} | null
+            expected_attendance         integer | null
+            registration_required       true | false | null (false is a recorded answer)
             start_time, end_time,
             coordinator_assigned_at,
             created_at                  ISO 8601, as stored (naive, no conversion)
@@ -41,11 +43,17 @@ from tests.base import AppTestCase
 # Every field on the planning view, in display order.
 PLANNING_FIELDS = [
     "title",
+    "purpose",
     "description",
     "status",
     "start_time",
     "end_time",
     "venue",
+    "expected_attendance",
+    "venue_requirements",
+    "accessibility_needs",
+    "equipment_requirements",
+    "registration_required",
     "organiser",
     "coordinator",
     "coordinator_assigned_at",
@@ -68,6 +76,15 @@ NON_COORDINATOR_USERS = {
 }
 
 FESTIVAL_DESCRIPTION = "Waterfront lantern festival with live music and food stalls."
+# The request details the organiser filled in (SCRUM-29), all recorded for the festival.
+FESTIVAL_REQUEST_DETAILS = {
+    "purpose": "Celebrate the harbour's reopening with the local community.",
+    "expected_attendance": 350,
+    "venue_requirements": "Waterfront access and space for 20 food stalls.",
+    "accessibility_needs": "Step-free routes and a quiet area.",
+    "equipment_requirements": "Stage lighting and a PA system.",
+    "registration_required": True,
+}
 
 
 class PlanningTestCase(AppTestCase):
@@ -97,12 +114,15 @@ class PlanningTestCase(AppTestCase):
             coordinator_id=alice.id,
             coordinator_assigned_at=datetime(2026, 9, 10, 9, 30),
             created_at=datetime(2026, 9, 5, 14, 0),
+            **FESTIVAL_REQUEST_DETAILS,
         )
-        self.events["retreat"] = self.make_event(  # Description typed in as blanks.
+        self.events["retreat"] = self.make_event(  # Text typed in as blanks.
             organiser=self.users["evan"],
             title="Staff Retreat",
             status="submitted",
             description="   ",
+            accessibility_needs="",
+            registration_required=False,
             coordinator_id=alice.id,
             coordinator_assigned_at=datetime(2026, 9, 12, 11, 0),
         )
@@ -212,6 +232,7 @@ class ViewPlanningInformationTests(PlanningTestCase):
             {
                 "id": self.events["festival"].id,
                 "title": "Harbour Lights Festival",
+                **FESTIVAL_REQUEST_DETAILS,
                 "description": FESTIVAL_DESCRIPTION,
                 "status": "submitted",
                 "start_time": "2026-12-12T17:00:00",
@@ -320,9 +341,12 @@ class PlanningFieldsTests(PlanningTestCase):
         self.assertEqual(body["end_time"], "2026-12-12T22:00:00")
 
     def test_unrecorded_fields_are_null_and_listed_as_not_recorded(self):
-        body = self.planning("assigned")  # Charity Gala: no description, no venue.
+        body = self.planning("assigned")  # Charity Gala: only the basics recorded.
 
-        self.assertEqual(body["not_recorded"], ["description", "venue"])
+        self.assertEqual(body["not_recorded"], [
+            "purpose", "description", "venue", "expected_attendance", "venue_requirements",
+            "accessibility_needs", "equipment_requirements", "registration_required",
+        ])
         self.assertIsNone(body["description"])
         self.assertIsNone(body["venue"])
 
@@ -337,8 +361,16 @@ class PlanningFieldsTests(PlanningTestCase):
     def test_blank_text_is_treated_as_not_recorded(self):
         body = self.planning("retreat")
 
-        self.assertIsNone(body["description"])
-        self.assertIn("description", body["not_recorded"])
+        for field in ("description", "accessibility_needs"):
+            with self.subTest(field=field):
+                self.assertIsNone(body[field])
+                self.assertIn(field, body["not_recorded"])
+
+    def test_registration_not_required_is_a_recorded_answer(self):
+        body = self.planning("retreat")
+
+        self.assertIs(body["registration_required"], False)
+        self.assertNotIn("registration_required", body["not_recorded"])
 
     def test_not_recorded_is_empty_when_everything_is_recorded(self):
         self.assertEqual(self.planning("festival")["not_recorded"], [])
