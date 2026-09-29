@@ -18,13 +18,13 @@
 
 Each rule is tied to an open question below. If the customer answers differently, update the affected test cases before implementation.
 
-- **R1 — Normal fields:** `title` and `description`. These are the only fields this flow saves. *(Q1)*
-- **R2 — Important fields:** `venue_id`, `start_time` and `end_time`, because changing them affects venue bookings and attendees. They are never saved by this flow; SCRUM-52 defines how the coordinator is told to use the review process instead. *(Q2)*
-- **R3 — System fields:** `status`, `organiser_id`, `coordinator_id`, `coordinator_assigned_at`, `created_at` and `id` are managed by other stories and cannot be changed here.
+- **R1 — Normal fields:** `title`, `purpose`, `description` and `accessibility_needs`. These are the only fields this flow saves. *(Q1, Q5)*
+- **R2 — Important fields:** `venue_id`, `start_time`, `end_time`, `expected_attendance`, `venue_requirements` and `registration_required`, because changing them affects venue bookings, venue capacity or attendees. They are never saved by this flow; SCRUM-52 defines how the coordinator is told to use the review process instead. *(Q2)*
+- **R3 — Other fields:** `status`, `organiser_id`, `coordinator_id`, `coordinator_assigned_at`, `created_at`, `id`, the SCRUM-29/32 request tracking fields (`submitted_at`, `last_saved_at`, `decision_note`, `decided_at`, `decided_by_id`) and `equipment_requirements` (recorded through SCRUM-42) are managed by other stories and cannot be changed here.
 - **R4 — Who can edit:** the same rule as viewing (SCRUM-34, A1). Only the event's current coordinator, while their role is still `coordinator`, checked against the database on every request.
 - **R5 — Cancelled events** cannot be edited (HTTP 409). *(Q3)*
 - **R6 — Title:** required text, 1–255 characters after surrounding spaces are removed (255 is the database column limit).
-- **R7 — Description:** optional text, up to 5,000 characters after surrounding spaces are removed. Sending `null`, an empty string or only spaces clears it, and the view then shows it as *not recorded*. *(Q4)*
+- **R7 — Purpose, description and accessibility needs:** optional text, up to 5,000 characters each after surrounding spaces are removed. Sending `null`, an empty string or only spaces clears the field, and the view then shows it as *not recorded*. *(Q4)*
 - **R8 — All or nothing:** if any field in a save is invalid, nothing in that save is stored, and every invalid field is identified at once.
 - **R9 — Retry:** a failed save changes nothing, and sending the same edits again succeeds once the problem clears. The backend returns `retryable: true`; keeping the entered values on screen is the frontend's job.
 
@@ -96,6 +96,13 @@ Users are as in SCRUM-34: alice, ben and chloe (coordinators), admin, dana and e
 - **Expected result:** Saved. The description is no longer listed as *not recorded*.
 - **Automated:** `test_a_description_that_was_not_recorded_can_be_added`
 
+**TC-53-32 · Update the purpose and accessibility needs**
+- **Traces to:** AC1, AC2 · **Type:** Happy path · **Depends on:** Q5
+- **Preconditions:** As TC-53-01.
+- **Steps:** Change E1's purpose to "Mark the harbour's 50th anniversary." and its accessibility needs to "Wheelchair seating near the stage.", then save.
+- **Expected result:** Both are saved and shown in the response.
+- **Automated:** `test_coordinator_can_update_purpose_and_accessibility_needs`
+
 **TC-53-06 · Clear the description**
 - **Traces to:** AC1 · **Type:** Boundary · **Depends on:** Q4
 - **Preconditions:** As TC-53-01.
@@ -156,15 +163,15 @@ For every case in this section: the response is HTTP 422 with a `fields` entry n
 - **Expected result:** 255 saves; 256 is rejected with `fields.title`.
 - **Automated:** `test_title_length_limit`
 
-**TC-53-14 · Description length boundary**
+**TC-53-14 · Optional text length boundary**
 - **Traces to:** AC3 · **Type:** Boundary · **Depends on:** Q4
-- **Test data:** 5,000 characters (accepted), 5,001 characters (rejected).
-- **Expected result:** 5,000 saves; 5,001 is rejected with `fields.description`.
+- **Test data:** for each of purpose, description and accessibility needs: 5,000 characters (accepted), 5,001 characters (rejected).
+- **Expected result:** 5,000 saves; 5,001 is rejected with a `fields` entry for that field.
 - **Automated:** `test_description_length_limit`
 
 **TC-53-15 · Values that are not text**
 - **Traces to:** AC3 · **Type:** Negative
-- **Test data:** title = `123`, `true`, `["a"]`; description = `42`, `{"a": 1}`.
+- **Test data:** title = `123`, `true`, `["a"]`; description = `42`, `{"a": 1}`; purpose = `7`; accessibility needs = `false`.
 - **Expected result:** Rejected with a `fields` entry for the field.
 - **Automated:** `test_values_that_are_not_text_are_rejected`
 
@@ -194,7 +201,7 @@ For every case in this section: the response is HTTP 422 with a `fields` entry n
 
 **TC-53-20 · Unknown and system fields**
 - **Traces to:** AC3 · **Type:** Negative · **Depends on:** R3
-- **Test data:** each of `colour`, `status`, `organiser_id`, `coordinator_id`, `coordinator_assigned_at`, `created_at`, `id`.
+- **Test data:** each of `colour`, `status`, `organiser_id`, `coordinator_id`, `coordinator_assigned_at`, `created_at`, `id`, `equipment_requirements`, `decision_note`, `submitted_at`.
 - **Expected result:** Rejected with a `fields` entry saying the field can't be changed here.
 - **Automated:** `test_unknown_and_system_fields_are_rejected`
 
@@ -231,7 +238,7 @@ For every case in this section: the response is HTTP 422 with a `fields` entry n
 **TC-53-25 · Important fields are never saved by this flow**
 - **Traces to:** AC5 · **Type:** Negative · **Depends on:** Q2
 - **Preconditions:** EU-SEED loaded; logged in as `alice`.
-- **Steps:** For each of `venue_id` (to another venue), `start_time` and `end_time` (to new times), try to save E1.
+- **Steps:** For each of `venue_id` (to another venue), `start_time` and `end_time` (to new times), `expected_attendance` (500), `venue_requirements` and `registration_required` (No), try to save E1.
 - **Expected result:** The stored value is unchanged. (The response the coordinator sees is defined by SCRUM-52.)
 - **Automated:** `test_important_fields_are_not_saved`
 
@@ -273,8 +280,8 @@ For every case in this section: the response is HTTP 422 with a `fields` entry n
 
 | AC | Test cases |
 |----|-----------|
-| AC1 | 01–08 |
-| AC2 | 01, 04, 09, 10, 11 |
+| AC1 | 01–08, 32 |
+| AC2 | 01, 04, 09, 10, 11, 32 |
 | AC3 | 12–20 |
 | AC4 | 21–24 |
 | AC5 | 25 |
@@ -282,7 +289,7 @@ For every case in this section: the response is HTTP 422 with a `fields` entry n
 
 | Type | Test cases |
 |------|-----------|
-| Happy path | 01, 02, 03, 05, 09, 10, 23 |
+| Happy path | 01, 02, 03, 05, 09, 10, 23, 32 |
 | Negative | 04, 11, 12, 15–22, 24–31 |
 | Boundary | 06, 07, 08, 13, 14 |
 | Manual only | 24 |
@@ -292,6 +299,7 @@ For every case in this section: the response is HTTP 422 with a `fields` entry n
 | # | Question | Affects |
 |---|----------|---------|
 | Q1 | Is the event **title** a normal field the coordinator can change directly, or is renaming an event an important change that needs review (e.g. because attendees know it by name)? | R1, TC-53-02, 03, 07, 12, 13 |
-| Q2 | Are venue, start time and end time the complete list of important fields? Should later fields (expected attendance, equipment requirements) be normal or important? | R2, TC-53-25, SCRUM-52 |
+| Q2 | Is the important list right? Expected attendance, venue requirements and registration required were added because they affect venue capacity, bookings and attendees. | R2, TC-53-25, SCRUM-52 |
 | Q3 | Can a coordinator still edit an event that is cancelled, rejected or completed? | R5, TC-53-31 |
-| Q4 | Is 5,000 characters enough for a description? Should clearing a description be allowed? | R7, TC-53-06, 14 |
+| Q4 | Is 5,000 characters enough? Purpose and description are required when an organiser submits a request (SCRUM-29), so should a coordinator be allowed to clear them afterwards? | R7, TC-53-06, 14 |
+| Q5 | Are purpose and accessibility needs normal fields a coordinator can change directly? | R1, TC-53-32 |

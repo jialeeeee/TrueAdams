@@ -19,7 +19,8 @@ These are the team's current reading of the story. Each one is tied to an open q
 
 - **A1 — Authorised to manage:** the event's current coordinator (`Event.coordinator_id`, set by SCRUM-33), and only while their role is still `coordinator`. This is checked against the database on every request, so a reassignment or role change applies immediately, even to a login token issued earlier. *(Q1, Q2)*
 - **A2 — Other roles:** admins, organisers (including the event's own organiser), venue staff, technical support staff and attendees cannot use this view. Their access to event information belongs to other stories. *(Q1)*
-- **A3 — Planning fields:** title, description, status, start date and time, end date and time, venue (name and location), organiser, coordinator, date the coordinator was assigned, and date the request was created. Fields added by later stories (e.g. expected attendance, accessibility needs, equipment requirements) must be added to this list when they are built. *(Q4)*
+- **A3 — Planning fields (16):** title, purpose, description, status, start date and time, end date and time, venue (name and location), expected attendance, venue requirements, accessibility needs, equipment requirements, whether attendee registration is required, organiser, coordinator, date the coordinator was assigned, and date the request was created. The request details (purpose to registration) come from the organiser's request (SCRUM-29). The decision note and draft timestamps (SCRUM-29/32) are not planning information. Fields added by later stories must be added to this list when they are built. *(Q4)*
+- **A9 — Yes/no answers:** "registration not required" (`false`) is a recorded answer and is shown as "No", never as *not recorded*. Only a missing answer (`null`) is *not recorded*.
 - **A4 — Not recorded:** a field that was never recorded, or holds only blank text, is shown as *not recorded*. It is never shown as blank, zero or "none", matching View Venue Details (SCRUM-35).
 - **A5 — Editability:** this view shows every field whether or not the coordinator may edit it. Marking which fields are editable belongs to the edit story. *(Q5)*
 - **A6 — Status:** a coordinator can still view an event they manage after it is cancelled. *(Q3)*
@@ -57,6 +58,8 @@ Reset the database to this data before **every** test case, so that one test can
 | E5 | Winter Networking Night | cancelled | alice (3 Sep 2026 16:00) | *not recorded* | *not recorded* | Thu 1 Oct 2026 09:00 – 11:00 | *(on insert)* |
 | E6 | Staff Retreat | submitted | alice (12 Sep 2026 11:00) | *not recorded* | `"   "` (blanks only) | Thu 1 Oct 2026 09:00 – 11:00 | *(on insert)* |
 
+**Request details (SCRUM-29 fields).** E1 has all of them recorded: purpose "Celebrate the harbour's reopening with the local community.", expected attendance 350, venue requirements "Waterfront access and space for 20 food stalls.", accessibility needs "Step-free routes and a quiet area.", equipment requirements "Stage lighting and a PA system.", registration required Yes. E6 has accessibility needs `""` (empty) and registration required No. The other events have none recorded.
+
 ---
 
 ## AC1 — The coordinator can view events they are authorised to manage
@@ -66,7 +69,7 @@ Reset the database to this data before **every** test case, so that one test can
 - **Preconditions:** EP-SEED loaded; logged in as `alice`.
 - **Steps:** 1. Open the event list. 2. Open Harbour Lights Festival (E1). 3. View its planning information.
 - **Test data:** Event = E1.
-- **Expected result:** All ten planning fields are shown with the values in the EP-SEED table: title, description, status "submitted", 12 Dec 2026 17:00 – 22:00, Aurora Ballroom with its location, organiser dana, coordinator alice, assigned 10 Sep 2026 09:30, created 5 Sep 2026 14:00. Nothing is marked *not recorded*.
+- **Expected result:** All sixteen planning fields are shown with the values in the EP-SEED table and request details: title, purpose, description, expected attendance 350, venue requirements, accessibility needs, equipment requirements, registration required Yes, status "submitted", 12 Dec 2026 17:00 – 22:00, Aurora Ballroom with its location, organiser dana, coordinator alice, assigned 10 Sep 2026 09:30, created 5 Sep 2026 14:00. Nothing is marked *not recorded*.
 - **Automated:** `test_assigned_coordinator_sees_the_events_planning_information`
 
 **TC-34-02 · Coordinator views each of several events they manage**
@@ -116,7 +119,7 @@ Reset the database to this data before **every** test case, so that one test can
 - **Preconditions:** EP-SEED loaded; logged in as `alice`.
 - **Steps:** View E1, E2, E5 and E6.
 - **Test data:** Events = E1, E2, E5, E6.
-- **Expected result:** Each view has all ten planning fields, either with a value or marked *not recorded*. No field is missing from the page.
+- **Expected result:** Each view has all sixteen planning fields, either with a value or marked *not recorded*. No field is missing from the page.
 - **Automated:** `test_every_planning_field_is_always_present`
 
 **TC-34-08 · Fields the coordinator cannot edit are still shown**
@@ -147,17 +150,25 @@ Reset the database to this data before **every** test case, so that one test can
 - **Traces to:** AC2 · **Type:** Negative
 - **Preconditions:** EP-SEED loaded; logged in as `alice`.
 - **Steps:** View Charity Gala (E2).
-- **Test data:** Event = E2 (no description, no venue).
-- **Expected result:** Description and venue are shown as *not recorded*, not as blank, "none" or "TBC". The fields that are recorded (title, dates, organiser and so on) are shown normally.
+- **Test data:** Event = E2 (only title, status, dates, organiser and coordinator recorded).
+- **Expected result:** Purpose, description, venue, expected attendance, venue requirements, accessibility needs, equipment requirements and registration required are all shown as *not recorded*, not as blank, "none" or "TBC". The fields that are recorded (title, dates, organiser and so on) are shown normally.
 - **Automated:** `test_unrecorded_fields_are_null_and_listed_as_not_recorded`, `test_recorded_fields_on_a_partly_recorded_event_are_still_shown`
 
 **TC-34-12 · Blank text is treated as not recorded**
 - **Traces to:** AC2 · **Type:** Boundary
 - **Preconditions:** EP-SEED loaded; logged in as `alice`.
 - **Steps:** View Staff Retreat (E6).
-- **Test data:** Event = E6 (description is three spaces).
-- **Expected result:** Description is shown as *not recorded*, not as an empty box.
+- **Test data:** Event = E6 (description is three spaces; accessibility needs is empty).
+- **Expected result:** Both are shown as *not recorded*, not as empty boxes.
 - **Automated:** `test_blank_text_is_treated_as_not_recorded`
+
+**TC-34-27 · "Registration not required" is a recorded answer**
+- **Traces to:** AC2 · **Type:** Boundary · **Depends on:** A9
+- **Preconditions:** EP-SEED loaded; logged in as `alice`.
+- **Steps:** View Staff Retreat (E6).
+- **Test data:** Event = E6 (registration required = No).
+- **Expected result:** Registration required is shown as "No" (`false`), not as *not recorded*.
+- **Automated:** `test_registration_not_required_is_a_recorded_answer`
 
 **TC-34-13 · Fully recorded event has nothing marked "not recorded"**
 - **Traces to:** AC2 · **Type:** Happy path
@@ -281,7 +292,7 @@ Reset the database to this data before **every** test case, so that one test can
 | AC | Test cases |
 |----|-----------|
 | AC1 | 01, 02, 03, 04, 05, 06 |
-| AC2 | 01, 07, 08, 09, 10, 11, 12, 13, 14, 17 |
+| AC2 | 01, 07, 08, 09, 10, 11, 12, 13, 14, 17, 27 |
 | AC3 | 15, 16, 17, 18, 19 |
 | AC4 | 05, 16, 20, 21, 22, 23, 24, 25, 26 |
 
@@ -289,7 +300,7 @@ Reset the database to this data before **every** test case, so that one test can
 |------|-----------|
 | Happy path | 01, 02, 07, 08, 09, 13, 14, 18 |
 | Negative | 04, 05, 06, 11, 15, 16, 17, 19, 20, 21, 25, 26 |
-| Boundary | 03, 10, 12, 22, 23, 24 |
+| Boundary | 03, 10, 12, 22, 23, 24, 27 |
 | Cross-cutting (authorisation) | 05, 20, 21, 22, 23, 24, 25, 26 |
 | Manual only | 19 |
 
