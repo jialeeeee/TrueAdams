@@ -163,3 +163,87 @@ VENUES = [
         "catering_available": None,
     },
 ]
+
+# ---------- Venue availability (SCRUM-36) and venue search (SCRUM-37) ----------
+#
+# Keys match the refs in docs/test-cases/SCRUM-36-venue-availability.md (AV-SEED)
+# and docs/test-cases/SCRUM-37-venue-search.md (SV-SEED). `venue` refers to VENUES
+# or SEARCH_VENUES keys. Times are Singapore time, stored without a time zone.
+
+# Extra venues for search, alongside VENUES (SV-SEED).
+SEARCH_VENUES = [
+    {  # Shares Aurora Ballroom's building, but is smaller and closes earlier.
+        "key": "harbour_room",
+        "name": "Harbour Room",
+        "description": "Mid-sized function room overlooking the marina.",
+        "location": "Level 2, Marina Tower, 10 Bayfront Ave",
+        "capacity": 120,
+        "area_sqm": 240,
+        "is_available": True,
+        "facilities": ["Projector", "Wi-Fi"],
+        "accessibility_features": ["Wheelchair ramp"],
+        "room_layouts": ["theatre", "classroom"],
+        "operating_hours": "Mon-Sun 08:00-22:00",
+        "contact_email": "rooms@marinatower.test",
+        "contact_phone": "+65 6123 4568",
+        "parking_spaces": 120,
+        "catering_available": True,
+    },
+    {  # Same capacity as Aurora Ballroom, for capacity boundaries; no Wi-Fi or hearing loop.
+        "key": "summit_hall",
+        "name": "Summit Hall",
+        "description": "Conference hall with fixed staging.",
+        "location": "5 Orchard Link",
+        "capacity": 400,
+        "area_sqm": 900,
+        "is_available": True,
+        "facilities": ["Stage", "Projector", "PA system"],
+        "accessibility_features": ["Wheelchair ramp", "Accessible toilets"],
+        "room_layouts": ["theatre", "banquet"],
+        "operating_hours": "Mon-Sat 08:00-23:00",
+        "contact_email": "bookings@summithall.test",
+        "contact_phone": "+65 6222 3333",
+        "parking_spaces": 60,
+        "catering_available": True,
+    },
+]
+
+# AV-SEED: bookings and blocks for the availability calendar.
+AVAILABILITY_BOOKINGS = [
+    {"key": "B1", "venue": "fully_recorded", "status": "confirmed",
+     "start_time": datetime(2026, 10, 15, 10, 0), "end_time": datetime(2026, 10, 15, 12, 0)},
+    {"key": "B2", "venue": "fully_recorded", "status": "confirmed",
+     "start_time": datetime(2026, 10, 15, 14, 0), "end_time": datetime(2026, 10, 15, 16, 0)},
+    {"key": "B3", "venue": "fully_recorded", "status": "pending",
+     "start_time": datetime(2026, 10, 15, 18, 0), "end_time": datetime(2026, 10, 15, 20, 0)},
+    {"key": "B4", "venue": "fully_recorded", "status": "cancelled",
+     "start_time": datetime(2026, 10, 15, 20, 0), "end_time": datetime(2026, 10, 15, 21, 0)},
+    {"key": "B6", "venue": "recorded_as_none", "status": "confirmed",
+     "start_time": datetime(2026, 10, 15, 9, 0), "end_time": datetime(2026, 10, 15, 18, 0)},
+]
+
+AVAILABILITY_BLOCKS = [
+    {"key": "K1", "venue": "fully_recorded", "reason": "Floor polishing",
+     "start_time": datetime(2026, 10, 15, 16, 0), "end_time": datetime(2026, 10, 15, 17, 0)},
+    {"key": "K2", "venue": "fully_recorded", "reason": "Electrical works",
+     "start_time": datetime(2026, 10, 16, 20, 0), "end_time": datetime(2026, 10, 17, 12, 0)},
+    {"key": "K3", "venue": "fully_recorded", "reason": "AV rigging",
+     "start_time": datetime(2026, 10, 15, 11, 0), "end_time": datetime(2026, 10, 15, 13, 0)},
+]
+
+# SV-SEED: bookings and blocks for venue search, all on Thu 15 Oct 2026.
+SEARCH_BOOKINGS = [
+    {"key": "B1", "venue": "fully_recorded", "status": "confirmed",
+     "start_time": datetime(2026, 10, 15, 10, 0), "end_time": datetime(2026, 10, 15, 12, 0)},
+    {"key": "B2", "venue": "summit_hall", "status": "pending",
+     "start_time": datetime(2026, 10, 15, 10, 0), "end_time": datetime(2026, 10, 15, 12, 0)},
+    {"key": "B3", "venue": "summit_hall", "status": "cancelled",
+     "start_time": datetime(2026, 10, 15, 14, 0), "end_time": datetime(2026, 10, 15, 16, 0)},
+    {"key": "B4", "venue": "recorded_as_none", "status": "confirmed",
+     "start_time": datetime(2026, 10, 15, 9, 0), "end_time": datetime(2026, 10, 15, 18, 0)},
+]
+
+SEARCH_BLOCKS = [
+    {"key": "K1", "venue": "harbour_room", "reason": "Maintenance",
+     "start_time": datetime(2026, 10, 15, 13, 0), "end_time": datetime(2026, 10, 15, 15, 0)},
+]

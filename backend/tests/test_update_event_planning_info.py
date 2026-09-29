@@ -11,10 +11,12 @@ Endpoint (JWT required, else 401; unknown event -> 404)
         503 {"error", "retryable": true} if the database fails. Nothing is saved.
 
 Editing rules
-    Normal fields: title (required, 1-255 characters) and description (optional,
-    up to 5,000 characters; null or blank clears it). Surrounding spaces are removed.
-    Important fields (venue_id, start_time, end_time) are never saved here; SCRUM-52
-    decides what the coordinator is told. Every other field can't be changed here.
+    Normal fields: title (required, 1-255 characters), and purpose, description and
+    accessibility_needs (optional, up to 5,000 characters; null or blank clears them).
+    Surrounding spaces are removed. Important fields (venue_id, start_time, end_time,
+    expected_attendance, venue_requirements, registration_required) are never saved
+    here; SCRUM-52 decides what the coordinator is told. Every other field, including
+    equipment_requirements (SCRUM-42), can't be changed here.
 
 Each test inserts the users and events in tests/seed_data.py, plus the events
 below, into the public tables and rolls them back afterwards.
@@ -40,7 +42,13 @@ IMPORTANT_CHANGES = {
     "venue_id": None,  # Set in setUp to the id of a different venue.
     "start_time": "2026-12-12T18:00:00",
     "end_time": "2026-12-12T23:00:00",
+    "expected_attendance": 500,
+    "venue_requirements": "Indoor hall for 500.",
+    "registration_required": False,
 }
+
+# Optional text fields the coordinator may edit, besides the description.
+OPTIONAL_TEXT_FIELDS = ["purpose", "description", "accessibility_needs"]
 
 SYSTEM_FIELD_CHANGES = {
     "colour": "blue",
@@ -50,6 +58,9 @@ SYSTEM_FIELD_CHANGES = {
     "coordinator_assigned_at": "2026-09-20T10:00:00",
     "created_at": "2026-01-01T00:00:00",
     "id": 1,
+    "equipment_requirements": "Two projectors.",
+    "decision_note": "Approved.",
+    "submitted_at": "2026-09-01T09:00:00",
 }
 
 NON_COORDINATOR_USERS = {
@@ -216,6 +227,18 @@ class EditNormalFieldsTests(UpdatePlanningTestCase):
         self.assertEqual(body["title"], "Harbour Lights Festival 2026")
         self.assertEqual(self.reload("festival").title, "Harbour Lights Festival 2026")
 
+    def test_coordinator_can_update_purpose_and_accessibility_needs(self):
+        body = self.save("festival", {
+            "purpose": "Mark the harbour's 50th anniversary.",
+            "accessibility_needs": "Wheelchair seating near the stage.",
+        })
+
+        self.assertEqual(body["purpose"], "Mark the harbour's 50th anniversary.")
+        self.assertEqual(body["accessibility_needs"], "Wheelchair seating near the stage.")
+        event = self.reload("festival")
+        self.assertEqual(event.purpose, "Mark the harbour's 50th anniversary.")
+        self.assertEqual(event.accessibility_needs, "Wheelchair seating near the stage.")
+
     def test_title_and_description_can_be_updated_together(self):
         self.save("festival", {"title": "Harbour Lights", "description": NEW_DESCRIPTION})
 
@@ -300,16 +323,19 @@ class ValidationTests(UpdatePlanningTestCase):
         self.assertEqual(self.reload("festival").title, "T" * 255)
 
     def test_description_length_limit(self):
-        with self.assert_unchanged("festival"):
-            response = self.patch("festival", {"description": "D" * 5001})
-            self.assert_needs_correction(response, "description")
+        for field in OPTIONAL_TEXT_FIELDS:
+            with self.subTest(field=field):
+                with self.assert_unchanged("festival"):
+                    response = self.patch("festival", {field: "D" * 5001})
+                    self.assert_needs_correction(response, field)
 
-        self.save("festival", {"description": "D" * 5000})
-        self.assertEqual(self.reload("festival").description, "D" * 5000)
+                self.save("festival", {field: "D" * 5000})
+                self.assertEqual(getattr(self.reload("festival"), field), "D" * 5000)
 
     def test_values_that_are_not_text_are_rejected(self):
         cases = [("title", 123), ("title", True), ("title", ["a"]),
-                 ("description", 42), ("description", {"a": 1})]
+                 ("description", 42), ("description", {"a": 1}),
+                 ("purpose", 7), ("accessibility_needs", False)]
         for field, value in cases:
             with self.subTest(field=field, value=value), self.assert_unchanged("festival"):
                 self.assert_needs_correction(self.patch("festival", {field: value}), field)

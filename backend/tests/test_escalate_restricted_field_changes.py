@@ -2,8 +2,9 @@
 
 Builds on the SCRUM-53 normal-edit flow, PATCH /api/events/<id>.
 
-Restricted fields: venue_id, start_time, end_time. A request that changes one is
-never saved through this flow. Instead the response carries:
+Restricted fields: venue_id, start_time, end_time, expected_attendance,
+venue_requirements, registration_required. A request that changes one is never
+saved through this flow. Instead the response carries:
 
     "requires_review": {
         "fields":    [<restricted fields changed, in the order above>],
@@ -28,7 +29,11 @@ from tests.test_update_event_planning_info import NEW_DESCRIPTION, UpdatePlannin
 
 NEW_START = "2026-12-12T18:00:00"
 NEW_END = "2026-12-12T23:00:00"
-RESTRICTED_FIELDS = ["venue_id", "start_time", "end_time"]
+RESTRICTED_FIELDS = [
+    "venue_id", "start_time", "end_time",
+    "expected_attendance", "venue_requirements", "registration_required",
+]
+FESTIVAL_VENUE_REQUIREMENTS = "Waterfront access and space for 20 food stalls."
 
 
 class RestrictedFieldTestCase(UpdatePlanningTestCase):
@@ -36,6 +41,22 @@ class RestrictedFieldTestCase(UpdatePlanningTestCase):
         super().setUp()
         self.old_venue = self.venues["fully_recorded"]
         self.new_venue = self.venues["partially_recorded"]
+        festival = self.events["festival"]
+        festival.expected_attendance = 350
+        festival.venue_requirements = FESTIVAL_VENUE_REQUIREMENTS
+        festival.registration_required = True
+        self.db.session.commit()
+
+    def restricted_changes(self):
+        """A new value for every restricted field of the festival."""
+        return {
+            "venue_id": self.new_venue.id,
+            "start_time": NEW_START,
+            "end_time": NEW_END,
+            "expected_attendance": 500,
+            "venue_requirements": "Indoor hall for 500 in case of rain.",
+            "registration_required": False,
+        }
 
     def change_url(self, key):
         return f"/api/events/{self.events[key].id}/change-requests"
@@ -61,27 +82,20 @@ class RestrictedFieldTestCase(UpdatePlanningTestCase):
 
 class RestrictedChangeBlockedTests(RestrictedFieldTestCase):
     def test_each_restricted_field_is_blocked(self):
-        changes = {
-            "venue_id": self.new_venue.id,
-            "start_time": NEW_START,
-            "end_time": NEW_END,
-        }
-        for field, value in changes.items():
+        for field, value in self.restricted_changes().items():
             with self.subTest(field=field), self.assert_unchanged("festival"):
                 self.assert_blocked(self.patch("festival", {field: value}), field)
 
     def test_several_restricted_fields_are_blocked_together(self):
         with self.assert_unchanged("festival"):
-            response = self.patch("festival", {
-                "end_time": NEW_END,
-                "start_time": NEW_START,
-                "venue_id": self.new_venue.id,
-            })
+            # Sent in reverse; the response lists them in the fixed order.
+            response = self.patch("festival", dict(reversed(self.restricted_changes().items())))
 
             self.assert_blocked(response, *RESTRICTED_FIELDS)
 
     def test_removing_a_restricted_value_is_a_change(self):
-        for field in ("venue_id", "start_time"):
+        for field in ("venue_id", "start_time", "expected_attendance", "venue_requirements",
+                      "registration_required"):
             with self.subTest(field=field), self.assert_unchanged("festival"):
                 self.assert_blocked(self.patch("festival", {field: None}), field)
 
@@ -93,6 +107,9 @@ class RestrictedChangeBlockedTests(RestrictedFieldTestCase):
                     "venue_id": self.old_venue.id,
                     "start_time": start,
                     "end_time": end,
+                    "expected_attendance": 350,
+                    "venue_requirements": f"  {FESTIVAL_VENUE_REQUIREMENTS}  ",
+                    "registration_required": True,
                     "description": NEW_DESCRIPTION,
                 })
 
@@ -101,7 +118,10 @@ class RestrictedChangeBlockedTests(RestrictedFieldTestCase):
 
     def test_badly_formed_restricted_values_need_correction(self):
         cases = [("venue_id", "abc"), ("venue_id", True), ("venue_id", 1.5),
-                 ("start_time", "next Friday"), ("end_time", 1700)]
+                 ("start_time", "next Friday"), ("end_time", 1700),
+                 ("expected_attendance", 0), ("expected_attendance", "many"),
+                 ("expected_attendance", True), ("venue_requirements", 5),
+                 ("venue_requirements", "R" * 5001), ("registration_required", "yes")]
         for field, value in cases:
             with self.subTest(field=field, value=value), self.assert_unchanged("festival"):
                 self.assert_needs_correction(self.patch("festival", {field: value}), field)

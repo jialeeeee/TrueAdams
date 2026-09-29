@@ -17,9 +17,9 @@
 
 Each one is tied to an open question below. If the customer answers differently, update the affected test cases before implementation.
 
-- **B1 — Restricted fields:** `venue_id`, `start_time` and `end_time`, because they affect venue bookings and attendees. This is the "important" list from SCRUM-53, rule R2. *(Q1)*
+- **B1 — Restricted fields:** `venue_id`, `start_time`, `end_time`, `expected_attendance`, `venue_requirements` and `registration_required`, because they affect venue bookings, venue capacity or attendees. This is the "important" list from SCRUM-53, rule R2. *(Q1)*
 - **B2 — What counts as a change:** a restricted field sent with its current value is not a change and is ignored, because edit forms often send every field back. Times are compared as dates and times, so `2026-12-12T17:00` equals `2026-12-12T17:00:00`. Sending `null` for a recorded venue or time is a change.
-- **B3 — Format check only:** a restricted value must be well-formed (venue: a whole number or `null`; times: an ISO 8601 date and time) or the save is rejected with a correction, as in SCRUM-53. Whether the change itself makes sense (the venue exists and is free, end after start) is left to the review process. *(Q2)*
+- **B3 — Format check only:** a restricted value must be well-formed (venue: a whole number or `null`; times: an ISO 8601 date and time; expected attendance: a whole number of at least 1; venue requirements: text of up to 5,000 characters; registration required: yes or no; any of them may be `null`), matching the SCRUM-29 draft rules, or the save is rejected with a correction, as in SCRUM-53. Whether the change itself makes sense (the venue exists and is free, end after start) is left to the review process. *(Q2)*
 - **B4 — Only restricted changes:** nothing is saved, and the response is HTTP 409 with `requires_review`.
 - **B5 — Mixed with normal edits:** the valid normal edits are saved (HTTP 200), and the response also carries `requires_review` for the blocked fields. *(Q3)*
 - **B6 — Invalid input still stops everything:** if any normal field is invalid, or a field can't be changed at all (SCRUM-53, rules R3 and R8), nothing is saved (HTTP 422). `requires_review` is still included, so the coordinator learns everything in one attempt.
@@ -42,7 +42,7 @@ Each one is tied to an open question below. If the customer answers differently,
 }
 ```
 
-`fields` is always in the order venue, start time, end time.
+`fields` is always in the order venue, start time, end time, expected attendance, venue requirements, registration requirement.
 
 | Situation | HTTP | Saved | Body |
 |-----------|------|-------|------|
@@ -53,7 +53,7 @@ Each one is tied to an open question below. If the customer answers differently,
 
 ## Seed data (ER-SEED)
 
-The same as SCRUM-53 (EU-SEED). The main event is E1, Harbour Lights Festival: coordinator `alice`, venue Aurora Ballroom, 12 Dec 2026 17:00 – 22:00. A second venue, Bayfront Pavilion, exists to move to.
+The same as SCRUM-53 (EU-SEED). The main event is E1, Harbour Lights Festival: coordinator `alice`, venue Aurora Ballroom, 12 Dec 2026 17:00 – 22:00, expected attendance 350, venue requirements "Waterfront access and space for 20 food stalls.", registration required Yes. A second venue, Bayfront Pavilion, exists to move to.
 
 ---
 
@@ -72,26 +72,33 @@ The same as SCRUM-53 (EU-SEED). The main event is E1, Harbour Lights Festival: c
 - **Expected result:** As TC-52-01, naming `start_time` or `end_time`. Times are unchanged.
 - **Automated:** `test_each_restricted_field_is_blocked` (start time, end time)
 
-**TC-52-03 · Change all three at once**
+**TC-52-20 · Change the expected attendance, venue requirements or registration requirement**
+- **Traces to:** AC1 · **Type:** Negative · **Depends on:** Q1
+- **Steps:** Separately, change E1's expected attendance to 500, its venue requirements to "Indoor hall for 500 in case of rain.", and registration required to No.
+- **Expected result:** As TC-52-01, naming the field. Nothing changes.
+- **Automated:** `test_each_restricted_field_is_blocked` (the other three fields)
+
+**TC-52-03 · Change every restricted field at once**
 - **Traces to:** AC1 · **Type:** Negative
-- **Expected result:** HTTP 409. `requires_review.fields` is `["venue_id", "start_time", "end_time"]`. Nothing changes.
+- **Steps:** Send new values for all six restricted fields, in reverse order.
+- **Expected result:** HTTP 409. `requires_review.fields` lists all six in the fixed order (venue, start time, end time, expected attendance, venue requirements, registration requirement). Nothing changes.
 - **Automated:** `test_several_restricted_fields_are_blocked_together`
 
-**TC-52-04 · Remove the venue or a time**
+**TC-52-04 · Remove a restricted value**
 - **Traces to:** AC1 · **Type:** Boundary · **Depends on:** B2
-- **Test data:** `venue_id: null`, `start_time: null`.
+- **Test data:** `null` for each of venue, start time, expected attendance, venue requirements and registration required.
 - **Expected result:** Treated as a change: HTTP 409, nothing changes.
 - **Automated:** `test_removing_a_restricted_value_is_a_change`
 
 **TC-52-05 · Restricted fields sent with their current values**
 - **Traces to:** AC1, AC4 · **Type:** Boundary · **Depends on:** B2
-- **Steps:** Save E1 with its current venue, start and end time (in both `…T17:00` and `…T17:00:00` form), plus a new description.
+- **Steps:** Save E1 with its current venue, start and end time (in both `…T17:00` and `…T17:00:00` form), expected attendance, venue requirements (with extra spaces around it) and registration requirement, plus a new description.
 - **Expected result:** HTTP 200. The description is saved. There is no `requires_review`.
 - **Automated:** `test_restricted_fields_sent_unchanged_are_not_blocked`
 
 **TC-52-06 · Badly formed restricted values**
 - **Traces to:** AC1 · **Type:** Negative · **Depends on:** B3
-- **Test data:** `venue_id: "abc"`, `venue_id: true`, `start_time: "next Friday"`, `end_time: 1700`.
+- **Test data:** `venue_id: "abc"`, `venue_id: true`, `venue_id: 1.5`, `start_time: "next Friday"`, `end_time: 1700`, `expected_attendance: 0`, `"many"` and `true`, `venue_requirements: 5` and 5,001 characters, `registration_required: "yes"`.
 - **Expected result:** HTTP 422 with a `fields` entry for the field. Nothing changes.
 - **Automated:** `test_badly_formed_restricted_values_need_correction`
 
@@ -184,7 +191,7 @@ The same as SCRUM-53 (EU-SEED). The main event is E1, Harbour Lights Festival: c
 
 | AC | Test cases |
 |----|-----------|
-| AC1 | 01–06 |
+| AC1 | 01–06, 20 |
 | AC2 | 01, 07, 08, 09, 10 |
 | AC3 | 11, 12, 13, 14, 16 |
 | AC4 | 05, 14, 15–19 |
@@ -192,14 +199,14 @@ The same as SCRUM-53 (EU-SEED). The main event is E1, Harbour Lights Festival: c
 | Type | Test cases |
 |------|-----------|
 | Happy path | 07, 08, 09, 13, 15, 16, 17 |
-| Negative | 01, 02, 03, 06, 10, 11, 12, 14, 18, 19 |
+| Negative | 01, 02, 03, 06, 10, 11, 12, 14, 18, 19, 20 |
 | Boundary | 04, 05 |
 
 ## Open questions for the customer
 
 | # | Question | Affects |
 |---|----------|---------|
-| Q1 | Are venue, start time and end time the full list of important fields? Is the title one too (see SCRUM-53, Q1)? | B1, all cases |
+| Q1 | Is the restricted list right? Expected attendance, venue requirements and registration required were added after SCRUM-29 introduced them. Is the title one too (see SCRUM-53, Q1)? | B1, all cases |
 | Q2 | Should the normal-edit flow check that a requested venue exists and is free, or only the review process? | B3, TC-52-06 |
 | Q3 | When a save mixes normal and restricted changes, should the normal ones be saved (current behaviour) or should the coordinator confirm first? | B5, TC-52-15 |
 | Q4 | Should blocking a change create the change request automatically, or should the coordinator submit it? The next step assumes the SCRUM-46 endpoint will be `POST /api/events/<id>/change-requests`; confirm with the SCRUM-46 owner. | B7, B8, TC-52-08 |
