@@ -82,6 +82,13 @@ class Event(db.Model):
     coordinator_id = db.Column(db.Integer, db.ForeignKey("users.id"))
     coordinator_assigned_at = db.Column(db.DateTime)
 
+    # Attendee registration (SCRUM-45). The period is Singapore time, stored without a
+    # time zone. NULL means not recorded, which keeps registration closed.
+    registration_opens_at = db.Column(db.DateTime)
+    registration_closes_at = db.Column(db.DateTime)
+    registration_capacity = db.Column(db.Integer)
+    waitlist_enabled = db.Column(db.Boolean)
+
 
 class VenueBooking(db.Model):
     """A request to use a venue for a period. Only confirmed bookings block time."""
@@ -119,12 +126,26 @@ class VenueBlock(db.Model):
 
 
 class Registration(db.Model):
+    """An attendee's place at an event, or on its waiting list (SCRUM-45)."""
+
     __tablename__ = "registrations"
+    __table_args__ = (
+        # At most one active (registered or waitlisted) registration per attendee per event.
+        db.Index(
+            "registrations_one_active_per_attendee",
+            "event_id",
+            "attendee_id",
+            unique=True,
+            postgresql_where=db.text("status in ('registered', 'waitlisted')"),
+        ),
+    )
 
     id = db.Column(db.Integer, primary_key=True)
     event_id = db.Column(db.Integer, db.ForeignKey("events.id"), nullable=False)
     attendee_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
     registered_at = db.Column(db.DateTime, default=datetime.utcnow)
+    # "registered", "waitlisted" or "cancelled". Only registered ones take a place.
+    status = db.Column(db.String(20), nullable=False, default="registered")
 
 
 class EventClarification(db.Model):
