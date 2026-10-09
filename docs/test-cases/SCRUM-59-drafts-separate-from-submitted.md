@@ -2,7 +2,7 @@
 
 **User story:** As an Event Organiser, I want to see my draft requests clearly separated from my submitted ones so that I can find and finish the requests I haven't submitted yet.
 
-**Created:** 9 Oct 2026 · **Status of all cases:** Automated tests written first (TDD, red); they fail until the story is implemented. · **Automated tests:** `backend/tests/test_my_event_requests.py`, `frontend/src/pages/MyEventRequestsPage.test.jsx` · **Endpoint:** `GET /api/events/mine` · **Related:** SCRUM-29 (drafts, the draft editor), SCRUM-32 (decisions on submitted requests)
+**Created:** 9 Oct 2026 · **Status of all cases:** Automated cases pass (9 Oct 2026, Supabase + Vitest). · **Automated tests:** `backend/tests/test_my_event_requests.py`, `frontend/src/pages/MyEventRequestsPage.test.jsx` · **Endpoint:** `GET /api/events/mine` · **Related:** SCRUM-29 (drafts, the draft editor), SCRUM-32 (decisions on submitted requests)
 
 ## Acceptance criteria
 

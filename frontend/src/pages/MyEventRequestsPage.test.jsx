@@ -95,7 +95,7 @@ describe("SCRUM-59 my event requests", () => {
     ["missing", null],
     ["empty", ""],
     ["only spaces", "   "],
-  ])("shows a draft with a %s name as Untitled draft, still linked", async (_label, title) => {
+  ])("shows a draft whose name is %s as Untitled draft, still linked", async (_label, title) => {
     apiClient.get.mockResolvedValue(loaded([{ id: 3, title, status: "draft", last_saved_at: "2026-09-26T09:00:00" }], []));
     renderPage();
 

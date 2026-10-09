@@ -1046,3 +1046,55 @@ def list_my_requests():
             "message": None if requests else "You have not submitted any event requests yet.",
         }
     )
+
+
+# ---------- Drafts and submitted requests together (SCRUM-59) ----------
+
+
+def _newest_first(events, field):
+    """Most recent first by `field`, rows without it last, then by id (newest first)."""
+    return sorted(
+        events,
+        key=lambda e: (getattr(e, field) is not None, getattr(e, field) or datetime.min, e.id),
+        reverse=True,
+    )
+
+
+@events_bp.get("/mine")
+@jwt_required()
+def list_mine():
+    """The organiser's drafts and submitted requests as two groups.
+
+    Loaded in one query, so a request submitted while the list loads can never
+    appear in both groups or in neither.
+    """
+    try:
+        user = _require_organiser("Only event organisers have event requests.")
+        events = Event.query.filter_by(organiser_id=user.id).all()
+    except _Rejected as rejected:
+        return _error(rejected.message, rejected.status_code, **rejected.extra)
+    except SQLAlchemyError:
+        db.session.rollback()
+        return _error(
+            "Your event requests could not be loaded. Please try again.", 503, retryable=True
+        )
+
+    drafts = [e for e in events if e.status == DRAFT_STATUS]
+    submitted = [e for e in events if e.status != DRAFT_STATUS]
+    return jsonify(
+        {
+            "drafts": [
+                # A blank name is sent as null, so the page shows "Untitled draft" (A6).
+                {"id": d.id, "title": _recorded(d.title), "status": d.status,
+                 "last_saved_at": _isoformat(d.last_saved_at)}
+                for d in _newest_first(drafts, "last_saved_at")
+            ],
+            "submitted": [
+                {"id": r.id, "title": r.title, "status": r.status,
+                 "submitted_at": _isoformat(r.submitted_at),
+                 "decided_at": _isoformat(r.decided_at), "decision_note": r.decision_note}
+                for r in _newest_first(submitted, "submitted_at")
+            ],
+            "message": None if events else "You have no event requests yet.",
+        }
+    )
