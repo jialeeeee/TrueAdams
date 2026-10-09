@@ -4,6 +4,7 @@ const LABELS = {
   submitted: "Submitted",
   under_review: "Under review",
   approved: "Approved",
+  confirmed: "Confirmed",
   rejected: "Rejected",
   cancelled: "Cancelled",
 };
