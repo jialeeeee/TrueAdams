@@ -50,7 +50,6 @@ UNIMPLEMENTED_ROUTES = [
     ("POST", "/api/events/1/change-requests"),
     ("POST", "/api/venues/"),
     ("POST", "/api/resources/1/reservations"),
-    ("POST", "/api/registrations/"),
 ]
 
 
