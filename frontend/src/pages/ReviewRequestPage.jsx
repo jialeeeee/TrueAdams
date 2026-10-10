@@ -1,11 +1,18 @@
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import apiClient from "../api/client.js";
+import decidedBy from "../utils/decidedBy.js";
 import formatSavedAt from "../utils/formatSavedAt.js";
 import statusLabel from "../utils/statusLabel.js";
 
 // Must match MAX_DECISION_WORDS in backend/app/events/routes.py.
 const MAX_WORDS = 1000;
+// A reason needs at least one visible character: spaces of any kind, including
+// invisible ones such as zero-width spaces, are not a reason (SCRUM-60 A3).
+// Must match _has_visible_text in backend/app/events/routes.py.
+const VISIBLE = /[^\s\p{C}\p{Z}]/u;
+// Must match REASON_REQUIRED in backend/app/events/routes.py.
+const REASON_REQUIRED = "A reason is required to reject this request.";
 
 // The organiser's request fields (SCRUM-29), in display order.
 const DETAILS = [
@@ -45,6 +52,8 @@ export default function ReviewRequestPage() {
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  // Set when the reason itself was refused, here or by the server, to mark the box.
+  const [reasonInvalid, setReasonInvalid] = useState(false);
   const [confirmation, setConfirmation] = useState("");
   const [emailNote, setEmailNote] = useState("");
 
@@ -66,11 +75,17 @@ export default function ReviewRequestPage() {
   const over = words - MAX_WORDS;
 
   const decide = async (decision) => {
+    const reason = VISIBLE.test(text) ? text.trim() : "";
+    if (decision === "reject" && !reason) {
+      setError(REASON_REQUIRED);
+      setReasonInvalid(true);
+      return;
+    }
     setBusy(true);
     setError("");
+    setReasonInvalid(false);
     setConfirmation("");
     setEmailNote("");
-    const reason = text.trim();
     try {
       const response = await apiClient.post(
         `/events/${eventId}/decision`,
@@ -84,8 +99,9 @@ export default function ReviewRequestPage() {
       }
       setText("");
     } catch (failure) {
-      // The typed reason stays in the box so the decision can be tried again.
+      // The typed reason stays in the box, as typed, so the decision can be tried again.
       setError(explain(failure, "The decision was not saved. Check your connection and try again."));
+      setReasonInvalid(failure.response?.data?.field === "reason");
     } finally {
       setBusy(false);
     }
@@ -112,10 +128,10 @@ export default function ReviewRequestPage() {
         <p>{`${request.status === "rejected" ? "Reason" : "Note"}: ${request.decision_note}`}</p>
       )}
       {request.decided_at && (
-        <p>
-          Decided {formatSavedAt(request.decided_at)}
-          {request.decided_by ? ` by ${request.decided_by.email}` : ""}
-        </p>
+        <>
+          <p>{`Decided ${formatSavedAt(request.decided_at)}`}</p>
+          <p>{decidedBy(request)}</p>
+        </>
       )}
 
       <dl>
@@ -127,7 +143,12 @@ export default function ReviewRequestPage() {
         ))}
       </dl>
 
-      {confirmation && <p role="status">{confirmation}</p>}
+      {confirmation && (
+        <div role="status">
+          <p>{confirmation}</p>
+          <p>{`${decidedBy(request)} · ${formatSavedAt(request.decided_at)}`}</p>
+        </div>
+      )}
       {emailNote && <p>{emailNote}</p>}
 
       {undecided && (
@@ -139,7 +160,16 @@ export default function ReviewRequestPage() {
             id="decision-reason"
             rows={5}
             value={text}
-            onChange={(e) => setText(e.target.value)}
+            aria-invalid={reasonInvalid}
+            aria-describedby={error ? "decision-error" : undefined}
+            onChange={(e) => {
+              setText(e.target.value);
+              // A refused reason's message goes once the coordinator edits it.
+              if (reasonInvalid) {
+                setError("");
+                setReasonInvalid(false);
+              }
+            }}
           />
           <p>{`${words} / ${MAX_WORDS} words`}</p>
           {over > 0 && (
@@ -147,11 +177,11 @@ export default function ReviewRequestPage() {
               That is over the 1,000-word limit. Remove {over} word{over === 1 ? "" : "s"} to continue.
             </p>
           )}
-          {error && <p role="alert">{error}</p>}
+          {error && <p role="alert" id="decision-error">{error}</p>}
           <button type="button" onClick={() => decide("approve")} disabled={busy || over > 0}>
             Approve
           </button>
-          <button type="button" onClick={() => decide("reject")} disabled={busy || words === 0 || over > 0}>
+          <button type="button" onClick={() => decide("reject")} disabled={busy || over > 0}>
             Reject
           </button>
         </form>

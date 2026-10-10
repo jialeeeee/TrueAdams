@@ -9,7 +9,8 @@ Endpoint (JWT required, else 401; organisers only, else 403)
         200 {"drafts": [draft], "submitted": [request], "message": str | null}
         503 {"error", "retryable": true} if loading fails
     draft   = {"id", "title", "status", "last_saved_at"}   title is null when blank
-    request = {"id", "title", "status", "submitted_at", "decided_at", "decision_note"}
+    request = {"id", "title", "status", "submitted_at", "decided_at", "decision_note",
+               "decided_by"}  (decided_by added by SCRUM-60)
 
 Opening a draft, and refusing to open a submitted request as one, use the SCRUM-29
 endpoints GET/PUT /api/events/drafts/<id>.
@@ -172,6 +173,8 @@ class LabelsTests(MyRequestsTestCase):
             "id": self.requests["S3"].id, "title": "Alumni Mixer", "status": "approved",
             "submitted_at": "2026-09-22T09:00:00", "decided_at": "2026-09-23T09:00:00",
             "decision_note": "Venue confirmed",
+            # SCRUM-60: who decided is listed with the outcome; not recorded for this row.
+            "decided_by": None,
         })
         self.assertEqual(by_key["S4"]["decision_note"], "No licensed venue is available")
         self.assertEqual((by_key["S1"]["decided_at"], by_key["S1"]["decision_note"]),

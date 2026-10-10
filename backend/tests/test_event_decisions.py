@@ -18,7 +18,8 @@ Endpoints (JWT required, else 401; unknown request -> 404)
     GET  /api/events/requests        200 {"requests": [summary], "message"}  organisers only
     request = SCRUM-29 fields + {"id", "status", "submitted_at", "decided_at",
                                  "decided_by": {"id", "email"} | null, "decision_note"}
-    summary = {"id", "title", "status", "submitted_at", "decided_at", "decision_note"}
+    summary = {"id", "title", "status", "submitted_at", "decided_at", "decision_note",
+               "decided_by"}  (decided_by added by SCRUM-60)
 
 The organiser's email is queued through tasks.send_notification_email, mocked here.
 """
@@ -438,6 +439,8 @@ class OrganiserViewTests(DecisionTestCase):
             "id": self.requests["R6"].id, "title": "Rooftop Cinema", "status": "rejected",
             "submitted_at": "2026-09-06T09:00:00", "decided_at": "2026-09-12T09:00:00",
             "decision_note": "No licensed venue is available",
+            # SCRUM-60: who decided is listed with the outcome.
+            "decided_by": {"id": self.users["alice"].id, "email": self.users["alice"].email},
         })
         self.assertEqual((by_key["R5"]["status"], by_key["R5"]["decision_note"]),
                          ("approved", "Venue confirmed"))

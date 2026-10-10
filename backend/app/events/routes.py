@@ -1,5 +1,5 @@
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from flask import Blueprint, current_app, jsonify, request, url_for
 from flask_jwt_extended import get_jwt_identity, jwt_required
@@ -53,6 +53,12 @@ SUBMITTED_STATUS = "submitted"
 # A coordinator's decision on a submitted request, and the status it leads to (SCRUM-32).
 DECISION_STATUSES = {"approve": "approved", "reject": "rejected"}
 MAX_DECISION_WORDS = 1000
+# Shown when a rejection reason has no visible character (SCRUM-60 A3).
+REASON_REQUIRED = "A reason is required to reject this request."
+# Audit times are naive UTC. Singapore is UTC+8 all year (no daylight saving), so the
+# organiser's plain-text notification and email can show the decision time locally
+# (SCRUM-60 A2, open question Q2).
+SINGAPORE_UTC_OFFSET = timedelta(hours=8)
 # Every field an organiser fills in on an event request, in display order, with the
 # label used in error messages.
 DRAFT_FIELDS = {
@@ -880,17 +886,41 @@ def _request_payload(event):
     }
 
 
-def _assigned_request(event_id, denied):
-    """The request, for its assigned coordinator only; checked 401, 404, 403."""
+def _decider_summaries(events):
+    """{user id: summary} for whoever decided any of `events`, loaded in one query, so
+    the organiser sees who decided each outcome (SCRUM-60). None = not recorded."""
+    ids = {event.decided_by_id for event in events if event.decided_by_id}
+    if not ids:
+        return {}
+    return {user.id: _user_summary(user) for user in User.query.filter(User.id.in_(ids))}
+
+
+def _assigned_request(event_id, denied, lock=False):
+    """The request, for its assigned coordinator only; checked 401, 404, 403.
+
+    With `lock`, the row is read afresh with SELECT ... FOR UPDATE, so a decision
+    made meanwhile (another tab, a double click) is seen rather than overwritten:
+    the second of two simultaneous decisions waits, then finds the request decided
+    (SCRUM-60 A4).
+    """
     user = _current_user()
     if user is None:
         raise _Rejected("Your session is no longer valid. Please log in again.", 401)
-    event = db.session.get(Event, event_id)
+    locking = {"with_for_update": True, "populate_existing": True} if lock else {}
+    event = db.session.get(Event, event_id, **locking)
     if event is None:
         raise _Rejected("Event request not found.", 404)
     if not _is_current_coordinator(user, event):
         raise _Rejected(denied, 403)
     return user, event
+
+
+def _has_visible_text(text):
+    """False for text made only of spaces of any kind, including invisible ones such
+    as non-breaking and zero-width spaces, which would show the organiser nothing
+    (SCRUM-60 A3). Must match VISIBLE in frontend/src/pages/ReviewRequestPage.jsx.
+    """
+    return any(char.isprintable() and not char.isspace() for char in text)
 
 
 def _parse_decision(body):
@@ -902,11 +932,10 @@ def _parse_decision(body):
     rejecting = decision == "reject"
     reason = body.get("reason")
     if reason is not None and not isinstance(reason, str):
-        raise _Rejected("The reason must be text.", 400)
-    note = reason.strip() if reason else None
-    note = note or None
+        raise _Rejected("The reason must be text.", 400, field="reason")
+    note = reason.strip() if reason and _has_visible_text(reason) else None
     if rejecting and note is None:
-        raise _Rejected("Enter a reason for rejecting the request.", 400)
+        raise _Rejected(REASON_REQUIRED, 400, field="reason")
 
     if note is not None:
         word_count = len(note.split())
@@ -921,28 +950,37 @@ def _parse_decision(body):
     return DECISION_STATUSES[decision], note
 
 
-def _decision_message(event, status, note):
-    message = f'Your event request "{event.title}" was {status}.'
+def _singapore_time(utc):
+    local = utc + SINGAPORE_UTC_OFFSET
+    return f"{local.day} {local:%b %Y} at {local:%H:%M} (Singapore time)"
+
+
+def _decision_message(event, status, note, decider):
+    """The organiser's notification text: the outcome, who decided and when (SCRUM-60)."""
+    message = (
+        f'Your event request "{event.title}" was {status} by {decider.email} '
+        f"on {_singapore_time(event.decided_at)}."
+    )
     if note:
         message += f" {'Reason' if status == 'rejected' else 'Note'}: {note}"
     return message
 
 
-def _queue_decision_email(organiser, event, status, note):
+def _queue_decision_email(to_address, title, event_id, status, message):
     """Queue the organiser's email; False if the queue could not be reached.
 
     The decision and in-app notification are already saved by then, so a broker
-    outage must not undo or hide a decision that was made.
+    outage must not undo or hide a decision that was made. It takes plain values,
+    not models, so it never needs the database after the commit.
     """
     try:
         tasks.send_notification_email.delay(
-            organiser.email,
-            f"Your event request was {status}: {event.title}",
-            f"{_decision_message(event, status, note)}\n\n"
-            "Sign in to ConnectSphere to see your event requests.",
+            to_address,
+            f"Your event request was {status}: {title}",
+            f"{message}\n\nSign in to ConnectSphere to see your event requests.",
         )
     except Exception:
-        current_app.logger.exception("Could not queue decision email for event %s", event.id)
+        current_app.logger.exception("Could not queue decision email for event %s", event_id)
         return False
     return True
 
@@ -969,7 +1007,9 @@ def review_request(event_id: int):
 def decide_request(event_id: int):
     try:
         user, event = _assigned_request(
-            event_id, "Only the event's assigned coordinator can approve or reject this request."
+            event_id,
+            "Only the event's assigned coordinator can approve or reject this request.",
+            lock=True,
         )
         status, note = _parse_decision(request.get_json(silent=True))
         if event.status != SUBMITTED_STATUS:
@@ -984,18 +1024,24 @@ def decide_request(event_id: int):
         event.decision_note = note
         event.decided_at = datetime.utcnow()
         event.decided_by_id = user.id
+        message = _decision_message(event, status, note, user)
         # Saved in the same commit, so the organiser is never told about a decision
         # that was not saved, and a saved decision always has its notification.
         db.session.add(
             Notification(
                 recipient_id=organiser.id,
                 kind=f"request_{status}",
-                message=_decision_message(event, status, note),
+                message=message,
                 event_id=event.id,
             )
         )
-        db.session.commit()
+        # Everything the reply and the email need is read before the commit. Once the
+        # decision is saved, a lost connection must not turn it into "not saved", or
+        # the coordinator's retry would be refused as already decided (SCRUM-60 A6).
         payload = _request_payload(event)
+        organiser_email = organiser.email
+        title = event.title
+        db.session.commit()
     except _Rejected as rejected:
         return _error(rejected.message, rejected.status_code, **rejected.extra)
     except SQLAlchemyError:
@@ -1006,10 +1052,10 @@ def decide_request(event_id: int):
             retryable=True,
         )
 
-    email_queued = _queue_decision_email(organiser, event, status, note)
+    email_queued = _queue_decision_email(organiser_email, title, event_id, status, message)
     return jsonify(
         {
-            "message": f"The request was {status}. {organiser.email} has been notified.",
+            "message": f'You {status} "{title}". {organiser_email} has been notified.',
             "request": payload,
             "notification": {"in_app": True, "email_queued": email_queued},
         }
@@ -1027,6 +1073,7 @@ def list_my_requests():
             .order_by(Event.submitted_at.desc().nulls_last(), Event.id.desc())
             .all()
         )
+        deciders = _decider_summaries(requests)
     except _Rejected as rejected:
         return _error(rejected.message, rejected.status_code, **rejected.extra)
     except SQLAlchemyError:
@@ -1040,7 +1087,8 @@ def list_my_requests():
             "requests": [
                 {"id": r.id, "title": r.title, "status": r.status,
                  "submitted_at": _isoformat(r.submitted_at),
-                 "decided_at": _isoformat(r.decided_at), "decision_note": r.decision_note}
+                 "decided_at": _isoformat(r.decided_at), "decision_note": r.decision_note,
+                 "decided_by": deciders.get(r.decided_by_id)}
                 for r in requests
             ],
             "message": None if requests else "You have not submitted any event requests yet.",
@@ -1071,6 +1119,7 @@ def list_mine():
     try:
         user = _require_organiser("Only event organisers have event requests.")
         events = Event.query.filter_by(organiser_id=user.id).all()
+        deciders = _decider_summaries(events)
     except _Rejected as rejected:
         return _error(rejected.message, rejected.status_code, **rejected.extra)
     except SQLAlchemyError:
@@ -1092,7 +1141,8 @@ def list_mine():
             "submitted": [
                 {"id": r.id, "title": r.title, "status": r.status,
                  "submitted_at": _isoformat(r.submitted_at),
-                 "decided_at": _isoformat(r.decided_at), "decision_note": r.decision_note}
+                 "decided_at": _isoformat(r.decided_at), "decision_note": r.decision_note,
+                 "decided_by": deciders.get(r.decided_by_id)}
                 for r in _newest_first(submitted, "submitted_at")
             ],
             "message": None if events else "You have no event requests yet.",
