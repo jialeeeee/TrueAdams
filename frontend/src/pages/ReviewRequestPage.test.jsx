@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -80,13 +80,10 @@ describe("SCRUM-32 review an event request", () => {
     expect(screen.getByText("Open-air waterfront space")).toBeTruthy();
   });
 
-  it("allows approving without text, but needs a reason to reject", async () => {
-    const user = await renderPage();
+  // SCRUM-60 changed this: Reject stays enabled and says a reason is required (TC-60-12).
+  it("allows approving without text", async () => {
+    await renderPage();
     expect(button("Approve").disabled).toBe(false);
-    expect(button("Reject").disabled).toBe(true);
-    await enter(user, "   ");
-    expect(button("Reject").disabled).toBe(true);
-    await enter(user, REASON);
     expect(button("Reject").disabled).toBe(false);
   });
 
@@ -183,5 +180,110 @@ describe("SCRUM-32 review an event request", () => {
     expect((await screen.findByRole("alert")).textContent).toContain("assigned coordinator");
     await user.click(screen.getByRole("button", { name: "Retry" }));
     expect(await screen.findByText("Status: Submitted")).toBeTruthy();
+  });
+});
+
+// Frontend cases TC-60-11 to TC-60-14 in docs/test-cases/SCRUM-60-accountable-decisions.md.
+// The API side is backend/tests/test_decision_accountability.py.
+describe("SCRUM-60 who decided and when, blank reasons and failed saves", () => {
+  const ALICE = { id: 2, email: "alice.coordinator@connectsphere.test" };
+  // Must match REASON_REQUIRED in backend/tests/test_decision_accountability.py.
+  const REASON_REQUIRED = "A reason is required to reject this request.";
+  const localTime = (iso) => new Date(`${iso}Z`).toLocaleString();
+
+  it("confirms the outcome with who decided and when", async () => {
+    apiClient.post.mockResolvedValue(decided("rejected", REASON));
+    const user = await renderPage();
+
+    await enter(user, REASON);
+    await user.click(button("Reject"));
+
+    const confirmation = within(await screen.findByRole("status"));
+    expect(confirmation.getByText("The request was rejected. dana.organiser@connectsphere.test has been notified.")).toBeTruthy();
+    expect(confirmation.getByText(`Decided by ${ALICE.email} · ${localTime("2026-09-28T03:00:00")}`)).toBeTruthy();
+    expect(screen.getByText("Status: Rejected")).toBeTruthy();
+    expect(screen.getByText(`Reason: ${REASON}`)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Reject" })).toBeNull();
+  });
+
+  it("shows who decided an already decided request", async () => {
+    await renderPage(request({ status: "rejected", decision_note: "No licensed venue is available",
+      decided_at: "2026-09-12T01:00:00", decided_by: ALICE }));
+    expect(screen.getByText(`Decided ${localTime("2026-09-12T01:00:00")}`)).toBeTruthy();
+    expect(screen.getByText(`Decided by ${ALICE.email}`)).toBeTruthy();
+  });
+
+  it("says when the decider was not recorded", async () => {
+    await renderPage(request({ status: "approved", decided_at: "2026-09-10T01:00:00", decided_by: null }));
+    expect(screen.getByText("Decided by: not recorded")).toBeTruthy();
+  });
+
+  it.each([
+    ["no text", ""],
+    ["spaces", "   "],
+    ["a non-breaking space and a tab", "\u00a0\t"],
+    ["a zero-width space", "\u200b"],
+  ])("says a reason is required when rejecting with only spaces (%s)", async (_label, typed) => {
+    const user = await renderPage();
+
+    await enter(user, typed);
+    await user.click(button("Reject"));
+
+    expect((await screen.findByRole("alert")).textContent).toBe(REASON_REQUIRED);
+    expect(box().getAttribute("aria-invalid")).toBe("true");
+    expect(apiClient.post).not.toHaveBeenCalled();
+    expect(screen.getByText("Status: Submitted")).toBeTruthy();
+  });
+
+  it("clears the message once a reason is typed", async () => {
+    apiClient.post.mockResolvedValue(decided("rejected", REASON));
+    const user = await renderPage();
+    await user.click(button("Reject"));
+    expect(await screen.findByRole("alert")).toBeTruthy();
+
+    await enter(user, REASON);
+
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(box().getAttribute("aria-invalid")).not.toBe("true");
+    await user.click(button("Reject"));
+    expect(apiClient.post).toHaveBeenCalledWith("/events/7/decision", { decision: "reject", reason: REASON });
+  });
+
+  it("shows the server's refusal of the reason and keeps the text", async () => {
+    apiClient.post.mockRejectedValue(httpFailure(400, { error: REASON_REQUIRED, field: "reason" }));
+    const user = await renderPage();
+
+    await enter(user, REASON);
+    await user.click(button("Reject"));
+
+    expect((await screen.findByRole("alert")).textContent).toBe(REASON_REQUIRED);
+    expect(box().value).toBe(REASON);
+    expect(box().getAttribute("aria-invalid")).toBe("true");
+    expect(screen.getByText("Status: Submitted")).toBeTruthy();
+  });
+
+  it("keeps the reason exactly as typed after a failed save and resends it on retry", async () => {
+    const typed = "  The venue is double-booked.\nPlease pick another date.  ";
+    const trimmed = "The venue is double-booked.\nPlease pick another date.";
+    apiClient.post
+      .mockRejectedValueOnce(httpFailure(503, { error: "The decision was not saved, so the request is still submitted. Please try again.", retryable: true }))
+      .mockResolvedValueOnce(decided("rejected", trimmed));
+    const user = await renderPage();
+
+    await enter(user, typed);
+    await user.click(button("Reject"));
+
+    expect((await screen.findByRole("alert")).textContent).toContain("not saved");
+    expect(box().value).toBe(typed);
+    expect(screen.getByText("Status: Submitted")).toBeTruthy();
+    expect(screen.queryByRole("status")).toBeNull();
+
+    await user.click(button("Reject"));
+
+    expect(await screen.findByRole("status")).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(apiClient.post).toHaveBeenCalledTimes(2);
+    expect(apiClient.post.mock.calls[0][1]).toEqual({ decision: "reject", reason: trimmed });
+    expect(apiClient.post.mock.calls[1][1]).toEqual({ decision: "reject", reason: trimmed });
   });
 });

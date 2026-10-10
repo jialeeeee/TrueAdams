@@ -149,3 +149,24 @@ describe("SCRUM-59 my event requests", () => {
     expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
   });
 });
+
+// Frontend case TC-60-15 in docs/test-cases/SCRUM-60-accountable-decisions.md; the
+// API side is backend/tests/test_decision_accountability.py (TC-60-03).
+describe("SCRUM-60 who decided", () => {
+  it("SCRUM-60 shows who decided each submitted request", async () => {
+    const alice = { id: 2, email: "alice.coordinator@connectsphere.test" };
+    apiClient.get.mockResolvedValue(loaded(DRAFTS, [
+      { ...SUBMITTED[0], decided_by: alice },
+      { ...SUBMITTED[1], decided_by: null },
+      { ...SUBMITTED[3], decided_by: null },
+    ]));
+    renderPage();
+
+    await screen.findByText("Alumni Mixer");
+    const item = (title) => within(within(section("Submitted requests")).getByText(title).closest("li"));
+    expect(item("Alumni Mixer").getByText("Decided by alice.coordinator@connectsphere.test")).toBeTruthy();
+    expect(item("Rooftop Cinema").getByText("Decided by: not recorded")).toBeTruthy();
+    expect(item("Spring Garden Party").queryByText(/Decided by/)).toBeNull();
+    expect(within(section("Drafts")).queryByText(/Decided by/)).toBeNull();
+  });
+});
