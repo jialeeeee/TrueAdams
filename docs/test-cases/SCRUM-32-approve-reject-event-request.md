@@ -34,7 +34,7 @@ These are the team's current reading of the story. Each one is tied to an open q
 - `POST /api/events/<id>/decision` with body `{"decision": "approve" | "reject", "reason": str}` → **200** `{"message": str, "request": request, "notification": {"in_app": true, "email_queued": bool}}`.
 - `GET /api/events/requests` → **200** `{"requests": [summary, ...], "message": str | null}`. The caller's own non-draft requests, most recently submitted first. `message` holds the empty-state text.
 - A request is every SCRUM-29 field plus `"id"`, `"status"`, `"submitted_at"`, `"decided_at"`, `"decided_by": {"id", "email"} | null` and `"decision_note"`.
-- A summary is `{"id", "title", "status", "submitted_at", "decided_at", "decision_note"}`.
+- A summary is `{"id", "title", "status", "submitted_at", "decided_at", "decision_note", "decided_by"}` (`decided_by` added by SCRUM-60).
 - Errors are `{"error": str}`. A save failure is **503** with `"retryable": true`.
 
 ## Seed data (DC-SEED)
@@ -162,7 +162,7 @@ Reset the database to this data before **every** test case. Users come from `bac
 
 **TC-32-20 · Coordinator review page**
 - **Traces to:** AC1–AC4 · **Type:** Frontend
-- **Expected result:** The page shows the request's details and status. For a submitted request, Approve is enabled; Reject is disabled until a reason is typed, and a live word counter blocks more than 1,000 words. After deciding, the new status and reason are shown, the buttons are gone, and a confirmation appears. On failure, the error is shown and the typed reason stays. A request that is not submitted shows its outcome with no buttons.
+- **Expected result:** The page shows the request's details and status. For a submitted request, Approve is enabled; Reject is enabled too, and pressing it without a reason says a reason is required (changed by SCRUM-60, TC-60-12). A live word counter blocks more than 1,000 words. After deciding, the new status and reason are shown, the buttons are gone, and a confirmation appears. On failure, the error is shown and the typed reason stays. A request that is not submitted shows its outcome with no buttons.
 
 **TC-32-21 · Organiser's "My event requests" page**
 - **Traces to:** AC6 · **Type:** Frontend

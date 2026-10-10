@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import apiClient from "../api/client.js";
+import decidedBy from "../utils/decidedBy.js";
 import formatSavedAt from "../utils/formatSavedAt.js";
 import statusLabel from "../utils/statusLabel.js";
 
@@ -48,6 +49,7 @@ function SubmittedSection({ requests }) {
                   ? `Status: ${statusLabel(request.status)} · decided ${formatSavedAt(request.decided_at)}`
                   : `Status: ${statusLabel(request.status)}`}
               </p>
+              {request.decided_at && <p>{decidedBy(request)}</p>}
               {request.decision_note && (
                 <p>{`${request.status === "rejected" ? "Reason" : "Note"}: ${request.decision_note}`}</p>
               )}

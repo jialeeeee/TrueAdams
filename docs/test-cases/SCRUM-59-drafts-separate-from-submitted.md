@@ -34,7 +34,7 @@ These are the team's current reading of the story. Each one is tied to an open q
 
 - `GET /api/events/mine` → **200** `{"drafts": [draft, ...], "submitted": [request, ...], "message": str | null}`.
   - draft = `{"id", "title", "status", "last_saved_at"}`; `title` is `null` when the stored name is blank.
-  - request = `{"id", "title", "status", "submitted_at", "decided_at", "decision_note"}`.
+  - request = `{"id", "title", "status", "submitted_at", "decided_at", "decision_note", "decided_by"}` (`decided_by` added by SCRUM-60).
   - `message` is the empty-state text when both lists are empty, otherwise `null`.
 - **401** without a valid session; **403** for anyone who is not an organiser; **503** `{"error", "retryable": true}` if loading fails.
 

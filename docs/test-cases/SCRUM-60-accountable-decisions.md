@@ -2,7 +2,7 @@
 
 **User story:** As an Event Coordinator, I want my approval or rejection to be recorded reliably, with who decided and when, so that the decision is accountable and the Event Organiser gets an accurate outcome.
 
-**Created:** 10 Oct 2026 · **Status of all cases:** Automated cases written first (TDD, red) · **Automated tests:** `backend/tests/test_decision_accountability.py`, `frontend/src/pages/ReviewRequestPage.test.jsx`, `frontend/src/pages/MyRequestsPage.test.jsx`, `frontend/src/pages/MyEventRequestsPage.test.jsx` · **Endpoints:** `POST /api/events/<id>/decision`, `GET /api/events/<id>/review`, `GET /api/events/requests`, `GET /api/events/mine` · **Related:** SCRUM-32 (approve or reject, which this story hardens), SCRUM-33 (coordinator assignment), SCRUM-59 (the organiser's combined list)
+**Created:** 10 Oct 2026 · **Status of all cases:** Automated cases pass (10 Oct 2026, Supabase + Vitest); frontend cases 11–15 also to be checked manually in the browser · **Automated tests:** `backend/tests/test_decision_accountability.py`, `frontend/src/pages/ReviewRequestPage.test.jsx`, `frontend/src/pages/MyRequestsPage.test.jsx`, `frontend/src/pages/MyEventRequestsPage.test.jsx` · **Endpoints:** `POST /api/events/<id>/decision`, `GET /api/events/<id>/review`, `GET /api/events/requests`, `GET /api/events/mine` · **Related:** SCRUM-32 (approve or reject, which this story hardens), SCRUM-33 (coordinator assignment), SCRUM-59 (the organiser's combined list)
 
 ## Acceptance criteria
 
