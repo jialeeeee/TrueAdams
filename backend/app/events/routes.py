@@ -1148,3 +1148,45 @@ def list_mine():
             "message": None if events else "You have no event requests yet.",
         }
     )
+
+
+# ---------- The coordinator's managed events (SCRUM-62) ----------
+
+
+@events_bp.get("/managed")
+@jwt_required()
+def list_managed():
+    """The events the caller currently coordinates, whatever their status (A2).
+
+    The same rule as the planning view (_is_current_coordinator), so every listed
+    event can be opened there.
+    """
+    try:
+        user = _current_user()
+        if user is None:
+            return _error("Your session is no longer valid. Please log in again.", 401)
+        if user.role != COORDINATOR_ROLE:
+            return _error("Only event coordinators have managed events.", 403)
+        # Soonest proposed date first, undated last (A4, open question Q3).
+        events = (
+            Event.query.filter_by(coordinator_id=user.id)
+            .order_by(Event.start_time.asc().nulls_last(), Event.id)
+            .all()
+        )
+    except SQLAlchemyError:
+        db.session.rollback()
+        return _error(
+            "Your managed events could not be loaded. Please try again.", 503, retryable=True
+        )
+
+    return jsonify(
+        {
+            "events": [
+                # A blank name is sent as null, so the page shows "Not recorded" (A5).
+                {"id": e.id, "title": _recorded(e.title),
+                 "start_time": _isoformat(e.start_time), "status": e.status}
+                for e in events
+            ],
+            "message": None if events else "You have no events assigned to you yet.",
+        }
+    )
