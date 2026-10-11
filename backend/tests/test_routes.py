@@ -30,6 +30,7 @@ ALL_ROUTES = [
     ("POST", "/api/events/drafts/1/submit"),
     ("GET", "/api/events/requests"),
     ("GET", "/api/events/mine"),
+    ("GET", "/api/events/managed"),
     ("GET", "/api/events/1/review"),
     ("POST", "/api/events/1/decision"),
     ("GET", "/api/events/1/clarifications"),
