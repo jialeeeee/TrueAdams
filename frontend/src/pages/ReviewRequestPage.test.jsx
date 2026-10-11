@@ -287,3 +287,30 @@ describe("SCRUM-60 who decided and when, blank reasons and failed saves", () => 
     expect(apiClient.post.mock.calls[1][1]).toEqual({ decision: "reject", reason: trimmed });
   });
 });
+
+// Frontend cases TC-77-07 and TC-77-08 in docs/test-cases/SCRUM-77-approve-event-request.md.
+// The API side is backend/tests/test_approve_event_request.py.
+describe("SCRUM-77 only a submitted request can be approved", () => {
+  it.each([
+    ["under_review", "Under review"],
+    ["approved", "Approved"],
+    ["draft", "Draft"],
+    ["cancelled", "Cancelled"],
+  ])("offers no Approve button for a %s request", async (status, label) => {
+    await renderPage(request({ status }));
+    expect(screen.getByText(`Status: ${label}`)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Reject" })).toBeNull();
+  });
+
+  it("shows the server's refusal when the request is no longer submitted", async () => {
+    const refusal = "This request is approved; only submitted requests can be approved or rejected.";
+    apiClient.post.mockRejectedValue(httpFailure(409, { error: refusal }));
+    const user = await renderPage();
+
+    await user.click(button("Approve"));
+
+    expect((await screen.findByRole("alert")).textContent).toContain(refusal);
+    expect(screen.getByText("Status: Submitted")).toBeTruthy();
+  });
+});
