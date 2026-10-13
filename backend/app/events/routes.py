@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 
 from flask import Blueprint, current_app, jsonify, request, url_for
 from flask_jwt_extended import get_jwt_identity, jwt_required
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import DBAPIError, SQLAlchemyError
 
 from .. import tasks
 from ..extensions import db
@@ -646,12 +646,15 @@ def _require_organiser(denied):
     return user
 
 
-def _own_draft(event_id):
+def _own_draft(event_id, lock=False):
     """The caller's draft, checked in the order 401, 404, 403, 409."""
     user = _current_user()
     if user is None:
         raise _Rejected("Your session is no longer valid. Please log in again.", 401)
-    event = db.session.get(Event, event_id)
+    # SCRUM-28: draft writers must see a concurrent submission before editing.
+    # As in SCRUM-60, hold the row until commit and refresh the identity map.
+    locking = {"with_for_update": True, "populate_existing": True} if lock else {}
+    event = db.session.get(Event, event_id, **locking)
     if event is None:
         raise _Rejected("Event request not found.", 404)
     if not is_current_organiser(user, event):
@@ -741,6 +744,26 @@ def _draft_payload(event):
     }
 
 
+def _commit_draft_payload(event, creating=False):
+    """Snapshot the response before commit expires ORM fields (SCRUM-28)."""
+    if creating:
+        db.session.flush()  # Obtain the ID without a post-commit refresh.
+    payload = _draft_payload(event)
+    try:
+        db.session.commit()
+    except DBAPIError as failure:
+        if not failure.connection_invalidated:
+            raise
+        # A lost connection during COMMIT cannot establish whether it persisted.
+        db.session.rollback()
+        raise _Rejected(
+            "We could not confirm whether your request was saved. "
+            "Check your request's status before trying again.",
+            503, retryable=True, outcome_uncertain=True,
+        ) from failure
+    return payload
+
+
 def _draft_not_saved():
     db.session.rollback()
     return _error(
@@ -788,8 +811,7 @@ def create_draft():
         event = Event(organiser_id=user.id, status=DRAFT_STATUS, created_at=now,
                       last_saved_at=now, **fields)
         db.session.add(event)
-        db.session.commit()
-        payload = _draft_payload(event)
+        payload = _commit_draft_payload(event, creating=True)
     except _Rejected as rejected:
         return _error(rejected.message, rejected.status_code, **rejected.extra)
     except SQLAlchemyError:
@@ -816,14 +838,13 @@ def get_draft(event_id: int):
 @jwt_required()
 def save_draft(event_id: int):
     try:
-        event = _own_draft(event_id)
+        event = _own_draft(event_id, lock=True)
         # Every field is checked before any is applied, so a refused save changes nothing.
         fields = _parse_draft(request.get_json(silent=True), creating=False)
         for field, value in fields.items():
             setattr(event, field, value)
         event.last_saved_at = datetime.utcnow()
-        db.session.commit()
-        payload = _draft_payload(event)
+        payload = _commit_draft_payload(event)
     except _Rejected as rejected:
         return _error(rejected.message, rejected.status_code, **rejected.extra)
     except SQLAlchemyError:
@@ -836,7 +857,7 @@ def save_draft(event_id: int):
 @jwt_required()
 def submit_draft(event_id: int):
     try:
-        event = _own_draft(event_id)
+        event = _own_draft(event_id, lock=True)
         missing = [f for f in REQUIRED_FOR_SUBMISSION if getattr(event, f) is None]
         if missing:
             labels = ", ".join(DRAFT_FIELDS[f] for f in missing)
@@ -846,10 +867,21 @@ def submit_draft(event_id: int):
         if event.end_time <= event.start_time:
             raise _field_error("end_time", "The end must be after the start.")
 
+        # SCRUM-28 approved initial-assignment policy: current coordinator role,
+        # lowest user ID. Manual reassignment remains a separate workflow.
+        coordinator = User.query.filter_by(role=COORDINATOR_ROLE).order_by(User.id).first()
+        if coordinator is None:
+            raise _Rejected(
+                "No coordinator is currently available. Your request is still saved "
+                "as a draft, so please try again later.",
+                503, retryable=True,
+            )
+        now = datetime.utcnow()
+        event.coordinator_id = coordinator.id
+        event.coordinator_assigned_at = now
         event.status = SUBMITTED_STATUS
-        event.submitted_at = datetime.utcnow()
-        db.session.commit()
-        payload = _draft_payload(event)
+        event.submitted_at = now
+        payload = _commit_draft_payload(event)
     except _Rejected as rejected:
         return _error(rejected.message, rejected.status_code, **rejected.extra)
     except SQLAlchemyError:

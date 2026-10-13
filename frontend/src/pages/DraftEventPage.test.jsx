@@ -7,6 +7,8 @@ import DraftEventPage from "./DraftEventPage.jsx";
 
 // Frontend cases TC-29-10, 15, 19, 23 and 29 in
 // docs/test-cases/SCRUM-29-draft-event-request.md.
+// SCRUM-28 TC-28-02/13/14 in SCRUM-28-Test-Coverage-Plan.xlsx;
+// backend cases are in tests/test_event_submission.py. HTTP is mocked throughout.
 
 vi.mock("../api/client.js", () => ({ default: { get: vi.fn(), post: vi.fn(), put: vi.fn() } }));
 
@@ -56,6 +58,30 @@ async function renderAt(path) {
 const field = (label) => screen.getByLabelText(label);
 const saveButton = () => screen.getByRole("button", { name: "Save draft" });
 const submitButton = () => screen.getByRole("button", { name: "Submit for review" });
+
+const COMPLETE_REQUEST = draft({
+  description: "Lanterns", end_time: "2026-12-12T22:00:00", venue_requirements: "Waterfront",
+  accessibility_needs: "Step-free access", equipment_requirements: "Projector",
+  registration_required: true, missing_for_submission: [],
+});
+const FORM_LABELS = {
+  title: "Event name", purpose: "Purpose", description: "Description", start_time: "Start",
+  end_time: "End", expected_attendance: "Expected attendance", venue_requirements: "Venue requirements",
+  accessibility_needs: "Accessibility needs", equipment_requirements: "Equipment requirements",
+  registration_required: "Attendee registration needed",
+};
+
+function expectRequestValues(request) {
+  for (const [name, label] of Object.entries(FORM_LABELS)) {
+    const value = request[name];
+    const displayed = name === "registration_required" ? (value ? "yes" : "no")
+      : name.endsWith("_time") ? value.slice(0, 16) : String(value);
+    expect(field(label).value).toBe(displayed);
+  }
+}
+
+// The test router's <output> also has an implicit status role.
+const confirmation = () => screen.getAllByRole("status").find((node) => /submitted/i.test(node.textContent));
 
 beforeEach(() => {
   apiClient.get.mockReset();
@@ -144,13 +170,27 @@ describe("SCRUM-29 draft event request", () => {
       description: "Lanterns", end_time: "2026-12-12T22:00:00", venue_requirements: "Waterfront",
       registration_required: true, missing_for_submission: [],
     });
+    // SCRUM-28 TC-28-02: additive all-field/receipt and in-flight preservation checks.
+    Object.assign(complete, {
+      accessibility_needs: "Step-free access", equipment_requirements: "Projector",
+    });
     apiClient.get.mockResolvedValue({ data: draft() });
-    apiClient.put.mockResolvedValue({ data: complete });
+    let finishSave;
+    apiClient.put.mockReturnValue(new Promise((resolve) => { finishSave = resolve; }));
     apiClient.post.mockResolvedValue({ data: { ...complete, status: "submitted", submitted_at: "2026-09-28T05:00:00" } });
     const user = await renderAt("/events/drafts/7");
 
     await user.type(field("Description"), "Lanterns");
+    await user.type(field("End"), "2026-12-12T22:00");
+    await user.type(field("Venue requirements"), "Waterfront");
+    await user.type(field("Accessibility needs"), "Step-free access");
+    await user.type(field("Equipment requirements"), "Projector");
+    await user.selectOptions(field("Attendee registration needed"), "yes");
     await user.click(submitButton());
+
+    // Soft assertion lets all original success assertions still run during RED.
+    expect.soft(Object.values(FORM_LABELS).every((label) => field(label).disabled)).toBe(true);
+    finishSave({ data: complete });
 
     await screen.findByText("Status: Submitted");
     expect(apiClient.put).toHaveBeenCalledWith("/events/drafts/7", expect.objectContaining({ description: "Lanterns" }));
@@ -158,6 +198,16 @@ describe("SCRUM-29 draft event request", () => {
     expect(apiClient.put.mock.invocationCallOrder[0]).toBeLessThan(apiClient.post.mock.invocationCallOrder[0]);
     expect(field("Event name").disabled).toBe(true);
     expect(screen.queryByRole("button", { name: "Save draft" })).toBeNull();
+    expect(apiClient.put).toHaveBeenCalledWith("/events/drafts/7", {
+      title: complete.title, purpose: complete.purpose, description: complete.description,
+      start_time: "2026-12-12T17:00", end_time: "2026-12-12T22:00",
+      expected_attendance: 250, venue_requirements: "Waterfront",
+      accessibility_needs: "Step-free access", equipment_requirements: "Projector",
+      registration_required: true,
+    });
+    expectRequestValues(complete);
+    expect(confirmation().textContent).toMatch(/submitted.*review/i);
+    expect(screen.getByText(/(?:request|reference).*#?7\b/i)).toBeTruthy();
   });
 
   // TC-29-29, TC-29-26 · AC6
@@ -203,4 +253,127 @@ describe("SCRUM-29 draft event request", () => {
     );
     expect((await screen.findByRole("alert")).textContent).toContain("already been submitted");
   });
+});
+
+describe("SCRUM-28 submission failure and known-ID recovery", () => {
+  // TC-28-13: AC3/6. Two meaningful submit-stage failures, one test definition.
+  it.each([
+    ["invalid end", httpFailure(400, { error: "The end must be after the start.", field: "end_time" }), "The end must be after the start."],
+    ["commit refusal", httpFailure(503, { error: "The submission could not be saved. Please try again.", retryable: true }), "The submission could not be saved. Please try again."],
+  ])("retains request details after submit rejection and retries the same request (%s)", async (_label, failure, message) => {
+    const entered = { ...COMPLETE_REQUEST, description: "Lanterns and live music" };
+    apiClient.get.mockResolvedValue({ data: COMPLETE_REQUEST });
+    apiClient.put.mockResolvedValue({ data: entered });
+    apiClient.post.mockRejectedValueOnce(failure).mockResolvedValueOnce({
+      data: { ...entered, status: "submitted", submitted_at: "2026-10-14T02:00:00" },
+    });
+    const user = await renderAt("/events/drafts/7");
+    await user.clear(field("Description"));
+    await user.type(field("Description"), entered.description);
+    // First variant saves a temporarily invalid end (allowed for a draft).
+    if (_label === "invalid end") {
+      entered.end_time = entered.start_time;
+      await user.clear(field("End"));
+      await user.type(field("End"), entered.start_time.slice(0, 16));
+    }
+    await user.click(submitButton());
+    expect((await screen.findByRole("alert")).textContent).toContain(message);
+    expectRequestValues(entered);
+    expect(screen.getByText("Status: Draft")).toBeTruthy();
+    expect(submitButton().disabled).toBe(false);
+    if (_label === "invalid end") {
+      entered.end_time = COMPLETE_REQUEST.end_time;
+      await user.clear(field("End"));
+      await user.type(field("End"), entered.end_time.slice(0, 16));
+      apiClient.post.mockResolvedValueOnce({ data: { ...entered, status: "submitted" } });
+    }
+    await user.click(submitButton());
+    await screen.findByText("Status: Submitted");
+    expect(apiClient.post).toHaveBeenNthCalledWith(1, "/events/drafts/7/submit");
+    expect(apiClient.post).toHaveBeenNthCalledWith(2, "/events/drafts/7/submit");
+    expect(apiClient.post.mock.calls.every(([url]) => url === "/events/drafts/7/submit")).toBe(true);
+    expectRequestValues(entered);
+  });
+
+  // TC-28-14: AC4/5/6. Existing owner endpoints; no new reconciliation API.
+  it.each(["submitted", "draft", "unavailable"])(
+    "reconciles uncertain submission outcomes without creating another request (%s)",
+    async (outcome) => {
+      const saved = { ...COMPLETE_REQUEST, description: "Lanterns and live music" };
+      const retained = { ...saved };
+      let lost = false;
+      let statusChecks = 0;
+      apiClient.get.mockImplementation((url) => {
+        if (!lost && url === "/events/drafts/7") return Promise.resolve({ data: COMPLETE_REQUEST });
+        // Submitted variant: a second outage permits newer unsaved edits before
+        // a later successful receipt check. Reconciliation must retain them.
+        if (outcome === "submitted" && statusChecks++ === 0) return Promise.reject(new Error("Network Error"));
+        if (outcome === "unavailable") return Promise.reject(new Error("Network Error"));
+        const receipt = { id: 7, title: saved.title, status: "submitted", submitted_at: "2026-10-14T02:00:00", decided_at: null, decision_note: null, decided_by: null };
+        if (url === "/events/mine") return Promise.resolve({
+          data: { drafts: outcome === "draft" ? [{ id: 7, title: saved.title, status: "draft", last_saved_at: saved.last_saved_at }] : [],
+            submitted: outcome === "submitted" ? [receipt] : [], message: null },
+        });
+        if (url === "/events/requests") return Promise.resolve({
+          data: { requests: outcome === "submitted" ? [receipt] : [], message: null },
+        });
+        if (url === "/events/drafts/7" && outcome === "draft") return Promise.resolve({ data: saved });
+        if (url === "/events/drafts/7") return Promise.reject(httpFailure(409, {
+          error: "This request has already been submitted and can no longer be edited as a draft.",
+        }));
+        throw new Error(`Unexpected API endpoint: ${url}`);
+      });
+      apiClient.put.mockImplementation(() => outcome === "submitted" && lost
+        ? Promise.reject(httpFailure(409, { error: "This request has already been submitted and can no longer be edited as a draft." }))
+        : Promise.resolve({ data: saved }));
+      apiClient.post.mockImplementationOnce(() => {
+        lost = true;
+        return Promise.reject(new Error("Network Error"));
+      }).mockResolvedValue({ data: { ...saved, status: "submitted", submitted_at: "2026-10-14T02:00:00" } });
+      const user = await renderAt("/events/drafts/7");
+      await user.clear(field("Description"));
+      await user.type(field("Description"), saved.description);
+      await user.click(submitButton());
+      await waitFor(() => expect(apiClient.post).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(screen.queryByText("Status: Submitted") || screen.queryByRole("alert")).toBeTruthy());
+
+      // Accept an immediate status check or a simple user-triggered retry/check.
+      if (screen.queryByText("Status: Submitted")) {
+        expect(outcome).toBe("submitted");
+      } else {
+        await screen.findByRole("alert");
+        expectRequestValues(saved);
+        if (outcome === "submitted") {
+          retained.description += " plus unsaved edits";
+          await user.type(field("Description"), " plus unsaved edits");
+        }
+        const retry = screen.queryByRole("button", { name: /retry|check.*status/i }) ?? submitButton();
+        await user.click(retry);
+      }
+      if (outcome === "submitted") {
+        await screen.findByText("Status: Submitted");
+        expect(confirmation().textContent).toMatch(/submitted/i);
+        expect(screen.getByText(/(?:request|reference).*#?7\b/i)).toBeTruthy();
+        expect(apiClient.post).toHaveBeenCalledTimes(1);
+        expect(field("Event name").disabled).toBe(true);
+        expectRequestValues(retained);
+      } else if (outcome === "draft") {
+        // Reconciliation may just restore Draft; a second explicit click may retry it.
+        if (!screen.queryByText("Status: Submitted")) await user.click(submitButton());
+        await screen.findByText("Status: Submitted");
+        expect(apiClient.post).toHaveBeenCalledTimes(2);
+        expectRequestValues(saved);
+      } else {
+        expect(apiClient.post).toHaveBeenCalledTimes(1);
+        const alert = await screen.findByRole("alert");
+        expect(alert.textContent).toMatch(/uncertain|could not confirm|cannot confirm|could not determine|unable to confirm|may have been submitted/i);
+        expectRequestValues(saved);
+        expect(apiClient.post).toHaveBeenCalledTimes(1);
+      }
+      const reconciliationCalls = apiClient.get.mock.calls.slice(1);
+      expect(reconciliationCalls.length).toBeGreaterThan(0);
+      expect(reconciliationCalls.every(([url]) => ["/events/mine", "/events/requests", "/events/drafts/7"].includes(url))).toBe(true);
+      expect(apiClient.post.mock.calls.every(([url]) => url === "/events/drafts/7/submit")).toBe(true);
+    },
+  );
 });
