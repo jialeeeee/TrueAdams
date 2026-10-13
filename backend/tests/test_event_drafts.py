@@ -233,6 +233,17 @@ class SaveIncompleteTests(DraftTestCase):
         with self.subTest(case="attendance of 1 is accepted"):
             self.assertEqual(self.save("D1", {"expected_attendance": 1}).status_code, 200)
 
+        # SCRUM-28 TC-28-03: existing title limits and protected-field whitelist.
+        for field in ("organiser_id", "coordinator_id", "status"):
+            with self.subTest(protected_field=field):
+                before = self.stored("D1")
+                self.assert_error(self.save("D1", {field: "forged"}), 400, field=field)
+                self.assertEqual(self.stored("D1"), before)
+        self.assertEqual(self.save("D1", {"title": "a" * 255}).status_code, 200)
+        boundary = self.stored("D1")
+        self.assert_error(self.save("D1", {"title": "a" * 256}), 400, field="title")
+        self.assertEqual(self.stored("D1"), boundary)
+
     # TC-29-05 · AC1 (A3/Q2) — only organisers can create drafts.
     def test_only_organisers_can_create_drafts(self):
         before = self.db.session.query(Event).count()
@@ -364,6 +375,17 @@ class ReopenTests(DraftTestCase):
                     self.assertNotIn(DRAFTS["D1"]["purpose"], text)
         self.assertEqual(self.stored("D1"), saved)
 
+        # SCRUM-28 TC-28-07: other stored roles and an existing owner's old token.
+        for user in ("admin", "farah", "gus", "hana"):
+            with self.subTest(submitter=user):
+                self.assert_error(self.submit("D1", as_user=user), 403)
+        owner_headers = self.headers()
+        self.users["dana"].role = "attendee"
+        self.db.session.commit()
+        response = self.client.post(f"{self.url('D1')}/submit", headers=owner_headers)
+        self.assert_error(response, 403)
+        self.assertEqual(self.stored("D1"), saved)
+
     # TC-29-13 · AC3 — unknown draft.
     def test_unknown_draft_returns_not_found(self):
         url = f"{DRAFTS_URL}/{self.missing_id(Event)}"
@@ -383,6 +405,28 @@ class ReopenTests(DraftTestCase):
             with self.subTest(call=label):
                 self.assertIn("submitted", self.assert_error(response, 409)["error"])
         self.assertEqual(self.stored("S1"), saved)
+
+        # SCRUM-28 TC-28-11: repeat a real transition without another row or audit.
+        before_count = self.request_count()
+        first = self.submit("D2")
+        self.assertEqual(first.status_code, 200, first.get_json())
+        submitted = self.stored("D2")
+        self.assertEqual(first.get_json()["id"], submitted["id"])
+        self.assert_error(self.submit("D2"), 409)
+        self.assertEqual(self.stored("D2"), submitted)
+        self.assertEqual(self.request_count(), before_count)
+
+        # Content equality must not make genuinely separate requests duplicates.
+        body = {field: api(value) for field, value in COMPLETE.items()}
+        separate = [self.create(body), self.create(body)]
+        for created in separate:
+            self.assertEqual(created.status_code, 201, created.get_json())
+        ids = [created.get_json()["id"] for created in separate]
+        self.assertNotEqual(ids[0], ids[1])
+        for event_id in ids:
+            response = self.client.post(f"{DRAFTS_URL}/{event_id}/submit", headers=self.headers())
+            self.assertEqual(response.status_code, 200, response.get_json())
+        self.assertEqual(self.request_count(), before_count + 2)
 
 
 # ---------- AC4: saving updates the existing draft ----------
@@ -473,6 +517,9 @@ class SaveFailureTests(DraftTestCase):
 
     # TC-29-28 · AC6, AC5 — a failed submission leaves the draft as a draft.
     def test_failed_submission_leaves_the_draft_as_a_draft(self):
+        # SCRUM-28 TC-28-12: include assignment/details and same-ID recovery.
+        saved = self.stored("D2")
+        before_count = self.request_count()
         with self.failing_commit():
             response = self.submit("D2")
 
@@ -480,6 +527,11 @@ class SaveFailureTests(DraftTestCase):
         stored = self.stored("D2")
         self.assertEqual(stored["status"], "draft")
         self.assertIsNone(stored["submitted_at"])
+        self.assertEqual(stored, saved)
+        recovered = self.submit("D2")
+        self.assertEqual(recovered.status_code, 200, recovered.get_json())
+        self.assertEqual(recovered.get_json()["id"], saved["id"])
+        self.assertEqual(self.request_count(), before_count)
 
 
 # ---------- AC6: only submission makes a draft Submitted ----------
@@ -499,12 +551,15 @@ class SubmissionTests(DraftTestCase):
     # TC-29-25 · AC6 — submitting a complete draft.
     def test_submitting_a_complete_draft(self):
         saved = self.stored("D2")
+        before_count = self.request_count()  # SCRUM-28 TC-28-08.
         started = datetime.utcnow()
 
         response = self.submit("D2")
 
         self.assertEqual(response.status_code, 200, response.get_json())
         body = response.get_json()
+        self.assertEqual(body["id"], saved["id"])
+        self.assertEqual(self.request_count(), before_count)
         self.assertEqual(body["status"], "submitted")
         self.assertGreaterEqual(as_datetime(body["submitted_at"]), started)
         stored = self.stored("D2")
