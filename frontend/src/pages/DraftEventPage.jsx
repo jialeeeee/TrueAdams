@@ -147,7 +147,7 @@ export default function DraftEventPage() {
     }
   };
 
-  if (loading) return <p>Loading…</p>;
+  if (loading) return <p className="loading">Loading…</p>;
 
   if (loadError) {
     return (
@@ -193,14 +193,19 @@ export default function DraftEventPage() {
         {notice && <p role="status">{notice}</p>}
 
         {!submitted && (
-          <>
+          <div className="form-actions">
             <button type="button" onClick={handleSave} disabled={busy || !form.title.trim()}>
               Save draft
             </button>
-            <button type="button" onClick={handleSubmit} disabled={busy || !form.title.trim()}>
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={handleSubmit}
+              disabled={busy || !form.title.trim()}
+            >
               Submit for review
             </button>
-          </>
+          </div>
         )}
       </form>
     </section>

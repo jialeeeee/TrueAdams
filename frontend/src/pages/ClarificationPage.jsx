@@ -88,7 +88,7 @@ export default function ClarificationPage() {
   }
 
   if (!thread) {
-    return <p>Loading…</p>;
+    return <p className="loading">Loading…</p>;
   }
 
   const { event, clarifications } = thread;

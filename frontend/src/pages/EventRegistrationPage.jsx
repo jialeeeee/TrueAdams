@@ -41,7 +41,7 @@ export default function EventRegistrationPage() {
           <p>{`Status: ${STATUS_LABELS[outcome.status] ?? outcome.status}`}</p>
         </>
       ) : (
-        <button type="button" onClick={register} disabled={sending}>
+        <button type="button" className="btn-primary" onClick={register} disabled={sending}>
           {sending ? "Registering…" : "Register"}
         </button>
       )}

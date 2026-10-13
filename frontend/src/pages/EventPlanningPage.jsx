@@ -79,7 +79,9 @@ export default function EventPlanningPage() {
     load();
   }, [load]);
 
-  const back = <Link to="/events/managed">Back to my managed events</Link>;
+  const back = (
+    <Link className="back-link" to="/events/managed">Back to my managed events</Link>
+  );
 
   if (loadError) {
     return (
@@ -91,7 +93,7 @@ export default function EventPlanningPage() {
     );
   }
 
-  if (!event) return <p>Loading…</p>;
+  if (!event) return <p className="loading">Loading…</p>;
 
   return (
     <section>

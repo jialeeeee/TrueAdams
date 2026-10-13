@@ -43,7 +43,7 @@ export default function MyRequestsPage() {
       {result && result.requests.length > 0 && (
         <ul>
           {result.requests.map((request) => (
-            <li key={request.id}>
+            <li key={request.id} data-status={request.status}>
               <strong>{request.title}</strong>
               <p>
                 {request.decided_at

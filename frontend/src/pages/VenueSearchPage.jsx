@@ -166,8 +166,10 @@ export default function VenueSearchPage() {
         <input id="search-facilities" type="text" value={filters.facilities}
           onChange={change("facilities")} />
 
-        <button type="submit" disabled={searching}>Search</button>
-        <button type="button" onClick={clear}>Clear filters</button>
+        <div className="form-actions">
+          <button type="submit" disabled={searching}>Search</button>
+          <button type="button" onClick={clear}>Clear filters</button>
+        </div>
       </form>
 
       {formError && <p role="alert">{formError}</p>}

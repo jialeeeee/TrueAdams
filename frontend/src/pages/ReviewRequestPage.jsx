@@ -116,7 +116,7 @@ export default function ReviewRequestPage() {
     );
   }
 
-  if (!request) return <p>Loading…</p>;
+  if (!request) return <p className="loading">Loading…</p>;
 
   const undecided = request.status === "submitted";
 
@@ -178,12 +178,24 @@ export default function ReviewRequestPage() {
             </p>
           )}
           {error && <p role="alert" id="decision-error">{error}</p>}
-          <button type="button" onClick={() => decide("approve")} disabled={busy || over > 0}>
-            Approve
-          </button>
-          <button type="button" onClick={() => decide("reject")} disabled={busy || over > 0}>
-            Reject
-          </button>
+          <div className="form-actions">
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={() => decide("approve")}
+              disabled={busy || over > 0}
+            >
+              Approve
+            </button>
+            <button
+              type="button"
+              className="btn-danger"
+              onClick={() => decide("reject")}
+              disabled={busy || over > 0}
+            >
+              Reject
+            </button>
+          </div>
         </form>
       )}
     </section>

@@ -46,7 +46,7 @@ export default function ManagedEventsPage() {
       {result && result.events.length > 0 && (
         <ul>
           {result.events.map((event) => (
-            <li key={event.id}>
+            <li key={event.id} data-status={event.status}>
               <Link to={`/events/${event.id}/planning`}>{event.title || NOT_RECORDED}</Link>
               <p>{`Proposed date: ${proposedDate(event.start_time)}`}</p>
               <p>{`Status: ${statusLabel(event.status)}`}</p>

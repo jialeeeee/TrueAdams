@@ -42,7 +42,7 @@ function SubmittedSection({ requests }) {
         <ul>
           {/* No link to the draft editor: submitted requests can no longer be edited. */}
           {requests.map((request) => (
-            <li key={request.id}>
+            <li key={request.id} data-status={request.status}>
               <strong>{request.title}</strong>
               <p>
                 {request.decided_at
@@ -85,7 +85,7 @@ export default function MyEventRequestsPage() {
   return (
     <section>
       <h1>My event requests</h1>
-      <Link to="/events/drafts/new">New event request</Link>
+      <Link className="btn btn-primary" to="/events/drafts/new">New event request</Link>
 
       {loadError && (
         <>

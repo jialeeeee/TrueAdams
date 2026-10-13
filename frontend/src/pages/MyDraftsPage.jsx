@@ -29,7 +29,7 @@ export default function MyDraftsPage() {
   return (
     <section>
       <h1>My draft event requests</h1>
-      <Link to="/events/drafts/new">New event request</Link>
+      <Link className="btn btn-primary" to="/events/drafts/new">New event request</Link>
 
       {loadError && (
         <>
