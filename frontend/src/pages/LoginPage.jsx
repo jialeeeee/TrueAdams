@@ -6,16 +6,19 @@ export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
   const navigate = useNavigate();
 
   const handleSubmit = async (event) => {
     event.preventDefault();
+    if (submitting) return;
     setError("");
     if (!email.trim() || !password) {
       setError("Email and password are required.");
       return;
     }
 
+    setSubmitting(true);
     try {
       const response = await apiClient.post("/auth/login", { email, password });
       const token = response.data?.access_token;
@@ -33,26 +36,34 @@ export default function LoginPage() {
           ? explanation
           : "Sign-in is temporarily unavailable. Please try again.",
       );
+    } finally {
+      setSubmitting(false);
     }
   };
 
   return (
-    <form onSubmit={handleSubmit}>
+    <form className="auth-card" onSubmit={handleSubmit}>
       <h1>Login</h1>
       {error && <p role="alert">{error}</p>}
+      <label htmlFor="login-email">Email</label>
       <input
+        id="login-email"
         type="email"
+        autoComplete="username"
         value={email}
         onChange={(e) => setEmail(e.target.value)}
         placeholder="Email"
       />
+      <label htmlFor="login-password">Password</label>
       <input
+        id="login-password"
         type="password"
+        autoComplete="current-password"
         value={password}
         onChange={(e) => setPassword(e.target.value)}
         placeholder="Password"
       />
-      <button type="submit">Login</button>
+      <button type="submit" disabled={submitting}>Login</button>
     </form>
   );
 }
