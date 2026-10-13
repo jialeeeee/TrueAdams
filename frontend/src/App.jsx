@@ -1,4 +1,4 @@
-import { Link, Route, Routes } from "react-router-dom";
+import { Route, Routes } from "react-router-dom";
 import ClarificationPage from "./pages/ClarificationPage.jsx";
 import DraftEventPage from "./pages/DraftEventPage.jsx";
 import EventPlanningPage from "./pages/EventPlanningPage.jsx";
@@ -18,20 +18,7 @@ import VenuesPage from "./pages/VenuesPage.jsx";
 
 export default function App() {
   return (
-    <div>
-      <nav>
-        <Link to="/">Events</Link>
-        <Link to="/events/mine">My event requests</Link>
-        <Link to="/events/drafts">My drafts</Link>
-        <Link to="/events/requests">My requests</Link>
-        <Link to="/events/managed">My managed events</Link>
-        <Link to="/venues">Venues</Link>
-        <Link to="/venues/availability">Venue availability</Link>
-        <Link to="/venues/search">Venue search</Link>
-        <Link to="/resources">Resources</Link>
-        <Link to="/registrations">Registrations</Link>
-        <Link to="/login">Login</Link>
-      </nav>
+    <>
       <Routes>
         <Route path="/" element={<EventsPage />} />
         <Route path="/events/drafts" element={<MyDraftsPage />} />
@@ -51,6 +38,6 @@ export default function App() {
         <Route path="/registrations" element={<RegistrationsPage />} />
         <Route path="/login" element={<LoginPage />} />
       </Routes>
-    </div>
+    </>
   );
 }
