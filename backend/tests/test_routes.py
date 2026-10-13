@@ -8,10 +8,11 @@ build the feature.
 
 from tests.base import AppTestCase
 
+# GET /api/events/ (SCRUM-74) and GET /api/registrations/ (SCRUM-68) now require a login
+# and return objects, so they are no longer stubs; their tests are in test_event_details.py
+# and test_event_withdrawal.py.
 COLLECTION_ENDPOINTS = [
-    "/api/events/",
     "/api/resources/",
-    "/api/registrations/",
 ]
 
 ALL_ROUTES = [
@@ -20,6 +21,9 @@ ALL_ROUTES = [
     ("GET", "/api/events/"),
     ("POST", "/api/events/"),
     ("POST", "/api/events/1/change-requests"),
+    ("GET", "/api/events/1"),
+    ("GET", "/api/events/1/reassignment"),
+    ("POST", "/api/events/1/reassignment"),
     ("GET", "/api/events/1/coordinator"),
     ("PUT", "/api/events/1/coordinator"),
     ("GET", "/api/events/1/eligible-coordinators"),
@@ -44,6 +48,7 @@ ALL_ROUTES = [
     ("POST", "/api/resources/1/reservations"),
     ("GET", "/api/registrations/"),
     ("POST", "/api/registrations/"),
+    ("POST", "/api/registrations/1/withdraw"),
 ]
 
 UNIMPLEMENTED_ROUTES = [
