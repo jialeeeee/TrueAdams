@@ -167,6 +167,7 @@ class SendQuestionTests(ClarificationTestCase):
 
                 self.assertEqual(response.status_code, 200)
                 body = response.get_json()
+                self.assertEqual(body["can_send"], key == "alice")
                 self.assertEqual(
                     body["event"],
                     {"id": event.id, "title": "Charity Gala", "status": "submitted",

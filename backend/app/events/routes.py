@@ -8,15 +8,17 @@ from sqlalchemy.exc import SQLAlchemyError
 from .. import tasks
 from ..extensions import db
 from ..models import Event, EventClarification, Notification, User, Venue
+from .permissions import (
+    COORDINATOR_ROLE,
+    can_reassign_coordinator,
+    can_view_clarifications,
+    can_view_coordinator,
+    is_current_coordinator as _is_current_coordinator,
+    is_current_organiser,
+)
 
 events_bp = Blueprint("events", __name__)
 
-COORDINATOR_ROLE = "coordinator"
-# Roles allowed to assign, reassign and list eligible coordinators.
-ASSIGNER_ROLES = {"admin", COORDINATOR_ROLE}
-# Roles that work with the coordinator on an event's arrangements. The event's
-# own organiser can also view its coordinator.
-COORDINATOR_VIEWER_ROLES = ASSIGNER_ROLES | {"venue_staff", "tech_staff"}
 NON_ASSIGNABLE_STATUSES = {"draft", "cancelled"}
 # Fields on the coordinator's planning view, in display order.
 PLANNING_FIELDS = [
@@ -380,97 +382,92 @@ def update_planning(event_id: int):
 @events_bp.get("/<int:event_id>/coordinator")
 @jwt_required()
 def get_coordinator(event_id: int):
-    user = _current_user()
-    if user is None:
-        return _error("Your session is no longer valid. Please log in again.", 401)
-
-    event = db.session.get(Event, event_id)
-    if event is None:
-        return _error("Event not found.", 404)
-
-    if user.role not in COORDINATOR_VIEWER_ROLES and user.id != event.organiser_id:
-        return _error("You are not allowed to view this event's coordinator.", 403)
-
-    return jsonify(_assignment_payload(event))
+    try:
+        user = _current_user()
+        if user is None:
+            return _error("Your session is no longer valid. Please log in again.", 401)
+        event = db.session.get(Event, event_id)
+        if event is None:
+            return _error("Event not found.", 404)
+        if not can_view_coordinator(user, event):
+            return _error("You are not allowed to view this event's coordinator.", 403)
+        payload = _assignment_payload(event)
+    except SQLAlchemyError:
+        db.session.rollback()
+        return _error("The coordinator could not be loaded. Please try again.", 503, retryable=True)
+    return jsonify(payload)
 
 
 @events_bp.get("/<int:event_id>/eligible-coordinators")
 @jwt_required()
 def list_eligible_coordinators(event_id: int):
-    user = _current_user()
-    if user is None:
-        return _error("Your session is no longer valid. Please log in again.", 401)
-
-    event = db.session.get(Event, event_id)
-    if event is None:
-        return _error("Event not found.", 404)
-
-    if user.role not in ASSIGNER_ROLES:
-        return _error("You are not allowed to assign coordinators.", 403)
-
-    coordinators = _eligible_coordinators(event)
-    return jsonify(
-        {
+    try:
+        user = _current_user()
+        if user is None:
+            return _error("Your session is no longer valid. Please log in again.", 401)
+        event = db.session.get(Event, event_id)
+        if event is None:
+            return _error("Event not found.", 404)
+        if not can_reassign_coordinator(user, event):
+            return _error("You are not allowed to reassign this event's coordinator.", 403)
+        coordinators = _eligible_coordinators(event)
+        payload = {
             "event_id": event.id,
             "coordinators": [_user_summary(c) for c in coordinators],
             "message": None
             if coordinators
             else "No eligible coordinators are available for this event.",
         }
-    )
+    except SQLAlchemyError:
+        db.session.rollback()
+        return _error("Eligible coordinators could not be loaded. Please try again.", 503, retryable=True)
+    return jsonify(payload)
 
 
 @events_bp.put("/<int:event_id>/coordinator")
 @jwt_required()
 def assign_coordinator(event_id: int):
-    user = _current_user()
-    if user is None:
-        return _error("Your session is no longer valid. Please log in again.", 401)
-
-    event = db.session.get(Event, event_id)
-    if event is None:
-        return _error("Event not found.", 404)
-
-    if user.role not in ASSIGNER_ROLES:
-        return _error("You are not allowed to assign coordinators.", 403)
-
-    body = request.get_json(silent=True)
-    coordinator_id = body.get("coordinator_id") if isinstance(body, dict) else None
-    if not isinstance(coordinator_id, int) or isinstance(coordinator_id, bool):
-        return _error("coordinator_id must be an integer.", 400)
-
-    if event.status in NON_ASSIGNABLE_STATUSES:
-        return _error(
-            f"A coordinator cannot be assigned to a {event.status} event.", 409
-        )
-
-    if coordinator_id == event.coordinator_id:
-        return _error("This user is already the event's coordinator.", 409)
-
-    coordinator = db.session.get(User, coordinator_id)
-    if coordinator is None or coordinator.role != COORDINATOR_ROLE:
-        return _error("The selected user is not an eligible coordinator.", 422)
-
-    event.coordinator_id = coordinator.id
-    event.coordinator_assigned_at = datetime.utcnow()
     try:
+        user = _current_user()
+        if user is None:
+            return _error("Your session is no longer valid. Please log in again.", 401)
+        # SCRUM-27: re-read and lock before checking the relationship, so a
+        # concurrent reassignment cannot authorize the former coordinator.
+        event = db.session.get(Event, event_id, with_for_update=True, populate_existing=True)
+        if event is None:
+            return _error("Event not found.", 404)
+        if not can_reassign_coordinator(user, event):
+            return _error("You are not allowed to reassign this event's coordinator.", 403)
+
+        body = request.get_json(silent=True)
+        coordinator_id = body.get("coordinator_id") if isinstance(body, dict) else None
+        if not isinstance(coordinator_id, int) or isinstance(coordinator_id, bool):
+            return _error("coordinator_id must be an integer.", 400)
+        # Do not accept forged ownership/assignment/audit fields alongside the target.
+        if set(body) != {"coordinator_id"}:
+            return _error("Only coordinator_id can be changed here.", 400)
+        if event.status in NON_ASSIGNABLE_STATUSES:
+            return _error(f"A coordinator cannot be assigned to a {event.status} event.", 409)
+        if coordinator_id == event.coordinator_id:
+            return _error("This user is already the event's coordinator.", 409)
+        coordinator = db.session.get(User, coordinator_id)
+        if coordinator is None or coordinator.role != COORDINATOR_ROLE:
+            return _error("The selected user is not an eligible coordinator.", 422)
+
+        event.coordinator_id = coordinator.id
+        event.coordinator_assigned_at = datetime.utcnow()
+        payload = {
+            "message": f"{coordinator.email} is now the coordinator for {event.title}.",
+            **_assignment_payload(event),
+        }
         db.session.commit()
     except SQLAlchemyError:
         db.session.rollback()
         return _error(
-            "The coordinator assignment could not be saved. Please try again.", 500
+            "The coordinator assignment could not be saved. Please try again.", 503, retryable=True
         )
 
-    return jsonify(
-        {
-            "message": f"{coordinator.email} is now the coordinator for {event.title}.",
-            **_assignment_payload(event),
-        }
-    )
-
-
-def _is_current_coordinator(user, event):
-    return user.role == COORDINATOR_ROLE and event.coordinator_id == user.id
+    return jsonify(payload)
 
 
 def _clarification_payload(clarification, sender):
@@ -515,7 +512,7 @@ def list_clarifications(event_id: int):
         if event is None:
             return _error("Event not found.", 404)
 
-        if not _is_current_coordinator(user, event) and user.id != event.organiser_id:
+        if not can_view_clarifications(user, event):
             return _error(
                 "You are not allowed to view this event's clarification questions.", 403
             )
@@ -543,6 +540,7 @@ def list_clarifications(event_id: int):
                 "organiser": _user_summary(organiser),
             },
             "clarifications": [_clarification_payload(c, sender) for c, sender in rows],
+            "can_send": _is_current_coordinator(user, event) and event.status in CLARIFIABLE_STATUSES,
             "message": None if rows else "No questions have been sent for this event yet.",
         }
     )
@@ -656,7 +654,7 @@ def _own_draft(event_id):
     event = db.session.get(Event, event_id)
     if event is None:
         raise _Rejected("Event request not found.", 404)
-    if user.role != ORGANISER_ROLE or event.organiser_id != user.id:
+    if not is_current_organiser(user, event):
         raise _Rejected("You can only open your own event requests.", 403)
     if event.status != DRAFT_STATUS:
         raise _Rejected(
