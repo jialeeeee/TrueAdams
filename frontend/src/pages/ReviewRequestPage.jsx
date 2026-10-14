@@ -45,8 +45,52 @@ function explain(failure, fallback) {
   return typeof error === "string" && error.trim() ? error : fallback;
 }
 
-export default function ReviewRequestPage() {
-  const { eventId } = useParams();
+function ClarificationHistory({ eventId }) {
+  const [thread, setThread] = useState(null);
+  const [loadError, setLoadError] = useState("");
+  const [attempt, setAttempt] = useState(0);
+
+  useEffect(() => {
+    let active = true;
+    setThread(null);
+    setLoadError("");
+    apiClient.get(`/events/${eventId}/clarifications`).then((response) => {
+      if (active) setThread(response.data);
+    }).catch((failure) => {
+      if (active) {
+        setLoadError(explain(failure, "The questions could not be loaded. Please try again."));
+      }
+    });
+    return () => { active = false; };
+  }, [eventId, attempt]);
+
+  return (
+    <section aria-label="Clarification history">
+      <h2>Clarification history</h2>
+      {loadError ? (
+        <>
+          <p role="alert">{loadError}</p>
+          <button type="button" onClick={() => setAttempt((value) => value + 1)}>Retry questions</button>
+        </>
+      ) : !thread ? (
+        <p>Loading questions…</p>
+      ) : thread.clarifications.length === 0 ? (
+        <p>{thread.message}</p>
+      ) : (
+        <ol>
+          {thread.clarifications.map((clarification) => (
+            <li key={clarification.id}>
+              <p>{clarification.message}</p>
+              <small>{`${clarification.sender.email} · ${formatSavedAt(clarification.created_at)}`}</small>
+            </li>
+          ))}
+        </ol>
+      )}
+    </section>
+  );
+}
+
+function ReviewRequest({ eventId }) {
   const [request, setRequest] = useState(null);
   const [loadError, setLoadError] = useState("");
   const [text, setText] = useState("");
@@ -143,6 +187,8 @@ export default function ReviewRequestPage() {
         ))}
       </dl>
 
+      <ClarificationHistory eventId={eventId} />
+
       {confirmation && (
         <div role="status">
           <p>{confirmation}</p>
@@ -188,4 +234,10 @@ export default function ReviewRequestPage() {
       )}
     </section>
   );
+}
+
+export default function ReviewRequestPage() {
+  const { eventId } = useParams();
+  // SCRUM-55: changing the selection clears all prior details and history.
+  return <ReviewRequest key={eventId} eventId={eventId} />;
 }
