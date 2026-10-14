@@ -16,6 +16,8 @@ import ReassignmentRequestPage from "./pages/ReassignmentRequestPage.jsx";
 import ReviewRequestPage from "./pages/ReviewRequestPage.jsx";
 import ReviewRequestsPage from "./pages/ReviewRequestsPage.jsx";
 import VenueAvailabilityPage from "./pages/VenueAvailabilityPage.jsx";
+import VenueBookingRequestPage from "./pages/VenueBookingRequestPage.jsx";
+import VenueBookingRequestsPage from "./pages/VenueBookingRequestsPage.jsx";
 import VenueSearchPage from "./pages/VenueSearchPage.jsx";
 import VenuesPage from "./pages/VenuesPage.jsx";
 
@@ -32,6 +34,7 @@ export default function App() {
         <Link to="/venues">Venues</Link>
         <Link to="/venues/availability">Venue availability</Link>
         <Link to="/venues/search">Venue search</Link>
+        <Link to="/venues/bookings">Venue booking requests</Link>
         <Link to="/resources">Resources</Link>
         <Link to="/my-registrations">My registrations</Link>
         <Link to="/login">Login</Link>
@@ -50,10 +53,12 @@ export default function App() {
         <Route path="/events/:eventId/review" element={<ReviewRequestPage />} />
         <Route path="/events/:eventId/clarifications" element={<ClarificationPage />} />
         <Route path="/events/:eventId/register" element={<EventRegistrationPage />} />
+        <Route path="/events/:eventId/venue-request" element={<VenueBookingRequestPage />} />
         <Route path="/events/:eventId/reassign" element={<ReassignmentRequestPage />} />
         <Route path="/venues" element={<VenuesPage />} />
         <Route path="/venues/availability" element={<VenueAvailabilityPage />} />
         <Route path="/venues/search" element={<VenueSearchPage />} />
+        <Route path="/venues/bookings" element={<VenueBookingRequestsPage />} />
         <Route path="/resources" element={<ResourcesPage />} />
         <Route path="/my-registrations" element={<MyRegistrationsPage />} />
         <Route path="/registrations" element={<Navigate to="/my-registrations" replace />} />

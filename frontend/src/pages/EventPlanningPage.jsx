@@ -99,6 +99,10 @@ export default function EventPlanningPage() {
       <h1>{event.title || NOT_RECORDED}</h1>
       <p>{`Status: ${statusLabel(event.status)}`}</p>
       <p>{`Coordinator: ${display("coordinator", event.coordinator)}`}</p>
+      {/* SCRUM-39: only approved events proceed to venue booking (A2). */}
+      {event.status === "approved" && (
+        <Link to={`/events/${event.id}/venue-request`}>Request a venue</Link>
+      )}
 
       <dl>
         {FIELDS.map(([field, label]) => (

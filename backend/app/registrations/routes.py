@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 
 from flask import Blueprint, current_app, jsonify, request
 from flask_jwt_extended import get_jwt_identity, jwt_required
@@ -6,6 +6,8 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from .. import tasks
 from ..extensions import db
+# Imported by name so tests can patch registrations.routes.singapore_now.
+from ..local_time import singapore_now
 from ..models import Event, Notification, Registration, User
 
 registrations_bp = Blueprint("registrations", __name__)
@@ -23,9 +25,6 @@ DB_INTEGER_MAX = 2_147_483_647
 # A cancelled registration is not active, so the attendee may register again (A7).
 ACTIVE_STATUSES = (REGISTERED, WAITLISTED)
 STATUS_LABELS = {REGISTERED: "Registered", WAITLISTED: "Waitlisted"}
-# Singapore has had no daylight saving since 1982, so a fixed offset is exact and
-# avoids depending on the host's time zone database.
-SINGAPORE = timezone(timedelta(hours=8))
 
 # Why a registration is blocked: the `reason` sent with HTTP 409, and its message.
 BLOCKED_MESSAGES = {
@@ -48,11 +47,6 @@ class _Rejected(Exception):
 
 def _error(message, status_code, **extra):
     return jsonify({"error": message, **extra}), status_code
-
-
-def singapore_now():
-    """The current Singapore time without a time zone, as event times are stored."""
-    return datetime.now(SINGAPORE).replace(tzinfo=None)
 
 
 def _require_attendee():

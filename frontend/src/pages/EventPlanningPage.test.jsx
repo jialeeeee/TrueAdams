@@ -160,3 +160,26 @@ describe("SCRUM-62 event planning page", () => {
       .toBe("/events/managed");
   });
 });
+
+// SCRUM-39: an approved event offers its coordinator a way to request a venue
+// (TC-39-11 in docs/test-cases/SCRUM-39-venue-booking-request.md).
+describe("SCRUM-39 request a venue from the planning view", () => {
+  it("links an approved event to its venue request page", async () => {
+    apiClient.get.mockResolvedValue({ data: { ...FESTIVAL, status: "approved" } });
+    renderPage();
+
+    const link = await screen.findByRole("link", { name: "Request a venue" });
+    expect(link.getAttribute("href")).toBe("/events/1/venue-request");
+  });
+
+  it.each(["draft", "submitted", "under_review", "rejected", "cancelled"])(
+    "offers no venue request for a %s event",
+    async (status) => {
+      apiClient.get.mockResolvedValue({ data: { ...FESTIVAL, status } });
+      renderPage();
+
+      await screen.findByRole("heading", { name: "Harbour Lights Festival" });
+      expect(screen.queryByRole("link", { name: "Request a venue" })).toBeNull();
+    },
+  );
+});

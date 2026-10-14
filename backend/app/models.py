@@ -96,6 +96,13 @@ class VenueBooking(db.Model):
     __tablename__ = "venue_bookings"
     __table_args__ = (
         db.CheckConstraint("end_time > start_time", name="venue_bookings_end_after_start"),
+        # An event can have at most one pending venue request (SCRUM-39 A6).
+        db.Index(
+            "venue_bookings_one_pending_per_event",
+            "event_id",
+            unique=True,
+            postgresql_where=db.text("status = 'pending'"),
+        ),
     )
 
     id = db.Column(db.Integer, primary_key=True)
@@ -106,7 +113,11 @@ class VenueBooking(db.Model):
     # Singapore time, stored without a time zone.
     start_time = db.Column(db.DateTime, nullable=False)
     end_time = db.Column(db.DateTime, nullable=False)
+    # When the request was made (naive UTC).
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    # SCRUM-39: what Venue Staff assess the request against, and who asked.
+    venue_requirements = db.Column(db.Text)
+    requested_by_id = db.Column(db.Integer, db.ForeignKey("users.id"))
 
 
 class VenueBlock(db.Model):
