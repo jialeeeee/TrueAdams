@@ -4,11 +4,19 @@ from datetime import datetime, timedelta
 from flask import Blueprint, current_app, jsonify, request, url_for
 from flask_jwt_extended import get_jwt_identity, jwt_required
 from sqlalchemy import func
-from sqlalchemy.exc import DBAPIError, SQLAlchemyError
+from sqlalchemy.exc import DBAPIError, IntegrityError, SQLAlchemyError
 
 from .. import tasks
 from ..extensions import db
-from ..models import Event, EventClarification, Notification, Registration, User, Venue
+from ..models import (
+    Event,
+    EventClarification,
+    Notification,
+    ReassignmentRequest,
+    Registration,
+    User,
+    Venue,
+)
 from ..registrations.routes import singapore_now
 from .permissions import (
     COORDINATOR_ROLE,
@@ -97,6 +105,20 @@ PUBLISHED_STATUSES = {"confirmed"}
 # for one raises an error instead of finding nothing.
 DB_INTEGER_MAX = 2_147_483_647
 EVENT_NOT_FOUND = "Event not found."
+
+# SCRUM-61. Must match MAX_REASON_LENGTH in frontend/src/pages/ReassignmentRequestPage.jsx.
+MAX_REASON_LENGTH = 500
+REASSIGNMENT_NOTIFICATION = "reassignment_requested"
+PENDING = "pending"
+# Statuses that end an event's life, mapped to the reason a request is refused (A7, Q5).
+# `completed` is not set by any story yet; "past" also covers events whose end time has gone.
+REASSIGNMENT_CLOSED_STATUSES = {"cancelled": "cancelled", "completed": "past"}
+REASSIGNMENT_MESSAGES = {
+    "cancelled": "A reassignment cannot be requested for a cancelled event.",
+    "past": "A reassignment cannot be requested for an event that has ended.",
+    "pending": "A reassignment request is already pending for this event.",
+    "no_eligible_coordinators": "No eligible coordinator is available for this event.",
+}
 
 
 @events_bp.get("/")
@@ -1425,3 +1447,186 @@ def get_event(event_id: int):
         return _error("The event could not be loaded. Please try again.", 503, retryable=True)
 
     return jsonify({"event": payload})
+
+
+# ---------- Request coordinator reassignment (SCRUM-61) ----------
+
+
+def _reassignment_target(event_id):
+    """The caller and event for a reassignment call; raises _Rejected for 401, 404, 403.
+
+    Only the event's current main coordinator may use it (A1).
+    """
+    user = _current_user()
+    if user is None:
+        raise _Rejected("Your session is no longer valid. Please log in again.", 401)
+    event = db.session.get(Event, event_id) if event_id <= DB_INTEGER_MAX else None
+    if event is None:
+        raise _Rejected(EVENT_NOT_FOUND, 404)
+    if not _is_current_coordinator(user, event):
+        raise _Rejected(
+            "Only the event's main coordinator can request a reassignment.", 403
+        )
+    return user, event
+
+
+def _pending_request(event):
+    return ReassignmentRequest.query.filter_by(event_id=event.id, status=PENDING).first()
+
+
+def _reassignment_blocked(event, pending):
+    """Why no request can be made for this event now, or None (A6, A7)."""
+    closed = REASSIGNMENT_CLOSED_STATUSES.get(event.status)
+    if closed:
+        return closed
+    if event.end_time is not None and event.end_time <= singapore_now():
+        return "past"
+    if pending is not None:
+        return "pending"
+    return None
+
+
+def _reassignment_request_payload(request_row):
+    return {
+        "id": request_row.id,
+        "event_id": request_row.event_id,
+        "requester_id": request_row.requester_id,
+        "coordinator_id": request_row.coordinator_id,
+        "reason": request_row.reason,
+        "status": request_row.status,
+        "requested_at": request_row.requested_at.isoformat(),
+    }
+
+
+@events_bp.get("/<int:event_id>/reassignment")
+@jwt_required()
+def get_reassignment(event_id: int):
+    try:
+        user, event = _reassignment_target(event_id)
+        pending = _pending_request(event)
+        coordinators = _eligible_coordinators(event)
+        blocked = _reassignment_blocked(event, pending)
+        if blocked is None and not coordinators:
+            blocked = "no_eligible_coordinators"
+        payload = {
+            "event": {"id": event.id, "title": event.title, "status": event.status},
+            "coordinators": [_user_summary(c) for c in coordinators],
+            "pending_request": _reassignment_request_payload(pending) if pending else None,
+            "can_request": blocked is None,
+            "blocked_reason": blocked,
+            "message": REASSIGNMENT_MESSAGES.get(blocked),
+        }
+    except _Rejected as rejected:
+        return _error(rejected.message, rejected.status_code, **rejected.extra)
+    except SQLAlchemyError:
+        db.session.rollback()
+        return _error(
+            "The reassignment form could not be loaded. Please try again.", 503, retryable=True
+        )
+
+    return jsonify(payload)
+
+
+def _parse_reassignment(body):
+    """(coordinator_id, reason) from the request body; raises _Rejected if invalid."""
+    if not isinstance(body, dict):
+        raise _Rejected("Send the reassignment request as JSON.", 400)
+    coordinator_id = body.get("coordinator_id")
+    if isinstance(coordinator_id, bool) or not isinstance(coordinator_id, int):
+        raise _field_error("coordinator_id", "Choose a coordinator.")
+    reason = body.get("reason")
+    if not isinstance(reason, str) or not reason.strip():
+        raise _field_error("reason", "Enter a reason for the reassignment.")
+    reason = reason.strip()
+    if len(reason) > MAX_REASON_LENGTH:
+        raise _field_error(
+            "reason", f"The reason must be {MAX_REASON_LENGTH} characters or fewer."
+        )
+    return coordinator_id, reason
+
+
+def _queue_reassignment_email(to_address, title, requester_email, event_id):
+    """Queue the selected coordinator's email; False if the queue could not be reached.
+
+    The request and in-app notification are already saved by then, so a broker outage
+    must not turn a saved request into a failure. It takes plain values, not models.
+    """
+    try:
+        tasks.send_notification_email.delay(
+            to_address,
+            f"Reassignment request: {title}",
+            f"{requester_email} has asked you to take over the event \"{title}\".\n\n"
+            "Sign in to ConnectSphere to see the request.",
+        )
+    except Exception:
+        current_app.logger.exception(
+            "Could not queue reassignment email for event %s", event_id
+        )
+        return False
+    return True
+
+
+@events_bp.post("/<int:event_id>/reassignment")
+@jwt_required()
+def request_reassignment(event_id: int):
+    try:
+        user, event = _reassignment_target(event_id)
+        blocked = _reassignment_blocked(event, _pending_request(event))
+        if blocked:
+            raise _Rejected(REASSIGNMENT_MESSAGES[blocked], 409, reason=blocked)
+        coordinator_id, reason = _parse_reassignment(request.get_json(silent=True))
+        # The same rule as the list, so the two can never disagree (A2).
+        coordinator = next(
+            (c for c in _eligible_coordinators(event) if c.id == coordinator_id), None
+        )
+        if coordinator is None:
+            raise _Rejected("The selected user is not an eligible coordinator.", 422)
+
+        request_row = ReassignmentRequest(
+            event_id=event.id,
+            requester_id=user.id,
+            coordinator_id=coordinator.id,
+            reason=reason,
+            status=PENDING,
+        )
+        db.session.add(request_row)
+        # Plain values, so nothing needs the database after the commit.
+        title, requester_email, to_address = event.title, user.email, coordinator.email
+        db.session.add(
+            Notification(
+                recipient_id=coordinator.id,
+                kind=REASSIGNMENT_NOTIFICATION,
+                message=(
+                    f"{requester_email} has asked you to take over the event "
+                    f'"{title}". Open the event to see their reason.'
+                ),
+                event_id=event.id,
+            )
+        )
+        try:
+            db.session.flush()
+            payload = _reassignment_request_payload(request_row)
+            db.session.commit()
+        except IntegrityError:
+            # Two requests at once: the unique index let only one through.
+            db.session.rollback()
+            raise _Rejected(
+                REASSIGNMENT_MESSAGES[PENDING], 409, reason="pending"
+            )
+    except _Rejected as rejected:
+        return _error(rejected.message, rejected.status_code, **rejected.extra)
+    except SQLAlchemyError:
+        db.session.rollback()
+        return _error("Your request was not saved. Please try again.", 503, retryable=True)
+
+    queued = _queue_reassignment_email(to_address, title, requester_email, event_id)
+    return (
+        jsonify(
+            {
+                "message": f"Your request was sent to {to_address}.",
+                "request": payload,
+                "notification": {"in_app": True, "email_queued": queued},
+            }
+        ),
+        201,
+    )

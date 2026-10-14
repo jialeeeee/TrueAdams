@@ -21,6 +21,8 @@ ALL_ROUTES = [
     ("POST", "/api/events/"),
     ("POST", "/api/events/1/change-requests"),
     ("GET", "/api/events/1"),
+    ("GET", "/api/events/1/reassignment"),
+    ("POST", "/api/events/1/reassignment"),
     ("GET", "/api/events/1/coordinator"),
     ("PUT", "/api/events/1/coordinator"),
     ("GET", "/api/events/1/eligible-coordinators"),
