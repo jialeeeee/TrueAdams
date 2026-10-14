@@ -52,6 +52,8 @@ CLARIFICATION_NOTIFICATION = "clarification_requested"
 ORGANISER_ROLE = "organiser"
 DRAFT_STATUS = "draft"
 SUBMITTED_STATUS = "submitted"
+# SCRUM-55 confirmed queue eligibility; decision eligibility remains separate.
+REVIEW_QUEUE_STATUSES = {"submitted", "under_review"}
 # A coordinator's decision on a submitted request, and the status it leads to (SCRUM-32).
 DECISION_STATUSES = {"approve": "approved", "reject": "rejected"}
 MAX_DECISION_WORDS = 1000
@@ -1013,6 +1015,50 @@ def _queue_decision_email(to_address, title, event_id, status, message):
         current_app.logger.exception("Could not queue decision email for event %s", event_id)
         return False
     return True
+
+
+def _review_summary_payload(event, organiser):
+    return {
+        "id": event.id,
+        "title": _recorded(event.title),
+        "organiser": _user_summary(organiser) if organiser else None,
+        "start_time": _isoformat(event.start_time),
+        "submitted_at": _isoformat(event.submitted_at),
+        "status": event.status,
+    }
+
+
+@events_bp.get("/review-requests")
+@jwt_required()
+def list_review_requests():
+    """SCRUM-55: open requests assigned to the caller's current coordinator role."""
+    try:
+        user = _current_user()
+        if user is None:
+            return _error("Your session is no longer valid. Please log in again.", 401)
+        if user.role != COORDINATOR_ROLE:
+            return _error("Only event coordinators can view requests for review.", 403)
+
+        events = (
+            Event.query.filter_by(coordinator_id=user.id)
+            .filter(Event.status.in_(REVIEW_QUEUE_STATUSES))
+            .all()
+        )
+        # Repeated requests from one organiser need only one User lookup.
+        organisers = {organiser_id: db.session.get(User, organiser_id)
+                      for organiser_id in {event.organiser_id for event in events}}
+        requests = [_review_summary_payload(event, organisers[event.organiser_id])
+                    for event in events]
+    except SQLAlchemyError:
+        db.session.rollback()
+        return _error(
+            "Review requests could not be loaded. Please try again.", 503, retryable=True
+        )
+
+    return jsonify({
+        "requests": requests,
+        "message": None if requests else "You have no submitted event requests to review.",
+    })
 
 
 @events_bp.get("/<int:event_id>/review")

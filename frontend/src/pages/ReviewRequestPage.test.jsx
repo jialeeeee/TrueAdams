@@ -1,6 +1,6 @@
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import apiClient from "../api/client.js";
 import ReviewRequestPage from "./ReviewRequestPage.jsx";
@@ -45,7 +45,7 @@ function words(count) {
 }
 
 async function renderPage(loaded = request()) {
-  apiClient.get.mockResolvedValue({ data: { request: loaded } });
+  apiClient.get.mockResolvedValueOnce({ data: { request: loaded } });
   render(
     <MemoryRouter initialEntries={["/events/7/review"]} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
       <Routes><Route path="/events/:eventId/review" element={<ReviewRequestPage />} /></Routes>
@@ -69,6 +69,139 @@ async function enter(user, text) {
 beforeEach(() => {
   apiClient.get.mockReset();
   apiClient.post.mockReset();
+  // SCRUM-55 adds a read-only history GET after the request loads. Keep the
+  // existing decision/detail fixtures intact and supply that endpoint's shape.
+  apiClient.get.mockImplementation(async (url) => {
+    if (url.endsWith("/clarifications")) {
+      return { data: { clarifications: [], message: "No questions have been sent for this event yet." } };
+    }
+    throw new Error(`Unexpected API read: ${url}`);
+  });
+});
+
+// SCRUM-55 TC-55-09..10: UNEXECUTED. See
+// docs/test-cases/SCRUM-55-review-submitted-event-request.md and
+// backend/tests/test_review_requests_unit.py. Existing SCRUM-32 tests only check
+// a subset of the fields on this screen; SCRUM-34 tests a different screen.
+describe("SCRUM-55 read submitted details and history (UNEXECUTED)", () => {
+  // TC-55-09: AC4. NULL and false must remain visibly different answers.
+  it.each([
+    ["recorded", "Step-free access", true, "Step-free access", "Yes"],
+    ["unrecorded accessibility and no registration", null, false, "Not provided", "No"],
+  ])("shows all submitted fields with %s values", async (_case, accessibility, registration, shownAccess, shownRegistration) => {
+    await renderPage(request({ accessibility_needs: accessibility, registration_required: registration }));
+    expect(screen.getByRole("heading", { name: "Review: Harbour Lights Festival" })).toBeTruthy();
+    const expected = {
+      Purpose: "Celebrate the harbour's reopening",
+      Description: "Lanterns and live music.",
+      Start: "2026-12-12 17:00", End: "2026-12-12 22:00",
+      "Expected attendance": "250", "Venue requirements": "Open-air waterfront space",
+      "Accessibility needs": shownAccess, "Equipment requirements": "PA system",
+      "Attendee registration needed": shownRegistration,
+    };
+    for (const [label, value] of Object.entries(expected)) {
+      const term = screen.getAllByRole("term").find((node) => node.textContent === label);
+      expect(term).toBeTruthy();
+      expect(within(term.parentElement).getByRole("definition").textContent).toBe(value);
+    }
+  });
+
+  // TC-55-10: AC5, AC4. Reuse one mounted route to catch a stale other-event thread.
+  it("shows the selected request's existing messages and replaces them when another request opens", async () => {
+    const questions = { 7: "Do guests need wheelchair access?", 8: "Is a projector required?" };
+    apiClient.get.mockImplementation(async (url) => {
+      const match = /^\/events\/(7|8)\/(review|clarifications)$/.exec(url);
+      if (!match) throw new Error(`Unexpected API read: ${url}`);
+      const id = Number(match[1]);
+      const event = request({ id, title: id === 7 ? "Harbour Lights Festival" : "Workshop" });
+      if (match[2] === "review") return { data: { request: event } };
+      return { data: { event: { id, title: event.title, status: "submitted",
+        organiser: { id: 1, email: "owner@test.invalid" } },
+      clarifications: [{ id: id + 20, event_id: id, message: questions[id],
+        sender: { id: 2, email: "current@test.invalid" }, created_at: "2026-10-14T02:00:00" }],
+      can_send: true, message: null } };
+    });
+    render(
+      <MemoryRouter initialEntries={["/events/7/review"]} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+        <Link to="/events/8/review">Open workshop</Link>
+        <Routes><Route path="/events/:eventId/review" element={<ReviewRequestPage />} /></Routes>
+      </MemoryRouter>,
+    );
+    const user = userEvent.setup();
+
+    expect(await screen.findByText(questions[7])).toBeTruthy();
+    await user.click(screen.getByRole("link", { name: "Open workshop" }));
+    expect(await screen.findByRole("heading", { name: "Review: Workshop" })).toBeTruthy();
+    expect(await screen.findByText(questions[8])).toBeTruthy();
+    expect(screen.queryByText(questions[7])).toBeNull();
+    expect(apiClient.get).toHaveBeenCalledWith("/events/7/clarifications");
+    expect(apiClient.get).toHaveBeenCalledWith("/events/8/clarifications");
+    expect(apiClient.post).not.toHaveBeenCalled();
+  });
+});
+
+// TC-55-13..14: focused post-GREEN regressions for the additional history GET.
+describe("SCRUM-55 post-GREEN history regressions", () => {
+  it("retries failed history without reloading details or losing a typed decision reason", async () => {
+    const history = vi.fn()
+      .mockRejectedValueOnce(httpFailure(503, { error: "Questions are temporarily unavailable.", retryable: true }))
+      .mockResolvedValueOnce({ data: { clarifications: [{ id: 21, event_id: 7,
+        message: "Is a projector required?", sender: { id: 2, email: "current@test.invalid" },
+        created_at: "2026-10-14T02:00:00" }], message: null } });
+    apiClient.get.mockImplementation((url) => {
+      if (url === "/events/7/clarifications") return history();
+      throw new Error(`Unexpected API read: ${url}`);
+    });
+    const user = await renderPage();
+    const thread = within(screen.getByRole("region", { name: "Clarification history" }));
+    expect((await thread.findByRole("alert")).textContent).toBe("Questions are temporarily unavailable.");
+    expect(screen.getByRole("heading", { name: "Review: Harbour Lights Festival" })).toBeTruthy();
+    await enter(user, REASON);
+
+    await user.click(thread.getByRole("button", { name: "Retry questions" }));
+
+    expect(await thread.findByText("Is a projector required?")).toBeTruthy();
+    expect(thread.queryByRole("alert")).toBeNull();
+    expect(box().value).toBe(REASON);
+    expect(apiClient.get.mock.calls.filter(([url]) => url === "/events/7/review")).toHaveLength(1);
+    expect(history).toHaveBeenCalledTimes(2);
+    expect(apiClient.post).not.toHaveBeenCalled();
+  });
+
+  it("ignores a late history response after a different request is selected", async () => {
+    let finishPrevious;
+    const previous = new Promise((resolve) => { finishPrevious = resolve; });
+    apiClient.get.mockImplementation(async (url) => {
+      if (url === "/events/7/review") return { data: { request: request() } };
+      if (url === "/events/7/clarifications") return previous;
+      if (url === "/events/8/review") return { data: { request: request({ id: 8, title: "Workshop" }) } };
+      if (url === "/events/8/clarifications") {
+        return { data: { clarifications: [], message: "No workshop questions yet." } };
+      }
+      throw new Error(`Unexpected API read: ${url}`);
+    });
+    render(
+      <MemoryRouter initialEntries={["/events/7/review"]} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+        <Link to="/events/8/review">Open workshop</Link>
+        <Routes><Route path="/events/:eventId/review" element={<ReviewRequestPage />} /></Routes>
+      </MemoryRouter>,
+    );
+    const user = userEvent.setup();
+    expect(await screen.findByText("Loading questions…")).toBeTruthy();
+    await user.click(screen.getByRole("link", { name: "Open workshop" }));
+    expect(await screen.findByText("No workshop questions yet.")).toBeTruthy();
+
+    await act(async () => {
+      finishPrevious({ data: { clarifications: [{ id: 20, event_id: 7,
+        message: "Private previous-event question", sender: { id: 2, email: "current@test.invalid" },
+        created_at: "2026-10-14T02:00:00" }], message: null } });
+    });
+
+    expect(screen.getByRole("heading", { name: "Review: Workshop" })).toBeTruthy();
+    expect(screen.getByText("No workshop questions yet.")).toBeTruthy();
+    expect(screen.queryByText("Private previous-event question")).toBeNull();
+    expect(apiClient.post).not.toHaveBeenCalled();
+  });
 });
 
 describe("SCRUM-32 review an event request", () => {
