@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from flask import Blueprint, current_app, jsonify, request, url_for
 from flask_jwt_extended import get_jwt_identity, jwt_required
 from sqlalchemy import func
-from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+from sqlalchemy.exc import DBAPIError, IntegrityError, SQLAlchemyError
 
 from .. import tasks
 from ..extensions import db
@@ -18,15 +18,17 @@ from ..models import (
     Venue,
 )
 from ..registrations.routes import singapore_now
+from .permissions import (
+    COORDINATOR_ROLE,
+    can_reassign_coordinator,
+    can_view_clarifications,
+    can_view_coordinator,
+    is_current_coordinator as _is_current_coordinator,
+    is_current_organiser,
+)
 
 events_bp = Blueprint("events", __name__)
 
-COORDINATOR_ROLE = "coordinator"
-# Roles allowed to assign, reassign and list eligible coordinators.
-ASSIGNER_ROLES = {"admin", COORDINATOR_ROLE}
-# Roles that work with the coordinator on an event's arrangements. The event's
-# own organiser can also view its coordinator.
-COORDINATOR_VIEWER_ROLES = ASSIGNER_ROLES | {"venue_staff", "tech_staff"}
 NON_ASSIGNABLE_STATUSES = {"draft", "cancelled"}
 # Fields on the coordinator's planning view, in display order.
 PLANNING_FIELDS = [
@@ -60,6 +62,8 @@ CLARIFICATION_NOTIFICATION = "clarification_requested"
 ORGANISER_ROLE = "organiser"
 DRAFT_STATUS = "draft"
 SUBMITTED_STATUS = "submitted"
+# SCRUM-55 confirmed queue eligibility; decision eligibility remains separate.
+REVIEW_QUEUE_STATUSES = {"submitted", "under_review"}
 # A coordinator's decision on a submitted request, and the status it leads to (SCRUM-32).
 DECISION_STATUSES = {"approve": "approved", "reject": "rejected"}
 MAX_DECISION_WORDS = 1000
@@ -441,97 +445,92 @@ def update_planning(event_id: int):
 @events_bp.get("/<int:event_id>/coordinator")
 @jwt_required()
 def get_coordinator(event_id: int):
-    user = _current_user()
-    if user is None:
-        return _error("Your session is no longer valid. Please log in again.", 401)
-
-    event = db.session.get(Event, event_id)
-    if event is None:
-        return _error("Event not found.", 404)
-
-    if user.role not in COORDINATOR_VIEWER_ROLES and user.id != event.organiser_id:
-        return _error("You are not allowed to view this event's coordinator.", 403)
-
-    return jsonify(_assignment_payload(event))
+    try:
+        user = _current_user()
+        if user is None:
+            return _error("Your session is no longer valid. Please log in again.", 401)
+        event = db.session.get(Event, event_id)
+        if event is None:
+            return _error("Event not found.", 404)
+        if not can_view_coordinator(user, event):
+            return _error("You are not allowed to view this event's coordinator.", 403)
+        payload = _assignment_payload(event)
+    except SQLAlchemyError:
+        db.session.rollback()
+        return _error("The coordinator could not be loaded. Please try again.", 503, retryable=True)
+    return jsonify(payload)
 
 
 @events_bp.get("/<int:event_id>/eligible-coordinators")
 @jwt_required()
 def list_eligible_coordinators(event_id: int):
-    user = _current_user()
-    if user is None:
-        return _error("Your session is no longer valid. Please log in again.", 401)
-
-    event = db.session.get(Event, event_id)
-    if event is None:
-        return _error("Event not found.", 404)
-
-    if user.role not in ASSIGNER_ROLES:
-        return _error("You are not allowed to assign coordinators.", 403)
-
-    coordinators = _eligible_coordinators(event)
-    return jsonify(
-        {
+    try:
+        user = _current_user()
+        if user is None:
+            return _error("Your session is no longer valid. Please log in again.", 401)
+        event = db.session.get(Event, event_id)
+        if event is None:
+            return _error("Event not found.", 404)
+        if not can_reassign_coordinator(user, event):
+            return _error("You are not allowed to reassign this event's coordinator.", 403)
+        coordinators = _eligible_coordinators(event)
+        payload = {
             "event_id": event.id,
             "coordinators": [_user_summary(c) for c in coordinators],
             "message": None
             if coordinators
             else "No eligible coordinators are available for this event.",
         }
-    )
+    except SQLAlchemyError:
+        db.session.rollback()
+        return _error("Eligible coordinators could not be loaded. Please try again.", 503, retryable=True)
+    return jsonify(payload)
 
 
 @events_bp.put("/<int:event_id>/coordinator")
 @jwt_required()
 def assign_coordinator(event_id: int):
-    user = _current_user()
-    if user is None:
-        return _error("Your session is no longer valid. Please log in again.", 401)
-
-    event = db.session.get(Event, event_id)
-    if event is None:
-        return _error("Event not found.", 404)
-
-    if user.role not in ASSIGNER_ROLES:
-        return _error("You are not allowed to assign coordinators.", 403)
-
-    body = request.get_json(silent=True)
-    coordinator_id = body.get("coordinator_id") if isinstance(body, dict) else None
-    if not isinstance(coordinator_id, int) or isinstance(coordinator_id, bool):
-        return _error("coordinator_id must be an integer.", 400)
-
-    if event.status in NON_ASSIGNABLE_STATUSES:
-        return _error(
-            f"A coordinator cannot be assigned to a {event.status} event.", 409
-        )
-
-    if coordinator_id == event.coordinator_id:
-        return _error("This user is already the event's coordinator.", 409)
-
-    coordinator = db.session.get(User, coordinator_id)
-    if coordinator is None or coordinator.role != COORDINATOR_ROLE:
-        return _error("The selected user is not an eligible coordinator.", 422)
-
-    event.coordinator_id = coordinator.id
-    event.coordinator_assigned_at = datetime.utcnow()
     try:
+        user = _current_user()
+        if user is None:
+            return _error("Your session is no longer valid. Please log in again.", 401)
+        # SCRUM-27: re-read and lock before checking the relationship, so a
+        # concurrent reassignment cannot authorize the former coordinator.
+        event = db.session.get(Event, event_id, with_for_update=True, populate_existing=True)
+        if event is None:
+            return _error("Event not found.", 404)
+        if not can_reassign_coordinator(user, event):
+            return _error("You are not allowed to reassign this event's coordinator.", 403)
+
+        body = request.get_json(silent=True)
+        coordinator_id = body.get("coordinator_id") if isinstance(body, dict) else None
+        if not isinstance(coordinator_id, int) or isinstance(coordinator_id, bool):
+            return _error("coordinator_id must be an integer.", 400)
+        # Do not accept forged ownership/assignment/audit fields alongside the target.
+        if set(body) != {"coordinator_id"}:
+            return _error("Only coordinator_id can be changed here.", 400)
+        if event.status in NON_ASSIGNABLE_STATUSES:
+            return _error(f"A coordinator cannot be assigned to a {event.status} event.", 409)
+        if coordinator_id == event.coordinator_id:
+            return _error("This user is already the event's coordinator.", 409)
+        coordinator = db.session.get(User, coordinator_id)
+        if coordinator is None or coordinator.role != COORDINATOR_ROLE:
+            return _error("The selected user is not an eligible coordinator.", 422)
+
+        event.coordinator_id = coordinator.id
+        event.coordinator_assigned_at = datetime.utcnow()
+        payload = {
+            "message": f"{coordinator.email} is now the coordinator for {event.title}.",
+            **_assignment_payload(event),
+        }
         db.session.commit()
     except SQLAlchemyError:
         db.session.rollback()
         return _error(
-            "The coordinator assignment could not be saved. Please try again.", 500
+            "The coordinator assignment could not be saved. Please try again.", 503, retryable=True
         )
 
-    return jsonify(
-        {
-            "message": f"{coordinator.email} is now the coordinator for {event.title}.",
-            **_assignment_payload(event),
-        }
-    )
-
-
-def _is_current_coordinator(user, event):
-    return user.role == COORDINATOR_ROLE and event.coordinator_id == user.id
+    return jsonify(payload)
 
 
 def _clarification_payload(clarification, sender):
@@ -576,7 +575,7 @@ def list_clarifications(event_id: int):
         if event is None:
             return _error("Event not found.", 404)
 
-        if not _is_current_coordinator(user, event) and user.id != event.organiser_id:
+        if not can_view_clarifications(user, event):
             return _error(
                 "You are not allowed to view this event's clarification questions.", 403
             )
@@ -604,6 +603,7 @@ def list_clarifications(event_id: int):
                 "organiser": _user_summary(organiser),
             },
             "clarifications": [_clarification_payload(c, sender) for c, sender in rows],
+            "can_send": _is_current_coordinator(user, event) and event.status in CLARIFIABLE_STATUSES,
             "message": None if rows else "No questions have been sent for this event yet.",
         }
     )
@@ -709,15 +709,18 @@ def _require_organiser(denied):
     return user
 
 
-def _own_draft(event_id):
+def _own_draft(event_id, lock=False):
     """The caller's draft, checked in the order 401, 404, 403, 409."""
     user = _current_user()
     if user is None:
         raise _Rejected("Your session is no longer valid. Please log in again.", 401)
-    event = db.session.get(Event, event_id)
+    # SCRUM-28: draft writers must see a concurrent submission before editing.
+    # As in SCRUM-60, hold the row until commit and refresh the identity map.
+    locking = {"with_for_update": True, "populate_existing": True} if lock else {}
+    event = db.session.get(Event, event_id, **locking)
     if event is None:
         raise _Rejected("Event request not found.", 404)
-    if user.role != ORGANISER_ROLE or event.organiser_id != user.id:
+    if not is_current_organiser(user, event):
         raise _Rejected("You can only open your own event requests.", 403)
     if event.status != DRAFT_STATUS:
         raise _Rejected(
@@ -804,6 +807,26 @@ def _draft_payload(event):
     }
 
 
+def _commit_draft_payload(event, creating=False):
+    """Snapshot the response before commit expires ORM fields (SCRUM-28)."""
+    if creating:
+        db.session.flush()  # Obtain the ID without a post-commit refresh.
+    payload = _draft_payload(event)
+    try:
+        db.session.commit()
+    except DBAPIError as failure:
+        if not failure.connection_invalidated:
+            raise
+        # A lost connection during COMMIT cannot establish whether it persisted.
+        db.session.rollback()
+        raise _Rejected(
+            "We could not confirm whether your request was saved. "
+            "Check your request's status before trying again.",
+            503, retryable=True, outcome_uncertain=True,
+        ) from failure
+    return payload
+
+
 def _draft_not_saved():
     db.session.rollback()
     return _error(
@@ -851,8 +874,7 @@ def create_draft():
         event = Event(organiser_id=user.id, status=DRAFT_STATUS, created_at=now,
                       last_saved_at=now, **fields)
         db.session.add(event)
-        db.session.commit()
-        payload = _draft_payload(event)
+        payload = _commit_draft_payload(event, creating=True)
     except _Rejected as rejected:
         return _error(rejected.message, rejected.status_code, **rejected.extra)
     except SQLAlchemyError:
@@ -879,14 +901,13 @@ def get_draft(event_id: int):
 @jwt_required()
 def save_draft(event_id: int):
     try:
-        event = _own_draft(event_id)
+        event = _own_draft(event_id, lock=True)
         # Every field is checked before any is applied, so a refused save changes nothing.
         fields = _parse_draft(request.get_json(silent=True), creating=False)
         for field, value in fields.items():
             setattr(event, field, value)
         event.last_saved_at = datetime.utcnow()
-        db.session.commit()
-        payload = _draft_payload(event)
+        payload = _commit_draft_payload(event)
     except _Rejected as rejected:
         return _error(rejected.message, rejected.status_code, **rejected.extra)
     except SQLAlchemyError:
@@ -899,7 +920,7 @@ def save_draft(event_id: int):
 @jwt_required()
 def submit_draft(event_id: int):
     try:
-        event = _own_draft(event_id)
+        event = _own_draft(event_id, lock=True)
         missing = [f for f in REQUIRED_FOR_SUBMISSION if getattr(event, f) is None]
         if missing:
             labels = ", ".join(DRAFT_FIELDS[f] for f in missing)
@@ -909,10 +930,21 @@ def submit_draft(event_id: int):
         if event.end_time <= event.start_time:
             raise _field_error("end_time", "The end must be after the start.")
 
+        # SCRUM-28 approved initial-assignment policy: current coordinator role,
+        # lowest user ID. Manual reassignment remains a separate workflow.
+        coordinator = User.query.filter_by(role=COORDINATOR_ROLE).order_by(User.id).first()
+        if coordinator is None:
+            raise _Rejected(
+                "No coordinator is currently available. Your request is still saved "
+                "as a draft, so please try again later.",
+                503, retryable=True,
+            )
+        now = datetime.utcnow()
+        event.coordinator_id = coordinator.id
+        event.coordinator_assigned_at = now
         event.status = SUBMITTED_STATUS
-        event.submitted_at = datetime.utcnow()
-        db.session.commit()
-        payload = _draft_payload(event)
+        event.submitted_at = now
+        payload = _commit_draft_payload(event)
     except _Rejected as rejected:
         return _error(rejected.message, rejected.status_code, **rejected.extra)
     except SQLAlchemyError:
@@ -1044,6 +1076,50 @@ def _queue_decision_email(to_address, title, event_id, status, message):
         current_app.logger.exception("Could not queue decision email for event %s", event_id)
         return False
     return True
+
+
+def _review_summary_payload(event, organiser):
+    return {
+        "id": event.id,
+        "title": _recorded(event.title),
+        "organiser": _user_summary(organiser) if organiser else None,
+        "start_time": _isoformat(event.start_time),
+        "submitted_at": _isoformat(event.submitted_at),
+        "status": event.status,
+    }
+
+
+@events_bp.get("/review-requests")
+@jwt_required()
+def list_review_requests():
+    """SCRUM-55: open requests assigned to the caller's current coordinator role."""
+    try:
+        user = _current_user()
+        if user is None:
+            return _error("Your session is no longer valid. Please log in again.", 401)
+        if user.role != COORDINATOR_ROLE:
+            return _error("Only event coordinators can view requests for review.", 403)
+
+        events = (
+            Event.query.filter_by(coordinator_id=user.id)
+            .filter(Event.status.in_(REVIEW_QUEUE_STATUSES))
+            .all()
+        )
+        # Repeated requests from one organiser need only one User lookup.
+        organisers = {organiser_id: db.session.get(User, organiser_id)
+                      for organiser_id in {event.organiser_id for event in events}}
+        requests = [_review_summary_payload(event, organisers[event.organiser_id])
+                    for event in events]
+    except SQLAlchemyError:
+        db.session.rollback()
+        return _error(
+            "Review requests could not be loaded. Please try again.", 503, retryable=True
+        )
+
+    return jsonify({
+        "requests": requests,
+        "message": None if requests else "You have no submitted event requests to review.",
+    })
 
 
 @events_bp.get("/<int:event_id>/review")

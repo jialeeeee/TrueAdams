@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import apiClient from "../api/client.js";
 import formatSavedAt from "../utils/formatSavedAt.js";
+import statusLabel from "../utils/statusLabel.js";
 
 // Fields of an event request, in display order. Names match the API (SCRUM-29).
 const FIELDS = [
@@ -64,6 +65,8 @@ export default function DraftEventPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  // A known request whose submission outcome must be checked before retrying.
+  const [uncertainId, setUncertainId] = useState(null);
 
   const show = (saved) => {
     loadedId.current = saved.id;
@@ -107,6 +110,49 @@ export default function DraftEventPage() {
     setNotice("");
   };
 
+  const confirmSubmission = (request, preserveEdits = false) => {
+    if (preserveEdits) {
+      // The organiser list is a receipt, not the current form. Keep unsaved edits.
+      setDraft((current) => ({ ...current, ...request }));
+    } else {
+      show(request);
+    }
+    setUncertainId(null);
+    setError("");
+    const currentStatus = request.status === "submitted"
+      ? "" : ` Current status: ${statusLabel(request.status)}.`;
+    setNotice(`Your request has been submitted for review. Request #${request.id}.${currentStatus}`);
+  };
+
+  const checkSubmission = async (id, refusal = "") => {
+    setUncertainId(id);
+    try {
+      try {
+        const response = await apiClient.get(`/events/drafts/${id}`);
+        if (response.data.id !== id || response.data.status !== "draft") {
+          throw new Error("The draft status could not be confirmed.");
+        }
+        // A successful owner-scoped draft GET positively establishes Draft.
+        // Do not replace form values with older saved data during reconciliation.
+        setUncertainId(null);
+        setError(refusal || "Your request is still saved as a draft. Your entered information has been kept, so please try again.");
+        return;
+      } catch (failure) {
+        if (failure.response?.status !== 409) throw failure;
+      }
+      // SCRUM-29 refuses non-draft GETs. Resolve that state through SCRUM-59's
+      // existing organiser-only list; absence from a list never proves Draft.
+      const response = await apiClient.get("/events/mine");
+      const receipt = response.data.submitted?.find((request) => request.id === id);
+      if (!receipt || typeof receipt.status !== "string" || receipt.status === "draft") {
+        throw new Error("The submitted request could not be found.");
+      }
+      confirmSubmission(receipt, true);
+    } catch {
+      setError(`${refusal ? `${refusal} ` : ""}We could not confirm whether your request was submitted. Your entered information has been kept. Check the submission status before trying again.`);
+    }
+  };
+
   const handleSave = async () => {
     start();
     try {
@@ -123,24 +169,35 @@ export default function DraftEventPage() {
   const handleSubmit = async () => {
     start();
     try {
+      if (uncertainId !== null) {
+        // A status check never resubmits. A confirmed Draft can then be retried
+        // explicitly, using the same ID and the organiser's retained edits.
+        await checkSubmission(uncertainId);
+        return;
+      }
       let saved;
       try {
         saved = await persist();
       } catch (failure) {
-        setError(explain(failure, "Your draft was not saved. Check your connection and try again."));
+        const message = explain(failure, "Your draft was not saved. Check your connection and try again.");
+        if (draft && (failure.response?.status === 409 || failure.response?.data?.outcome_uncertain)) {
+          await checkSubmission(draft.id, message);
+        } else {
+          setError(message);
+        }
         return;
       }
       try {
         const response = await apiClient.post(`/events/drafts/${saved.id}/submit`);
-        show(response.data);
-        setNotice("Your request has been submitted for review.");
+        confirmSubmission(response.data);
       } catch (failure) {
         const missing = failure.response?.data?.missing;
-        setError(
+        const refusal = (
           Array.isArray(missing) && missing.length
             ? `Complete these fields before submitting: ${missing.map((m) => LABELS[m] ?? m).join(", ")}.`
-            : explain(failure, "Your request was not submitted. Check your connection and try again."),
+            : failure.response ? explain(failure, "Your submission could not be completed.") : ""
         );
+        await checkSubmission(saved.id, refusal);
       }
     } finally {
       setBusy(false);
@@ -158,19 +215,19 @@ export default function DraftEventPage() {
     );
   }
 
-  const submitted = draft?.status === "submitted";
+  const submitted = draft !== null && draft.status !== "draft";
   const set = (name) => (e) => setForm((current) => ({ ...current, [name]: e.target.value }));
 
   return (
     <section>
       <h1>{draft ? `Event request: ${draft.title}` : "New event request"}</h1>
-      <p>{submitted ? "Status: Submitted" : "Status: Draft"}</p>
+      <p>{`Status: ${statusLabel(draft?.status ?? "draft")}`}</p>
       <p>{draft?.last_saved_at ? `Last saved: ${formatSavedAt(draft.last_saved_at)}` : "Not saved yet"}</p>
 
       <form onSubmit={(e) => e.preventDefault()}>
         {FIELDS.map(({ name, label, type }) => {
           const id = `draft-${name}`;
-          const common = { id, value: form[name], onChange: set(name), disabled: submitted };
+          const common = { id, value: form[name], onChange: set(name), disabled: submitted || busy };
           return (
             <div key={name}>
               <label htmlFor={id}>{label}</label>
@@ -194,16 +251,20 @@ export default function DraftEventPage() {
 
         {!submitted && (
           <div className="form-actions">
-            <button type="button" onClick={handleSave} disabled={busy || !form.title.trim()}>
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={busy || uncertainId !== null || !form.title.trim()}
+            >
               Save draft
             </button>
             <button
               type="button"
               className="btn-primary"
               onClick={handleSubmit}
-              disabled={busy || !form.title.trim()}
+              disabled={busy || (uncertainId === null && !form.title.trim())}
             >
-              Submit for review
+              {uncertainId === null ? "Submit for review" : "Check submission status"}
             </button>
           </div>
         )}

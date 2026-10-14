@@ -14,6 +14,7 @@ import MyRequestsPage from "./pages/MyRequestsPage.jsx";
 import ReassignmentRequestPage from "./pages/ReassignmentRequestPage.jsx";
 import ResourcesPage from "./pages/ResourcesPage.jsx";
 import ReviewRequestPage from "./pages/ReviewRequestPage.jsx";
+import ReviewRequestsPage from "./pages/ReviewRequestsPage.jsx";
 import VenueAvailabilityPage from "./pages/VenueAvailabilityPage.jsx";
 import VenueSearchPage from "./pages/VenueSearchPage.jsx";
 import VenuesPage from "./pages/VenuesPage.jsx";
@@ -29,6 +30,7 @@ export default function App() {
         <Route path="/events/requests" element={<MyRequestsPage />} />
         <Route path="/events/mine" element={<MyEventRequestsPage />} />
         <Route path="/events/managed" element={<ManagedEventsPage />} />
+        <Route path="/events/review-requests" element={<ReviewRequestsPage />} />
         <Route path="/events/:eventId" element={<EventDetailsPage />} />
         <Route path="/events/:eventId/planning" element={<EventPlanningPage />} />
         <Route path="/events/:eventId/review" element={<ReviewRequestPage />} />
