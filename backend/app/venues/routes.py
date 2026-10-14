@@ -1,13 +1,14 @@
 import re
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 
 from flask import Blueprint, jsonify, request
 from flask_jwt_extended import get_jwt_identity, jwt_required
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from . import scheduling
+from ..events.permissions import is_current_coordinator
 from ..extensions import db
-from ..models import User, Venue
+from ..models import Event, User, Venue, VenueBooking
 
 venues_bp = Blueprint("venues", __name__)
 
@@ -353,3 +354,213 @@ def search_venues():
             else "No venues match your filters. Try changing or removing some.",
         }
     )
+
+
+# ---------- Venue booking requests (SCRUM-39) ----------
+
+COORDINATOR_ROLE = "coordinator"
+# Roles allowed to see pending venue requests (SCRUM-39 A8, open question Q8).
+BOOKING_REVIEWER_ROLES = {"venue_staff"}
+# Only approved events proceed to further planning (SCRUM-39 A2, open question Q2).
+REQUESTABLE_EVENT_STATUS = "approved"
+PENDING = "pending"
+# The editing limit for long text (SCRUM-53), reused for venue requirements (A4).
+REQUIREMENTS_MAX_LENGTH = 5000
+BOOKING_FIELDS = {"event_id", "venue_id", "start_time", "end_time", "venue_requirements"}
+_LOCAL_DATETIME = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$")
+# Singapore has had no daylight saving since 1982, so a fixed offset is exact.
+SINGAPORE = timezone(timedelta(hours=8))
+
+
+class _BookingRejected(Exception):
+    """A booking request that cannot be served, with the reply to send instead."""
+
+    def __init__(self, message, status_code, **extra):
+        super().__init__(message)
+        self.message = message
+        self.status_code = status_code
+        self.extra = extra
+
+
+def _singapore_now():
+    """The current Singapore time without a time zone, as booking times are stored."""
+    return datetime.now(SINGAPORE).replace(tzinfo=None)
+
+
+def _caller(roles, denied):
+    try:
+        user = db.session.get(User, int(get_jwt_identity()))
+    except (TypeError, ValueError):
+        user = None
+    if user is None:
+        raise _BookingRejected("Your session is no longer valid. Please log in again.", 401)
+    if user.role not in roles:
+        raise _BookingRejected(denied, 403)
+    return user
+
+
+def _is_id(value):
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _parse_local_time(value, missing, invalid):
+    """(datetime, None) or (None, problem) for a "YYYY-MM-DDTHH:MM" value."""
+    if value is None or value == "":
+        return None, missing
+    if isinstance(value, str) and _LOCAL_DATETIME.match(value):
+        try:
+            return datetime.fromisoformat(value), None
+        except ValueError:
+            pass
+    return None, invalid
+
+
+def _booking_problems(body):
+    """Every missing or invalid detail, so they can all be corrected at once (A9)."""
+    problems = {}
+    for key in body:
+        if key not in BOOKING_FIELDS:
+            problems[key] = f"{key} is not part of a venue request."
+
+    if not _is_id(body.get("venue_id")):
+        problems["venue_id"] = "Choose a venue."
+
+    start, start_problem = _parse_local_time(
+        body.get("start_time"), "Enter the start date and time.",
+        "Enter the start as a date and time (YYYY-MM-DDTHH:MM).")
+    end, end_problem = _parse_local_time(
+        body.get("end_time"), "Enter the end date and time.",
+        "Enter the end as a date and time (YYYY-MM-DDTHH:MM).")
+    if start_problem:
+        problems["start_time"] = start_problem
+    if end_problem:
+        problems["end_time"] = end_problem
+    if start and end and end <= start:
+        problems["end_time"] = "The end must be after the start."
+    if start and start < _singapore_now():
+        problems["start_time"] = "The start must not be in the past."
+
+    requirements = body.get("venue_requirements")
+    if requirements is not None and not isinstance(requirements, str):
+        problems["venue_requirements"] = "The venue requirements must be text."
+    elif not (requirements or "").strip():
+        problems["venue_requirements"] = "Enter the venue requirements."
+    elif len(requirements.strip()) > REQUIREMENTS_MAX_LENGTH:
+        problems["venue_requirements"] = (
+            f"The venue requirements must be {REQUIREMENTS_MAX_LENGTH:,} characters or fewer."
+        )
+    return problems, start, end
+
+
+def _booking_payload(booking):
+    event = db.session.get(Event, booking.event_id)
+    venue = db.session.get(Venue, booking.venue_id)
+    requester = db.session.get(User, booking.requested_by_id)
+    return {
+        "id": booking.id,
+        "status": booking.status,
+        "event": {"id": event.id, "title": event.title,
+                  "expected_attendance": event.expected_attendance},
+        "venue": {"id": venue.id, "name": venue.name, "location": _recorded(venue.location)},
+        "start_time": booking.start_time.isoformat(),
+        "end_time": booking.end_time.isoformat(),
+        "venue_requirements": booking.venue_requirements,
+        "requested_by": {"id": requester.id, "email": requester.email} if requester else None,
+        "requested_at": booking.created_at.isoformat(),
+    }
+
+
+ALREADY_PENDING = (
+    "A venue request for this event is already pending. Venue Staff must decide on it "
+    "before you request another venue."
+)
+
+
+@venues_bp.post("/bookings")
+@jwt_required()
+def request_booking():
+    try:
+        user = _caller({COORDINATOR_ROLE}, "Only event coordinators can request venues.")
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            raise _BookingRejected("Send the venue request as JSON.", 400)
+        if not _is_id(body.get("event_id")):
+            raise _BookingRejected(
+                "Choose the event to request a venue for.", 400,
+                fields={"event_id": "Choose the event to request a venue for."},
+            )
+
+        # Locked until the request ends, so two submissions for one event are serialised.
+        event = db.session.get(Event, body["event_id"], with_for_update=True,
+                               populate_existing=True)
+        if event is None:
+            raise _BookingRejected("Event not found.", 404)
+        if not is_current_coordinator(user, event):
+            raise _BookingRejected(
+                "Only the event's assigned coordinator can request a venue for it.", 403)
+
+        problems, start, end = _booking_problems(body)
+        if problems:
+            raise _BookingRejected(
+                "Some details are missing or invalid. Please correct them and try again.",
+                400, fields=problems,
+            )
+        venue = db.session.get(Venue, body["venue_id"])
+        if venue is None:
+            raise _BookingRejected("Venue not found.", 404)
+        if event.status != REQUESTABLE_EVENT_STATUS:
+            raise _BookingRejected(
+                "A venue can only be requested for an approved event. "
+                f"This event is {event.status}.", 409)
+        if VenueBooking.query.filter_by(event_id=event.id, status=PENDING).first():
+            raise _BookingRejected(ALREADY_PENDING, 409)
+
+        booking = VenueBooking(
+            event_id=event.id, venue_id=venue.id, status=PENDING,
+            start_time=start, end_time=end,
+            venue_requirements=body["venue_requirements"].strip(),
+            requested_by_id=user.id, created_at=datetime.utcnow(),
+        )
+        db.session.add(booking)
+        try:
+            db.session.commit()
+        except IntegrityError:
+            # Another submission for this event won the race (A6).
+            db.session.rollback()
+            raise _BookingRejected(ALREADY_PENDING, 409) from None
+        payload = _booking_payload(booking)
+    except _BookingRejected as rejected:
+        return _error(rejected.message, rejected.status_code, **rejected.extra)
+    except SQLAlchemyError:
+        db.session.rollback()
+        return _error(
+            "Your venue request was not sent. Your details are still here, so please try again.",
+            503, retryable=True,
+        )
+
+    return jsonify({
+        "message": (
+            f"Your request to book {venue.name} for {event.title} has been sent to Venue "
+            "Staff. It stays pending until they decide."
+        ),
+        "booking": payload,
+    }), 201
+
+
+@venues_bp.get("/bookings")
+@jwt_required()
+def list_booking_requests():
+    try:
+        _caller(BOOKING_REVIEWER_ROLES, "Only Venue Staff can view venue requests.")
+        bookings = (VenueBooking.query.filter_by(status=PENDING)
+                    .order_by(VenueBooking.created_at, VenueBooking.id).all())
+        payloads = [_booking_payload(b) for b in bookings]
+    except _BookingRejected as rejected:
+        return _error(rejected.message, rejected.status_code, **rejected.extra)
+    except SQLAlchemyError:
+        return _load_failed("Venue requests could not be loaded. Please try again.")
+
+    return jsonify({
+        "bookings": payloads,
+        "message": None if payloads else "There are no pending venue requests.",
+    })
