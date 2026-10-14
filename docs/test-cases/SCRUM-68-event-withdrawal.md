@@ -2,7 +2,7 @@
 
 **User story:** As an Attendee, I want to withdraw from an event I registered for, so that I can free my place when I can no longer attend.
 
-**Created:** 13 Oct 2026 · **Status of all cases:** Written test-first (TDD, red). Nothing is implemented yet, so the automated tests fail until the feature is built, except TC-68-13, which also guards the existing registration endpoint. · **Automated tests:** `backend/tests/test_event_withdrawal.py`, `frontend/src/pages/MyRegistrationsPage.test.jsx` · **Endpoints:** `GET /api/registrations/` (replaces the stub) and `POST /api/registrations/<id>/withdraw` · **Related:** SCRUM-45 (registering; owns `Registration`), SCRUM-74 (slots remaining on the event page)
+**Created:** 13 Oct 2026 · **Status of all cases:** Implemented 13 Oct 2026. Every automated test passes (backend and frontend), run against a scratch PostgreSQL 16 database and a scratch frontend project, not the Supabase database. Manual cases have not been run in a browser. · **Automated tests:** `backend/tests/test_event_withdrawal.py`, `frontend/src/pages/MyRegistrationsPage.test.jsx` · **Endpoints:** `GET /api/registrations/` (replaces the stub) and `POST /api/registrations/<id>/withdraw` · **Related:** SCRUM-45 (registering; owns `Registration`), SCRUM-74 (slots remaining on the event page)
 
 **Source:** the team's "Sprint 2 test cases" sheet (IS212-US68-TC1 to TC16). Case `TC-68-nn` automates sheet case `IS212-US68-TCn`. Sheet users and events map to the seed data below: attendee_dan is farah and attendee_eve is ivy; the sheet's events E-201 to E-207 are E1 to E7.
 

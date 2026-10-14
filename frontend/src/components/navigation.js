@@ -29,7 +29,7 @@ export const NAV_GROUPS = [
   },
   {
     label: "Registrations",
-    match: (path) => path.startsWith("/registrations"),
-    links: [{ to: "/registrations", label: "Registrations" }],
+    match: (path) => path.startsWith("/registrations") || path.startsWith("/my-registrations"),
+    links: [{ to: "/my-registrations", label: "My registrations" }],
   },
 ];

@@ -3,11 +3,21 @@ from datetime import datetime, timedelta
 
 from flask import Blueprint, current_app, jsonify, request, url_for
 from flask_jwt_extended import get_jwt_identity, jwt_required
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from .. import tasks
 from ..extensions import db
-from ..models import Event, EventClarification, Notification, User, Venue
+from ..models import (
+    Event,
+    EventClarification,
+    Notification,
+    ReassignmentRequest,
+    Registration,
+    User,
+    Venue,
+)
+from ..registrations.routes import singapore_now
 
 events_bp = Blueprint("events", __name__)
 
@@ -84,10 +94,61 @@ REQUIRED_FOR_SUBMISSION = [
 TITLE_MAX_LENGTH = 255
 _LOCAL_DATETIME = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$")
 
+# SCRUM-74. Only published events are visible to everyone; "confirmed" is the status
+# SCRUM-45 uses for events that take registrations (open question Q1).
+PUBLISHED_STATUSES = {"confirmed"}
+# Event IDs live in a 32-bit column; a larger ID cannot exist, and asking the database
+# for one raises an error instead of finding nothing.
+DB_INTEGER_MAX = 2_147_483_647
+EVENT_NOT_FOUND = "Event not found."
+
+# SCRUM-61. Must match MAX_REASON_LENGTH in frontend/src/pages/ReassignmentRequestPage.jsx.
+MAX_REASON_LENGTH = 500
+REASSIGNMENT_NOTIFICATION = "reassignment_requested"
+PENDING = "pending"
+# Statuses that end an event's life, mapped to the reason a request is refused (A7, Q5).
+# `completed` is not set by any story yet; "past" also covers events whose end time has gone.
+REASSIGNMENT_CLOSED_STATUSES = {"cancelled": "cancelled", "completed": "past"}
+REASSIGNMENT_MESSAGES = {
+    "cancelled": "A reassignment cannot be requested for a cancelled event.",
+    "past": "A reassignment cannot be requested for an event that has ended.",
+    "pending": "A reassignment request is already pending for this event.",
+    "no_eligible_coordinators": "No eligible coordinator is available for this event.",
+}
+
 
 @events_bp.get("/")
+@jwt_required()
 def list_events():
-    return jsonify([])
+    """The public catalogue: published events only, soonest first (SCRUM-74 A3)."""
+    try:
+        user = _current_user()
+        if user is None:
+            return _error("Your session is no longer valid. Please log in again.", 401)
+        events = (
+            Event.query.filter(Event.status.in_(PUBLISHED_STATUSES))
+            .order_by(Event.start_time.asc().nulls_last(), Event.id)
+            .all()
+        )
+        counts = _registered_counts([event.id for event in events])
+        now = singapore_now()
+        items = [
+            {
+                "id": event.id,
+                "title": _recorded(event.title),
+                "start_time": _isoformat(event.start_time),
+                "end_time": _isoformat(event.end_time),
+                "registration_state": _registration_info(
+                    event, now, counts.get(event.id, 0)
+                )["state"],
+            }
+            for event in events
+        ]
+    except SQLAlchemyError:
+        db.session.rollback()
+        return _error("Events could not be loaded. Please try again.", 503, retryable=True)
+
+    return jsonify({"events": items, "message": None if items else "There are no events to show."})
 
 
 @events_bp.post("/")
@@ -1189,4 +1250,307 @@ def list_managed():
             ],
             "message": None if events else "You have no events assigned to you yet.",
         }
+    )
+
+
+# ---------- View event details (SCRUM-74) ----------
+
+
+def _registered_counts(event_ids):
+    """How many places are taken, by event ID. Only `registered` takes a place."""
+    if not event_ids:
+        return {}
+    rows = (
+        db.session.query(Registration.event_id, func.count(Registration.id))
+        .filter(Registration.event_id.in_(event_ids), Registration.status == "registered")
+        .group_by(Registration.event_id)
+        .all()
+    )
+    return dict(rows)
+
+
+def _registration_info(event, now, registered):
+    """The registration state (open, closed or full) and numbers shown on the event page.
+
+    Closed wins over full. It uses the same fields and half-open period as SCRUM-45.
+    """
+    capacity = event.registration_capacity
+    slots = None if capacity is None else max(capacity - registered, 0)
+    opens, closes = event.registration_opens_at, event.registration_closes_at
+    if (
+        event.status not in PUBLISHED_STATUSES
+        or event.registration_required is not True
+        or capacity is None
+        or opens is None
+        or closes is None
+        or now < opens
+        or now >= closes
+    ):
+        state = "closed"
+    elif slots == 0:
+        state = "full"
+    else:
+        state = "open"
+    return {
+        "state": state,
+        "opens_at": _isoformat(opens),
+        "closes_at": _isoformat(closes),
+        "capacity": capacity,
+        "registered_count": registered,
+        "slots_remaining": slots,
+    }
+
+
+def _can_view_event(user, event):
+    """Published events are visible to everyone; others only to their organiser,
+    their assigned coordinator and admins (SCRUM-74 A2)."""
+    if event.status in PUBLISHED_STATUSES:
+        return True
+    return (
+        user.role == "admin"
+        or event.organiser_id == user.id
+        or _is_current_coordinator(user, event)
+    )
+
+
+def _register_decision(user, event, state, my_registration):
+    """(can_register, reason): why an attendee can or cannot register (SCRUM-74 A7)."""
+    if user.role != "attendee":
+        return False, "not_attendee"
+    if my_registration is not None:
+        return False, "already_registered"
+    if state == "closed":
+        return False, "closed"
+    if state == "full":
+        return False, "full"
+    return True, None
+
+
+@events_bp.get("/<int:event_id>")
+@jwt_required()
+def get_event(event_id: int):
+    try:
+        user = _current_user()
+        if user is None:
+            return _error("Your session is no longer valid. Please log in again.", 401)
+        event = db.session.get(Event, event_id) if event_id <= DB_INTEGER_MAX else None
+        # The same answer for an unknown event and one the caller may not see.
+        if event is None or not _can_view_event(user, event):
+            return _error(EVENT_NOT_FOUND, 404)
+
+        registered = _registered_counts([event.id]).get(event.id, 0)
+        registration = _registration_info(event, singapore_now(), registered)
+        mine = Registration.query.filter(
+            Registration.event_id == event.id,
+            Registration.attendee_id == user.id,
+            Registration.status.in_(("registered", "waitlisted")),
+        ).first()
+        venue = db.session.get(Venue, event.venue_id) if event.venue_id else None
+        can_register, blocked_reason = _register_decision(
+            user, event, registration["state"], mine
+        )
+        payload = {
+            "id": event.id,
+            "title": event.title,
+            "description": _recorded(event.description),
+            "status": event.status,
+            "start_time": _isoformat(event.start_time),
+            "end_time": _isoformat(event.end_time),
+            "venue": (
+                {"name": venue.name, "location": _recorded(venue.location)} if venue else None
+            ),
+            "registration": registration,
+            "my_registration": {"id": mine.id, "status": mine.status} if mine else None,
+            "can_register": can_register,
+            "register_blocked_reason": blocked_reason,
+            # SCRUM-61: the event page shows "Request reassignment" only to the main coordinator.
+            "can_request_reassignment": _is_current_coordinator(user, event),
+        }
+    except SQLAlchemyError:
+        db.session.rollback()
+        return _error("The event could not be loaded. Please try again.", 503, retryable=True)
+
+    return jsonify({"event": payload})
+
+
+# ---------- Request coordinator reassignment (SCRUM-61) ----------
+
+
+def _reassignment_target(event_id):
+    """The caller and event for a reassignment call; raises _Rejected for 401, 404, 403.
+
+    Only the event's current main coordinator may use it (A1).
+    """
+    user = _current_user()
+    if user is None:
+        raise _Rejected("Your session is no longer valid. Please log in again.", 401)
+    event = db.session.get(Event, event_id) if event_id <= DB_INTEGER_MAX else None
+    if event is None:
+        raise _Rejected(EVENT_NOT_FOUND, 404)
+    if not _is_current_coordinator(user, event):
+        raise _Rejected(
+            "Only the event's main coordinator can request a reassignment.", 403
+        )
+    return user, event
+
+
+def _pending_request(event):
+    return ReassignmentRequest.query.filter_by(event_id=event.id, status=PENDING).first()
+
+
+def _reassignment_blocked(event, pending):
+    """Why no request can be made for this event now, or None (A6, A7)."""
+    closed = REASSIGNMENT_CLOSED_STATUSES.get(event.status)
+    if closed:
+        return closed
+    if event.end_time is not None and event.end_time <= singapore_now():
+        return "past"
+    if pending is not None:
+        return "pending"
+    return None
+
+
+def _reassignment_request_payload(request_row):
+    return {
+        "id": request_row.id,
+        "event_id": request_row.event_id,
+        "requester_id": request_row.requester_id,
+        "coordinator_id": request_row.coordinator_id,
+        "reason": request_row.reason,
+        "status": request_row.status,
+        "requested_at": request_row.requested_at.isoformat(),
+    }
+
+
+@events_bp.get("/<int:event_id>/reassignment")
+@jwt_required()
+def get_reassignment(event_id: int):
+    try:
+        user, event = _reassignment_target(event_id)
+        pending = _pending_request(event)
+        coordinators = _eligible_coordinators(event)
+        blocked = _reassignment_blocked(event, pending)
+        if blocked is None and not coordinators:
+            blocked = "no_eligible_coordinators"
+        payload = {
+            "event": {"id": event.id, "title": event.title, "status": event.status},
+            "coordinators": [_user_summary(c) for c in coordinators],
+            "pending_request": _reassignment_request_payload(pending) if pending else None,
+            "can_request": blocked is None,
+            "blocked_reason": blocked,
+            "message": REASSIGNMENT_MESSAGES.get(blocked),
+        }
+    except _Rejected as rejected:
+        return _error(rejected.message, rejected.status_code, **rejected.extra)
+    except SQLAlchemyError:
+        db.session.rollback()
+        return _error(
+            "The reassignment form could not be loaded. Please try again.", 503, retryable=True
+        )
+
+    return jsonify(payload)
+
+
+def _parse_reassignment(body):
+    """(coordinator_id, reason) from the request body; raises _Rejected if invalid."""
+    if not isinstance(body, dict):
+        raise _Rejected("Send the reassignment request as JSON.", 400)
+    coordinator_id = body.get("coordinator_id")
+    if isinstance(coordinator_id, bool) or not isinstance(coordinator_id, int):
+        raise _field_error("coordinator_id", "Choose a coordinator.")
+    reason = body.get("reason")
+    if not isinstance(reason, str) or not reason.strip():
+        raise _field_error("reason", "Enter a reason for the reassignment.")
+    reason = reason.strip()
+    if len(reason) > MAX_REASON_LENGTH:
+        raise _field_error(
+            "reason", f"The reason must be {MAX_REASON_LENGTH} characters or fewer."
+        )
+    return coordinator_id, reason
+
+
+def _queue_reassignment_email(to_address, title, requester_email, event_id):
+    """Queue the selected coordinator's email; False if the queue could not be reached.
+
+    The request and in-app notification are already saved by then, so a broker outage
+    must not turn a saved request into a failure. It takes plain values, not models.
+    """
+    try:
+        tasks.send_notification_email.delay(
+            to_address,
+            f"Reassignment request: {title}",
+            f"{requester_email} has asked you to take over the event \"{title}\".\n\n"
+            "Sign in to ConnectSphere to see the request.",
+        )
+    except Exception:
+        current_app.logger.exception(
+            "Could not queue reassignment email for event %s", event_id
+        )
+        return False
+    return True
+
+
+@events_bp.post("/<int:event_id>/reassignment")
+@jwt_required()
+def request_reassignment(event_id: int):
+    try:
+        user, event = _reassignment_target(event_id)
+        blocked = _reassignment_blocked(event, _pending_request(event))
+        if blocked:
+            raise _Rejected(REASSIGNMENT_MESSAGES[blocked], 409, reason=blocked)
+        coordinator_id, reason = _parse_reassignment(request.get_json(silent=True))
+        # The same rule as the list, so the two can never disagree (A2).
+        coordinator = next(
+            (c for c in _eligible_coordinators(event) if c.id == coordinator_id), None
+        )
+        if coordinator is None:
+            raise _Rejected("The selected user is not an eligible coordinator.", 422)
+
+        request_row = ReassignmentRequest(
+            event_id=event.id,
+            requester_id=user.id,
+            coordinator_id=coordinator.id,
+            reason=reason,
+            status=PENDING,
+        )
+        db.session.add(request_row)
+        # Plain values, so nothing needs the database after the commit.
+        title, requester_email, to_address = event.title, user.email, coordinator.email
+        db.session.add(
+            Notification(
+                recipient_id=coordinator.id,
+                kind=REASSIGNMENT_NOTIFICATION,
+                message=(
+                    f"{requester_email} has asked you to take over the event "
+                    f'"{title}". Open the event to see their reason.'
+                ),
+                event_id=event.id,
+            )
+        )
+        try:
+            db.session.flush()
+            payload = _reassignment_request_payload(request_row)
+            db.session.commit()
+        except IntegrityError:
+            # Two requests at once: the unique index let only one through.
+            db.session.rollback()
+            raise _Rejected(
+                REASSIGNMENT_MESSAGES[PENDING], 409, reason="pending"
+            )
+    except _Rejected as rejected:
+        return _error(rejected.message, rejected.status_code, **rejected.extra)
+    except SQLAlchemyError:
+        db.session.rollback()
+        return _error("Your request was not saved. Please try again.", 503, retryable=True)
+
+    queued = _queue_reassignment_email(to_address, title, requester_email, event_id)
+    return (
+        jsonify(
+            {
+                "message": f"Your request was sent to {to_address}.",
+                "request": payload,
+                "notification": {"in_app": True, "email_queued": queued},
+            }
+        ),
+        201,
     )
