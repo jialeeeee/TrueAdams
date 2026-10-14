@@ -11,6 +11,7 @@ export const NAV_GROUPS = [
       { to: "/events/drafts", label: "My drafts" },
       { to: "/events/requests", label: "My requests" },
       { to: "/events/managed", label: "My managed events" },
+      { to: "/events/review-requests", label: "Requests for review" },
     ],
   },
   {

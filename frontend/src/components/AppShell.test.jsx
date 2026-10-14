@@ -45,6 +45,7 @@ describe("AppShell navigation", () => {
     const pages = within(screen.getByRole("navigation", { name: "Events pages" }));
     expect(pages.getAllByRole("link").map((link) => link.textContent)).toEqual([
       "All events", "My event requests", "My drafts", "My requests", "My managed events",
+      "Requests for review",
     ]);
     expect(pages.getByRole("link", { name: "My managed events" }).getAttribute("aria-current")).toBe("page");
     expect(pages.getByRole("link", { name: "All events" }).getAttribute("aria-current")).toBeNull();
