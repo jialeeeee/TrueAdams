@@ -40,6 +40,8 @@ ALL_ROUTES = [
     ("POST", "/api/venues/"),
     ("GET", "/api/venues/1"),
     ("GET", "/api/venues/1/availability"),
+    ("GET", "/api/venues/bookings"),
+    ("POST", "/api/venues/bookings"),
     ("GET", "/api/resources/"),
     ("POST", "/api/resources/1/reservations"),
     ("GET", "/api/registrations/"),
