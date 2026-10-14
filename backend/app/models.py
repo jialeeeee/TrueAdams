@@ -155,7 +155,8 @@ class Registration(db.Model):
     event_id = db.Column(db.Integer, db.ForeignKey("events.id"), nullable=False)
     attendee_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
     registered_at = db.Column(db.DateTime, default=datetime.utcnow)
-    # "registered", "waitlisted" or "cancelled". Only registered ones take a place.
+    # "registered", "waitlisted", "withdrawn" (the attendee left, SCRUM-68) or
+    # "cancelled". Only registered ones take a place; registered and waitlisted are active.
     status = db.Column(db.String(20), nullable=False, default="registered")
 
 
@@ -183,3 +184,29 @@ class Notification(db.Model):
     event_id = db.Column(db.Integer, db.ForeignKey("events.id"))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     read_at = db.Column(db.DateTime)
+
+
+class ReassignmentRequest(db.Model):
+    """A coordinator's request that another coordinator takes over an event (SCRUM-61)."""
+
+    __tablename__ = "reassignment_requests"
+    __table_args__ = (
+        # At most one pending request per event.
+        db.Index(
+            "reassignment_requests_one_pending_per_event",
+            "event_id",
+            unique=True,
+            postgresql_where=db.text("status = 'pending'"),
+        ),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    event_id = db.Column(db.Integer, db.ForeignKey("events.id"), nullable=False)
+    requester_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    # The coordinator asked to take over.
+    coordinator_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    reason = db.Column(db.Text, nullable=False)
+    # "pending" is the only status until accepting and declining are built.
+    status = db.Column(db.String(20), nullable=False, default="pending")
+    # Naive UTC, like the other audit timestamps.
+    requested_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
