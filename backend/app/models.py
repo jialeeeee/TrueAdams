@@ -144,7 +144,8 @@ class Registration(db.Model):
     event_id = db.Column(db.Integer, db.ForeignKey("events.id"), nullable=False)
     attendee_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
     registered_at = db.Column(db.DateTime, default=datetime.utcnow)
-    # "registered", "waitlisted" or "cancelled". Only registered ones take a place.
+    # "registered", "waitlisted", "withdrawn" (the attendee left, SCRUM-68) or
+    # "cancelled". Only registered ones take a place; registered and waitlisted are active.
     status = db.Column(db.String(20), nullable=False, default="registered")
 
 

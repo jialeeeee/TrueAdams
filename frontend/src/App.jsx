@@ -1,4 +1,4 @@
-import { Link, Route, Routes } from "react-router-dom";
+import { Link, Navigate, Route, Routes } from "react-router-dom";
 import ClarificationPage from "./pages/ClarificationPage.jsx";
 import DraftEventPage from "./pages/DraftEventPage.jsx";
 import EventDetailsPage from "./pages/EventDetailsPage.jsx";
@@ -9,8 +9,8 @@ import LoginPage from "./pages/LoginPage.jsx";
 import ManagedEventsPage from "./pages/ManagedEventsPage.jsx";
 import MyDraftsPage from "./pages/MyDraftsPage.jsx";
 import MyEventRequestsPage from "./pages/MyEventRequestsPage.jsx";
+import MyRegistrationsPage from "./pages/MyRegistrationsPage.jsx";
 import MyRequestsPage from "./pages/MyRequestsPage.jsx";
-import RegistrationsPage from "./pages/RegistrationsPage.jsx";
 import ResourcesPage from "./pages/ResourcesPage.jsx";
 import ReassignmentRequestPage from "./pages/ReassignmentRequestPage.jsx";
 import ReviewRequestPage from "./pages/ReviewRequestPage.jsx";
@@ -33,7 +33,7 @@ export default function App() {
         <Link to="/venues/availability">Venue availability</Link>
         <Link to="/venues/search">Venue search</Link>
         <Link to="/resources">Resources</Link>
-        <Link to="/registrations">Registrations</Link>
+        <Link to="/my-registrations">My registrations</Link>
         <Link to="/login">Login</Link>
       </nav>
       <Routes>
@@ -55,7 +55,8 @@ export default function App() {
         <Route path="/venues/availability" element={<VenueAvailabilityPage />} />
         <Route path="/venues/search" element={<VenueSearchPage />} />
         <Route path="/resources" element={<ResourcesPage />} />
-        <Route path="/registrations" element={<RegistrationsPage />} />
+        <Route path="/my-registrations" element={<MyRegistrationsPage />} />
+        <Route path="/registrations" element={<Navigate to="/my-registrations" replace />} />
         <Route path="/login" element={<LoginPage />} />
       </Routes>
     </div>
