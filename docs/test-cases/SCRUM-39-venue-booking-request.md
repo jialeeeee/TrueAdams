@@ -2,7 +2,7 @@
 
 **User story:** As an Event Coordinator, I want to request a venue for an event so that Venue Staff can assess the proposed booking.
 
-**Created:** 14 Oct 2026 · **Status of all cases:** Not run (feature not yet built) · **Automated tests:** `backend/tests/test_venue_booking_request.py`, `frontend/src/pages/VenueBookingRequestPage.test.jsx`, `frontend/src/pages/VenueBookingRequestsPage.test.jsx`
+**Created:** 14 Oct 2026 · **Status of all cases:** Automated cases pass (14 Oct 2026, local PostgreSQL with db/venue_booking_requests.sql applied + Vitest); frontend cases 11, 15, 19, 20 and 28 also to be checked manually in the browser · **Automated tests:** `backend/tests/test_venue_booking_request.py`, `frontend/src/pages/VenueBookingRequestPage.test.jsx`, `frontend/src/pages/VenueBookingRequestsPage.test.jsx`
 
 ## Acceptance criteria
 
@@ -256,6 +256,16 @@ A **valid request** for E1 is: Aurora Ballroom, 12 Mar 2027 16:00–22:30 (setup
 - **Traces to:** AC6 · **Type:** Happy path (recovery)
 - **Expected result:** Submitting again with the database working gives HTTP 201, and exactly one pending request exists.
 
+**TC-39-29 · Venue Staff's list fails to load**
+- **Traces to:** AC4 · **Type:** Negative (failure)
+- **Preconditions:** Reading venue bookings fails (in automated tests, queries on `venue_bookings` raise `OperationalError`).
+- **Expected result:** HTTP 503 with `retryable: true`. No `bookings` list is returned, so the failure is never shown as "no pending requests".
+
+**TC-39-30 · A submission that loses a race reports the pending request**
+- **Traces to:** AC4, AC6 · **Type:** Negative (concurrency) · **Depends on:** Q6
+- **Preconditions:** Saving is refused by the one-pending-request index, as when two submissions for one event arrive together (in automated tests, the commit raises `IntegrityError`).
+- **Expected result:** HTTP 409 saying a request is already pending, not a 503 or a success. Nothing from this submission is saved.
+
 **TC-39-28 · Frontend keeps the entered information after a failure**
 - **Traces to:** AC6 · **Type:** Negative (frontend)
 - **Steps:** Submit when the server returns 503, 409 or 403, and when there is no network. Then submit again.
@@ -272,14 +282,14 @@ A **valid request** for E1 is: Aurora Ballroom, 12 Mar 2027 16:00–22:30 (setup
 | AC1 | 01, 02, 03, 04, 05, 06, 07, 11, 23, 24 |
 | AC2 | 01, 08, 09, 10, 11 |
 | AC3 | 05, 12, 13, 14, 15 |
-| AC4 | 01, 16, 17, 18, 19, 20, 23, 25 |
+| AC4 | 01, 16, 17, 18, 19, 20, 23, 25, 29, 30 |
 | AC5 | 21, 22 |
-| AC6 | 15, 26, 27, 28 |
+| AC6 | 15, 26, 27, 28, 30 |
 
 | Type | Test cases |
 |------|-----------|
 | Happy path | 01, 08, 11, 16, 17, 19, 20, 24, 27 |
-| Negative | 02, 03, 04, 05, 06, 12, 13, 15, 18, 21, 23, 26, 28 |
+| Negative | 02, 03, 04, 05, 06, 12, 13, 15, 18, 21, 23, 26, 28, 29, 30 |
 | Boundary | 07, 09, 10, 13, 14, 22, 25 |
 | Cross-cutting (authorisation) | 02, 03, 04, 07, 18 |
 | Frontend | 11, 15, 19, 20, 28 |

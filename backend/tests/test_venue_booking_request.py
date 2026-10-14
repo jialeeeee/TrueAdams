@@ -33,7 +33,8 @@ from datetime import datetime, timedelta
 from unittest import mock
 
 from flask_jwt_extended import create_access_token
-from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+from sqlalchemy import event as sa_event
+from sqlalchemy.exc import IntegrityError, OperationalError, SQLAlchemyError
 
 from app.models import Event, VenueBlock, VenueBooking
 from tests import seed_data
@@ -518,6 +519,38 @@ class FailureTests(BookingRequestTestCase):
 
         self.assertEqual(self.submit().status_code, 201)
         self.assertEqual(len(self.bookings_for("E1")), 1)
+
+    # TC-39-29 · AC4 — Venue Staff's list fails to load: an error, never an empty list.
+    def test_list_failure_is_retryable_and_not_shown_as_empty(self):
+        headers = self.auth_headers(self.users["gus"])
+        self.db.session.expire_all()
+
+        def fail(conn, cursor, statement, parameters, context, executemany):
+            if "venue_bookings" in statement and not statement.lstrip().upper().startswith(
+                    ("SAVEPOINT", "ROLLBACK", "RELEASE")):
+                raise OperationalError(statement, parameters, Exception("simulated outage"))
+
+        sa_event.listen(self.db.engine, "before_cursor_execute", fail)
+        try:
+            response = self.client.get(BOOKINGS_URL, headers=headers)
+        finally:
+            sa_event.remove(self.db.engine, "before_cursor_execute", fail)
+
+        body = self.assert_error(response, 503)
+        self.assertIs(body.get("retryable"), True)
+        self.assertNotIn("bookings", body)
+
+    # TC-39-30 · AC4, AC6 (Q6) — a submission that loses a race reports the pending request.
+    def test_submission_losing_a_race_reports_the_pending_request(self):
+        refused = IntegrityError("INSERT INTO venue_bookings ...", {},
+                                 Exception("duplicate key: venue_bookings_one_pending_per_event"))
+        with mock.patch.object(self.db.session, "commit", side_effect=refused):
+            response = self.submit()
+
+        body = self.assert_error(response, 409)
+        self.assertIn("pending", body["error"].lower())
+        self.assertNotIn("booking", body)
+        self.assert_nothing_saved()
 
 
 if __name__ == "__main__":
