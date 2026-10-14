@@ -11,7 +11,7 @@ from tests.base import AppTestCase
 COLLECTION_ENDPOINTS = [
     "/api/events/",
     "/api/resources/",
-    "/api/registrations/",
+    # GET /api/registrations/ is no longer a stub (SCRUM-68): see test_event_withdrawal.py.
 ]
 
 ALL_ROUTES = [
@@ -44,6 +44,7 @@ ALL_ROUTES = [
     ("POST", "/api/resources/1/reservations"),
     ("GET", "/api/registrations/"),
     ("POST", "/api/registrations/"),
+    ("POST", "/api/registrations/1/withdraw"),
 ]
 
 UNIMPLEMENTED_ROUTES = [
