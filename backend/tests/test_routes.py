@@ -9,7 +9,7 @@ build the feature.
 from tests.base import AppTestCase
 
 COLLECTION_ENDPOINTS = [
-    "/api/events/",
+    # GET /api/events/ is no longer a stub (SCRUM-74): see test_event_details.py.
     "/api/resources/",
     "/api/registrations/",
 ]
@@ -20,6 +20,7 @@ ALL_ROUTES = [
     ("GET", "/api/events/"),
     ("POST", "/api/events/"),
     ("POST", "/api/events/1/change-requests"),
+    ("GET", "/api/events/1"),
     ("GET", "/api/events/1/coordinator"),
     ("PUT", "/api/events/1/coordinator"),
     ("GET", "/api/events/1/eligible-coordinators"),

@@ -1,6 +1,7 @@
 import { Link, Route, Routes } from "react-router-dom";
 import ClarificationPage from "./pages/ClarificationPage.jsx";
 import DraftEventPage from "./pages/DraftEventPage.jsx";
+import EventDetailsPage from "./pages/EventDetailsPage.jsx";
 import EventPlanningPage from "./pages/EventPlanningPage.jsx";
 import EventRegistrationPage from "./pages/EventRegistrationPage.jsx";
 import EventsPage from "./pages/EventsPage.jsx";
@@ -43,6 +44,7 @@ export default function App() {
         <Route path="/events/mine" element={<MyEventRequestsPage />} />
         <Route path="/events/managed" element={<ManagedEventsPage />} />
         <Route path="/events/review-requests" element={<ReviewRequestsPage />} />
+        <Route path="/events/:eventId" element={<EventDetailsPage />} />
         <Route path="/events/:eventId/planning" element={<EventPlanningPage />} />
         <Route path="/events/:eventId/review" element={<ReviewRequestPage />} />
         <Route path="/events/:eventId/clarifications" element={<ClarificationPage />} />

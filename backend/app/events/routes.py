@@ -3,11 +3,13 @@ from datetime import datetime, timedelta
 
 from flask import Blueprint, current_app, jsonify, request, url_for
 from flask_jwt_extended import get_jwt_identity, jwt_required
+from sqlalchemy import func
 from sqlalchemy.exc import DBAPIError, SQLAlchemyError
 
 from .. import tasks
 from ..extensions import db
-from ..models import Event, EventClarification, Notification, User, Venue
+from ..models import Event, EventClarification, Notification, Registration, User, Venue
+from ..registrations.routes import singapore_now
 from .permissions import (
     COORDINATOR_ROLE,
     can_reassign_coordinator,
@@ -88,10 +90,47 @@ REQUIRED_FOR_SUBMISSION = [
 TITLE_MAX_LENGTH = 255
 _LOCAL_DATETIME = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$")
 
+# SCRUM-74. Only published events are visible to everyone; "confirmed" is the status
+# SCRUM-45 uses for events that take registrations (open question Q1).
+PUBLISHED_STATUSES = {"confirmed"}
+# Event IDs live in a 32-bit column; a larger ID cannot exist, and asking the database
+# for one raises an error instead of finding nothing.
+DB_INTEGER_MAX = 2_147_483_647
+EVENT_NOT_FOUND = "Event not found."
+
 
 @events_bp.get("/")
+@jwt_required()
 def list_events():
-    return jsonify([])
+    """The public catalogue: published events only, soonest first (SCRUM-74 A3)."""
+    try:
+        user = _current_user()
+        if user is None:
+            return _error("Your session is no longer valid. Please log in again.", 401)
+        events = (
+            Event.query.filter(Event.status.in_(PUBLISHED_STATUSES))
+            .order_by(Event.start_time.asc().nulls_last(), Event.id)
+            .all()
+        )
+        counts = _registered_counts([event.id for event in events])
+        now = singapore_now()
+        items = [
+            {
+                "id": event.id,
+                "title": _recorded(event.title),
+                "start_time": _isoformat(event.start_time),
+                "end_time": _isoformat(event.end_time),
+                "registration_state": _registration_info(
+                    event, now, counts.get(event.id, 0)
+                )["state"],
+            }
+            for event in events
+        ]
+    except SQLAlchemyError:
+        db.session.rollback()
+        return _error("Events could not be loaded. Please try again.", 503, retryable=True)
+
+    return jsonify({"events": items, "message": None if items else "There are no events to show."})
 
 
 @events_bp.post("/")
@@ -1266,3 +1305,123 @@ def list_managed():
             "message": None if events else "You have no events assigned to you yet.",
         }
     )
+
+
+# ---------- View event details (SCRUM-74) ----------
+
+
+def _registered_counts(event_ids):
+    """How many places are taken, by event ID. Only `registered` takes a place."""
+    if not event_ids:
+        return {}
+    rows = (
+        db.session.query(Registration.event_id, func.count(Registration.id))
+        .filter(Registration.event_id.in_(event_ids), Registration.status == "registered")
+        .group_by(Registration.event_id)
+        .all()
+    )
+    return dict(rows)
+
+
+def _registration_info(event, now, registered):
+    """The registration state (open, closed or full) and numbers shown on the event page.
+
+    Closed wins over full. It uses the same fields and half-open period as SCRUM-45.
+    """
+    capacity = event.registration_capacity
+    slots = None if capacity is None else max(capacity - registered, 0)
+    opens, closes = event.registration_opens_at, event.registration_closes_at
+    if (
+        event.status not in PUBLISHED_STATUSES
+        or event.registration_required is not True
+        or capacity is None
+        or opens is None
+        or closes is None
+        or now < opens
+        or now >= closes
+    ):
+        state = "closed"
+    elif slots == 0:
+        state = "full"
+    else:
+        state = "open"
+    return {
+        "state": state,
+        "opens_at": _isoformat(opens),
+        "closes_at": _isoformat(closes),
+        "capacity": capacity,
+        "registered_count": registered,
+        "slots_remaining": slots,
+    }
+
+
+def _can_view_event(user, event):
+    """Published events are visible to everyone; others only to their organiser,
+    their assigned coordinator and admins (SCRUM-74 A2)."""
+    if event.status in PUBLISHED_STATUSES:
+        return True
+    return (
+        user.role == "admin"
+        or event.organiser_id == user.id
+        or _is_current_coordinator(user, event)
+    )
+
+
+def _register_decision(user, event, state, my_registration):
+    """(can_register, reason): why an attendee can or cannot register (SCRUM-74 A7)."""
+    if user.role != "attendee":
+        return False, "not_attendee"
+    if my_registration is not None:
+        return False, "already_registered"
+    if state == "closed":
+        return False, "closed"
+    if state == "full":
+        return False, "full"
+    return True, None
+
+
+@events_bp.get("/<int:event_id>")
+@jwt_required()
+def get_event(event_id: int):
+    try:
+        user = _current_user()
+        if user is None:
+            return _error("Your session is no longer valid. Please log in again.", 401)
+        event = db.session.get(Event, event_id) if event_id <= DB_INTEGER_MAX else None
+        # The same answer for an unknown event and one the caller may not see.
+        if event is None or not _can_view_event(user, event):
+            return _error(EVENT_NOT_FOUND, 404)
+
+        registered = _registered_counts([event.id]).get(event.id, 0)
+        registration = _registration_info(event, singapore_now(), registered)
+        mine = Registration.query.filter(
+            Registration.event_id == event.id,
+            Registration.attendee_id == user.id,
+            Registration.status.in_(("registered", "waitlisted")),
+        ).first()
+        venue = db.session.get(Venue, event.venue_id) if event.venue_id else None
+        can_register, blocked_reason = _register_decision(
+            user, event, registration["state"], mine
+        )
+        payload = {
+            "id": event.id,
+            "title": event.title,
+            "description": _recorded(event.description),
+            "status": event.status,
+            "start_time": _isoformat(event.start_time),
+            "end_time": _isoformat(event.end_time),
+            "venue": (
+                {"name": venue.name, "location": _recorded(venue.location)} if venue else None
+            ),
+            "registration": registration,
+            "my_registration": {"id": mine.id, "status": mine.status} if mine else None,
+            "can_register": can_register,
+            "register_blocked_reason": blocked_reason,
+            # SCRUM-61: the event page shows "Request reassignment" only to the main coordinator.
+            "can_request_reassignment": _is_current_coordinator(user, event),
+        }
+    except SQLAlchemyError:
+        db.session.rollback()
+        return _error("The event could not be loaded. Please try again.", 503, retryable=True)
+
+    return jsonify({"event": payload})
