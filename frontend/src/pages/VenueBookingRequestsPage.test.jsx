@@ -8,7 +8,7 @@ import VenueBookingRequestsPage from "./VenueBookingRequestsPage.jsx";
 // Frontend case TC-39-20 in docs/test-cases/SCRUM-39-venue-booking-request.md:
 // Venue Staff's list of pending requests (GET /api/venues/bookings).
 
-vi.mock("../api/client.js", () => ({ default: { get: vi.fn() } }));
+vi.mock("../api/client.js", () => ({ default: { get: vi.fn(), post: vi.fn() } }));
 
 const localTime = (iso) => new Date(`${iso}Z`).toLocaleString();
 
@@ -33,6 +33,7 @@ function renderPage() {
 
 beforeEach(() => {
   apiClient.get.mockReset();
+  apiClient.post.mockReset();
 });
 
 describe("SCRUM-39 venue booking requests for Venue Staff", () => {
@@ -68,5 +69,111 @@ describe("SCRUM-39 venue booking requests for Venue Staff", () => {
     expect((await screen.findByRole("alert")).textContent).toContain("could not be loaded");
     await user.click(screen.getByRole("button", { name: "Retry" }));
     expect(await screen.findByRole("listitem", { name: "Harbour Lights Festival" })).toBeTruthy();
+  });
+});
+
+// SCRUM-40: Venue Staff approve a pending request. Frontend cases TC-40-02, 23, 26
+// and 29 in docs/test-cases/SCRUM-40-approve-venue-booking.md; the API contract
+// mirrors backend/tests/test_venue_booking_approval.py.
+describe("SCRUM-40 approve a venue booking request", () => {
+  const OTHER = {
+    ...BOOKING, id: 12,
+    event: { id: 8, title: "Winter Networking Night", expected_attendance: 80 },
+  };
+  const approveButton = (title) => screen.getByRole("button", { name: `Approve booking for ${title}` });
+
+  function httpFailure(status, data) {
+    return Object.assign(new Error(`Request failed with status ${status}`), {
+      isAxiosError: true, response: { status, data },
+    });
+  }
+
+  async function renderList() {
+    apiClient.get.mockResolvedValue({ data: { bookings: [BOOKING, OTHER], message: null } });
+    const user = renderPage();
+    await screen.findByRole("listitem", { name: "Harbour Lights Festival" });
+    return user;
+  }
+
+  // TC-40-02 · AC1, AC2
+  it("offers Approve for each pending request", async () => {
+    await renderList();
+    expect(approveButton("Harbour Lights Festival")).toBeTruthy();
+    expect(approveButton("Winter Networking Night")).toBeTruthy();
+  });
+
+  // TC-40-23 · AC4
+  it("approves a request, shows the confirmation and removes it from the pending list", async () => {
+    apiClient.post.mockResolvedValue({
+      data: {
+        message: "You approved Aurora Ballroom for Harbour Lights Festival. alice.coordinator@connectsphere.test has been notified.",
+        booking: { ...BOOKING, status: "confirmed", decided_at: "2026-10-15T02:00:00",
+          decided_by: { id: 9, email: "gus.venue@connectsphere.test" } },
+        notification: { in_app: true, email_queued: true },
+      },
+    });
+    const user = await renderList();
+
+    await user.click(approveButton("Harbour Lights Festival"));
+
+    expect(apiClient.post).toHaveBeenCalledWith("/venues/bookings/11/approve");
+    expect((await screen.findByRole("status")).textContent).toContain("You approved Aurora Ballroom");
+    expect(screen.queryByRole("listitem", { name: "Harbour Lights Festival" })).toBeNull();
+    expect(screen.getByRole("listitem", { name: "Winter Networking Night" })).toBeTruthy();
+  });
+
+  // TC-40-26 · AC5
+  it("explains each conflict and keeps the request pending", async () => {
+    apiClient.post.mockRejectedValue(httpFailure(409, {
+      error: "This booking can't be approved because it clashes with other arrangements.",
+      reason: "conflict",
+      conflicts: [
+        { type: "block", id: 4, start: "2027-03-12T15:00:00", end: "2027-03-12T17:00:00", reason: "Electrical works" },
+        { type: "block", id: 5, start: "2027-03-12T17:30:00", end: "2027-03-12T17:45:00", reason: null },
+        { type: "booking", id: 6, start: "2027-03-12T18:00:00", end: "2027-03-12T20:00:00", event: { id: 9, title: "Product Launch" } },
+        { type: "booking", id: 7, start: "2027-03-12T20:00:00", end: "2027-03-12T21:00:00", event: null },
+        { type: "event_booking", id: 8, start: "2027-03-12T16:00:00", end: "2027-03-12T22:30:00", venue: { id: 4, name: "Civic Hall" } },
+      ],
+    }));
+    const user = await renderList();
+
+    await user.click(approveButton("Harbour Lights Festival"));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("clashes with other arrangements");
+    const lines = Array.from(alert.querySelectorAll("li")).map((li) => li.textContent);
+    expect(lines).toEqual([
+      "Blocked (Electrical works), 2027-03-12 15:00 to 2027-03-12 17:00",
+      "Blocked, 2027-03-12 17:30 to 2027-03-12 17:45",
+      "Confirmed booking for Product Launch, 2027-03-12 18:00 to 2027-03-12 20:00",
+      "Confirmed booking, 2027-03-12 20:00 to 2027-03-12 21:00",
+      "This event's confirmed booking at Civic Hall, 2027-03-12 16:00 to 2027-03-12 22:30",
+    ]);
+    expect(screen.getByRole("listitem", { name: "Harbour Lights Festival" })).toBeTruthy();
+    expect(approveButton("Harbour Lights Festival").disabled).toBe(false);
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+
+  // TC-40-29 · AC6
+  it.each([
+    ["save failure", httpFailure(503, { error: "The approval was not saved, so the request is still pending. Please try again.", retryable: true }), "still pending"],
+    ["no longer pending", httpFailure(409, { error: "This request is confirmed, so it can no longer be approved.", reason: "not_pending" }), "can no longer be approved"],
+    ["no network", new Error("Network Error"), "Check your connection and try again"],
+  ])("shows why approval failed (%s), keeps the request, and the retry succeeds", async (_label, failure, message) => {
+    apiClient.post.mockRejectedValueOnce(failure).mockResolvedValueOnce({
+      data: { message: "You approved Aurora Ballroom for Harbour Lights Festival.", booking: { ...BOOKING, status: "confirmed" },
+        notification: { in_app: true, email_queued: true } },
+    });
+    const user = await renderList();
+
+    await user.click(approveButton("Harbour Lights Festival"));
+
+    expect((await screen.findByRole("alert")).textContent).toContain(message);
+    expect(screen.getByRole("listitem", { name: "Harbour Lights Festival" })).toBeTruthy();
+    expect(approveButton("Harbour Lights Festival").disabled).toBe(false);
+
+    await user.click(approveButton("Harbour Lights Festival"));
+    expect(await screen.findByRole("status")).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 });

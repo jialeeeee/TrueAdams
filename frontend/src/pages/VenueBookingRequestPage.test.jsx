@@ -216,3 +216,22 @@ describe("SCRUM-39 submit a venue booking request", () => {
     expect(await screen.findByRole("heading", { name: /request a venue/i })).toBeTruthy();
   });
 });
+
+// SCRUM-40: once Venue Staff approve a request, the event has a confirmed venue.
+// Frontend case TC-40-24 in docs/test-cases/SCRUM-40-approve-venue-booking.md.
+describe("SCRUM-40 the coordinator sees the confirmed venue", () => {
+  it("shows the confirmed venue instead of offering a new request", async () => {
+    await renderLoaded(planning({ venue: { id: 3, name: "Aurora Ballroom", location: "Level 3, Marina Tower" } }));
+
+    expect(screen.getByText("Venue confirmed: Aurora Ballroom, Level 3, Marina Tower")).toBeTruthy();
+    expect(screen.getByText(/change request/i)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Submit request" })).toBeNull();
+    expect(screen.queryByLabelText("Venue")).toBeNull();
+  });
+
+  it("shows just the venue's name when its location is not recorded", async () => {
+    await renderLoaded(planning({ venue: { id: 3, name: "Aurora Ballroom", location: null } }));
+
+    expect(screen.getByText("Venue confirmed: Aurora Ballroom")).toBeTruthy();
+  });
+});

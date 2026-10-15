@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import apiClient from "../api/client.js";
+import explain from "../utils/explain.js";
 import statusLabel from "../utils/statusLabel.js";
 
 // SCRUM-39: the event's coordinator requests a venue for an approved event.
@@ -19,11 +20,6 @@ const MISSING = {
 // Event and booking times are Singapore time without a time zone: show them as recorded.
 const asInput = (value) => (value ? value.slice(0, 16) : "");
 const asText = (value) => value.slice(0, 16).replace("T", " ");
-
-function explain(failure, fallback) {
-  const error = failure.response?.data?.error;
-  return typeof error === "string" && error.trim() ? error : fallback;
-}
 
 function missingFields(form) {
   const problems = {};
@@ -122,6 +118,20 @@ export default function VenueBookingRequestPage() {
         <p>{`Venue: ${booking.venue.name}`}</p>
         <p>{`Requested: ${asText(booking.start_time)} to ${asText(booking.end_time)}`}</p>
         <p>{`Status: ${statusLabel(booking.status)}`}</p>
+      </section>
+    );
+  }
+
+  // SCRUM-40: Venue Staff approved a venue; changing it goes through a change request (A3).
+  if (event.venue) {
+    return (
+      <section>
+        {back}
+        <h1>Request a venue: {event.title}</h1>
+        <p>
+          {`Venue confirmed: ${event.venue.name}${event.venue.location ? `, ${event.venue.location}` : ""}`}
+        </p>
+        <p>To change the venue, submit a change request.</p>
       </section>
     );
   }

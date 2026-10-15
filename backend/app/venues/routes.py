@@ -1,15 +1,16 @@
 import re
 from datetime import date, datetime, time, timedelta
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, current_app, jsonify, request
 from flask_jwt_extended import get_jwt_identity, jwt_required
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from . import scheduling
+from .. import tasks
 from ..events.permissions import is_current_coordinator
 from ..extensions import db
 from ..local_time import singapore_now
-from ..models import Event, User, Venue, VenueBooking
+from ..models import Event, Notification, User, Venue, VenueBooking
 
 venues_bp = Blueprint("venues", __name__)
 
@@ -539,4 +540,129 @@ def list_booking_requests():
     return jsonify({
         "bookings": payloads,
         "message": None if payloads else "There are no pending venue requests.",
+    })
+
+
+# ---------- Approving a venue booking request (SCRUM-40) ----------
+
+CONFIRMED = scheduling.BLOCKING_BOOKING_STATUS
+APPROVAL_NOTIFICATION = "venue_booking_approved"
+
+
+def _period_text(start, end):
+    return f"{start:%Y-%m-%d %H:%M} to {end:%Y-%m-%d %H:%M}"
+
+
+def _conflict(kind, record, **details):
+    """One conflict entry: its kind, which record, and the period it covers."""
+    return {"type": kind, "id": record.id, "start": record.start_time.isoformat(),
+            "end": record.end_time.isoformat(), **details}
+
+
+def _approval_conflicts(booking):
+    """Every prohibited conflict for approving `booking`, in time order (A2, A3)."""
+    period = ([booking.venue_id], booking.start_time, booking.end_time)
+    conflicts = []
+    for other in scheduling.blocking_bookings(*period):
+        event = db.session.get(Event, other.event_id) if other.event_id else None
+        conflicts.append(_conflict(
+            "booking", other, event={"id": event.id, "title": event.title} if event else None))
+    for block in scheduling.blocks(*period):
+        conflicts.append(_conflict("block", block, reason=block.reason))
+    # An event can have only one confirmed venue (A3).
+    for existing in VenueBooking.query.filter_by(event_id=booking.event_id, status=CONFIRMED):
+        venue = db.session.get(Venue, existing.venue_id)
+        conflicts.append(_conflict(
+            "event_booking", existing, venue={"id": venue.id, "name": venue.name}))
+    return sorted(conflicts, key=lambda conflict: conflict["start"])
+
+
+def _queue_approval_email(to_address, title, venue_name, message, event_id):
+    """Queue the coordinator's email; False if the queue could not be reached.
+
+    The approval and in-app notification are already saved by then, so a broker
+    outage must not undo or hide them. It takes plain values, not models.
+    """
+    try:
+        tasks.send_notification_email.delay(
+            to_address,
+            f"Venue confirmed for {title}: {venue_name}",
+            f"{message}\n\nSign in to ConnectSphere to see the event's planning information.",
+        )
+    except Exception:
+        current_app.logger.exception("Could not queue venue approval email for event %s",
+                                     event_id)
+        return False
+    return True
+
+
+@venues_bp.post("/bookings/<int:booking_id>/approve")
+@jwt_required()
+def approve_booking(booking_id: int):
+    try:
+        user = _require_viewer(BOOKING_REVIEWER_ROLES,
+                               "Only Venue Staff can approve venue requests.")
+        # The booking and its venue are locked until the decision is saved, so two
+        # staff approving the same or overlapping requests are handled one at a time (A7).
+        booking = db.session.get(VenueBooking, booking_id, with_for_update=True,
+                                 populate_existing=True)
+        if booking is None:
+            raise _Rejected("Booking request not found.", 404)
+        if booking.status != PENDING:
+            raise _Rejected(
+                f"This request is {booking.status}, so it can no longer be approved.",
+                409, reason="not_pending")
+        event = db.session.get(Event, booking.event_id)
+        if event.status != REQUESTABLE_EVENT_STATUS:
+            raise _Rejected(
+                f"The event is {event.status}, so its venue booking can't be approved.",
+                409, reason="event_not_approved")
+        if booking.start_time <= singapore_now():
+            raise _Rejected(
+                "The requested time has already started, so the booking can't be approved.",
+                409, reason="already_started")
+        venue = db.session.get(Venue, booking.venue_id, with_for_update=True)
+        conflicts = _approval_conflicts(booking)
+        if conflicts:
+            raise _Rejected(
+                "This booking can't be approved because it clashes with other arrangements "
+                f"at {venue.name}.", 409, reason="conflict", conflicts=conflicts)
+
+        booking.status = CONFIRMED
+        booking.decided_at = datetime.utcnow()
+        booking.decided_by_id = user.id
+        event.venue_id = venue.id
+        coordinator = db.session.get(User, event.coordinator_id)
+        message = (
+            f'Your venue request for "{event.title}" at {venue.name} '
+            f"({_period_text(booking.start_time, booking.end_time)}) was approved by "
+            f"{user.email}."
+        )
+        # Saved in the same commit, so the coordinator is never told about an approval
+        # that was not saved, and a saved approval always has its notification.
+        db.session.add(Notification(recipient_id=coordinator.id, kind=APPROVAL_NOTIFICATION,
+                                    message=message, event_id=event.id))
+        # Everything the reply and the email need is read before the commit.
+        payload = {
+            **_booking_payload(booking),
+            "decided_at": booking.decided_at.isoformat(),
+            "decided_by": {"id": user.id, "email": user.email},
+        }
+        to_address, title, venue_name, event_id = (coordinator.email, event.title,
+                                                    venue.name, event.id)
+        db.session.commit()
+    except _Rejected as rejected:
+        return _error(rejected.message, rejected.status_code, **rejected.extra)
+    except SQLAlchemyError:
+        db.session.rollback()
+        return _error(
+            "The approval was not saved, so the request is still pending. Please try again.",
+            503, retryable=True,
+        )
+
+    email_queued = _queue_approval_email(to_address, title, venue_name, message, event_id)
+    return jsonify({
+        "message": f"You approved {venue_name} for {title}. {to_address} has been notified.",
+        "booking": payload,
+        "notification": {"in_app": True, "email_queued": email_queued},
     })
