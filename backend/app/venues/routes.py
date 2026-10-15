@@ -537,6 +537,15 @@ def list_booking_requests():
     except SQLAlchemyError:
         return _load_failed("Venue requests could not be loaded. Please try again.")
 
+    try:
+        # SCRUM-41 A2: Venue Staff see each request's conflicts before approving it.
+        for payload, booking in zip(payloads, bookings):
+            payload["conflicts"] = _approval_conflicts(booking)
+    except SQLAlchemyError:
+        # Never show a request as clear when its conflicts were not checked (A5).
+        return _load_failed(
+            "Availability could not be verified for the venue requests. Please try again.")
+
     return jsonify({
         "bookings": payloads,
         "message": None if payloads else "There are no pending venue requests.",
@@ -621,8 +630,16 @@ def approve_booking(booking_id: int):
             raise _Rejected(
                 "The requested time has already started, so the booking can't be approved.",
                 409, reason="already_started")
-        venue = db.session.get(Venue, booking.venue_id, with_for_update=True)
-        conflicts = _approval_conflicts(booking)
+        try:
+            venue = db.session.get(Venue, booking.venue_id, with_for_update=True)
+            conflicts = _approval_conflicts(booking)
+        except SQLAlchemyError:
+            # SCRUM-41 A5: without a completed check the booking is never confirmed.
+            db.session.rollback()
+            raise _Rejected(
+                "The venue's availability could not be verified, so the booking was not "
+                "approved. It is still pending. Please try again.", 503, retryable=True,
+            ) from None
         if conflicts:
             raise _Rejected(
                 "This booking can't be approved because it clashes with other arrangements "
@@ -632,6 +649,17 @@ def approve_booking(booking_id: int):
         booking.decided_at = datetime.utcnow()
         booking.decided_by_id = user.id
         event.venue_id = venue.id
+        try:
+            # Written now, so the database rule is checked before anything is announced.
+            db.session.flush()
+        except IntegrityError:
+            # SCRUM-41 A4: the database rule refused it, so a clashing booking at this
+            # venue was confirmed by code that did not take the venue lock.
+            db.session.rollback()
+            raise _Rejected(
+                "This booking can't be approved because it clashes with other arrangements "
+                f"at {venue.name}.", 409, reason="conflict",
+                conflicts=_approval_conflicts(booking)) from None
         coordinator = db.session.get(User, event.coordinator_id)
         message = (
             f'Your venue request for "{event.title}" at {venue.name} '

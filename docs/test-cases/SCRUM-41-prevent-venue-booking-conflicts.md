@@ -2,7 +2,7 @@
 
 **User story:** As a Venue Staff member, I want conflicts to be identified before a venue booking is confirmed so that the venue is not committed to incompatible events.
 
-**Created:** 16 Oct 2026 · **Status of all cases:** Not yet run · **Automated tests:** `backend/tests/test_venue_booking_conflicts.py`, `frontend/src/pages/VenueBookingRequestsPage.test.jsx` · **Builds on:** SCRUM-40 (approval and its conflict check), SCRUM-39 (venue requests and Venue Staff's list), SCRUM-36 (availability rule)
+**Created:** 16 Oct 2026 · **Status of all cases:** Automated cases pass (16 Oct 2026, local PostgreSQL with db/venue_booking_conflicts.sql applied + Vitest); frontend cases 06, 07 and 17 also to be checked manually in the browser · **Automated tests:** `backend/tests/test_venue_booking_conflicts.py`, `frontend/src/pages/VenueBookingRequestsPage.test.jsx` · **Builds on:** SCRUM-40 (approval and its conflict check), SCRUM-39 (venue requests and Venue Staff's list), SCRUM-36 (availability rule)
 
 ## Acceptance criteria
 

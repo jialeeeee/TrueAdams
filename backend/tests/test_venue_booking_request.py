@@ -389,7 +389,8 @@ class SavedAndVisibleTests(BookingRequestTestCase):
         own = {first["id"], second["id"], rejected.id, confirmed.id}
         listed = [b for b in body["bookings"] if b["id"] in own]
         self.assertEqual([b["id"] for b in listed], [first["id"], second["id"]])
-        self.assertEqual(listed[0], first)
+        # SCRUM-41 A2: the list also gives each request's conflicts.
+        self.assertEqual(listed[0], {**first, "conflicts": []})
         self.assertEqual(listed[1]["event"]["title"], "Winter Networking Night")
         self.assertEqual(listed[1]["requested_by"]["id"], self.users["ben"].id)
         self.assertIsNone(body["message"])

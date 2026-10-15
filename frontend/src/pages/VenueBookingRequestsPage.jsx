@@ -42,6 +42,8 @@ export default function VenueBookingRequestsPage() {
         ...current,
         bookings: current.bookings.filter((b) => b.id !== booking.id),
       }));
+      // SCRUM-41: reloaded so the remaining requests show any clash with this booking (A6).
+      load();
     } catch (failure) {
       // The request stays listed and pending, so it can be approved later (AC5, AC6).
       setActionError({
@@ -106,6 +108,15 @@ export default function VenueBookingRequestsPage() {
                 {`Requested by ${booking.requested_by?.email ?? "an unknown user"} on ${formatSavedAt(booking.requested_at)}`}
               </p>
               <p>{`Status: ${statusLabel(booking.status)}`}</p>
+              {booking.conflicts.length === 0 ? (
+                <p>No conflicts found.</p>
+              ) : (
+                <ul aria-label={`Conflicts for ${booking.event.title}`}>
+                  {booking.conflicts.map((conflict) => (
+                    <li key={`${conflict.type}-${conflict.id}`}>{conflictText(conflict)}</li>
+                  ))}
+                </ul>
+              )}
               <button
                 type="button"
                 aria-label={`Approve booking for ${booking.event.title}`}
