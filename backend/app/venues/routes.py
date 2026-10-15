@@ -553,31 +553,27 @@ def _period_text(start, end):
     return f"{start:%Y-%m-%d %H:%M} to {end:%Y-%m-%d %H:%M}"
 
 
+def _conflict(kind, record, **details):
+    """One conflict entry: its kind, which record, and the period it covers."""
+    return {"type": kind, "id": record.id, "start": record.start_time.isoformat(),
+            "end": record.end_time.isoformat(), **details}
+
+
 def _approval_conflicts(booking):
     """Every prohibited conflict for approving `booking`, in time order (A2, A3)."""
+    period = ([booking.venue_id], booking.start_time, booking.end_time)
     conflicts = []
-    for other in scheduling.blocking_bookings([booking.venue_id], booking.start_time,
-                                              booking.end_time):
+    for other in scheduling.blocking_bookings(*period):
         event = db.session.get(Event, other.event_id) if other.event_id else None
-        conflicts.append({
-            "type": "booking", "id": other.id,
-            "start": other.start_time.isoformat(), "end": other.end_time.isoformat(),
-            "event": {"id": event.id, "title": event.title} if event else None,
-        })
-    for block in scheduling.blocks([booking.venue_id], booking.start_time, booking.end_time):
-        conflicts.append({
-            "type": "block", "id": block.id,
-            "start": block.start_time.isoformat(), "end": block.end_time.isoformat(),
-            "reason": block.reason,
-        })
+        conflicts.append(_conflict(
+            "booking", other, event={"id": event.id, "title": event.title} if event else None))
+    for block in scheduling.blocks(*period):
+        conflicts.append(_conflict("block", block, reason=block.reason))
     # An event can have only one confirmed venue (A3).
     for existing in VenueBooking.query.filter_by(event_id=booking.event_id, status=CONFIRMED):
         venue = db.session.get(Venue, existing.venue_id)
-        conflicts.append({
-            "type": "event_booking", "id": existing.id,
-            "start": existing.start_time.isoformat(), "end": existing.end_time.isoformat(),
-            "venue": {"id": venue.id, "name": venue.name},
-        })
+        conflicts.append(_conflict(
+            "event_booking", existing, venue={"id": venue.id, "name": venue.name}))
     return sorted(conflicts, key=lambda conflict: conflict["start"])
 
 

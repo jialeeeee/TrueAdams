@@ -57,8 +57,7 @@ export default function VenueBookingRequestsPage() {
       const response = await apiClient.get("/venues/bookings");
       setResult(response.data);
     } catch (failure) {
-      const error = failure.response?.data?.error;
-      setLoadError(typeof error === "string" && error.trim() ? error : NOT_LOADED);
+      setLoadError(explain(failure, NOT_LOADED));
     }
   }, []);
 

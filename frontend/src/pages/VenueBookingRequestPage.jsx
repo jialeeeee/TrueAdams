@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import apiClient from "../api/client.js";
+import explain from "../utils/explain.js";
 import statusLabel from "../utils/statusLabel.js";
 
 // SCRUM-39: the event's coordinator requests a venue for an approved event.
@@ -19,11 +20,6 @@ const MISSING = {
 // Event and booking times are Singapore time without a time zone: show them as recorded.
 const asInput = (value) => (value ? value.slice(0, 16) : "");
 const asText = (value) => value.slice(0, 16).replace("T", " ");
-
-function explain(failure, fallback) {
-  const error = failure.response?.data?.error;
-  return typeof error === "string" && error.trim() ? error : fallback;
-}
 
 function missingFields(form) {
   const problems = {};

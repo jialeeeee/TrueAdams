@@ -2,7 +2,7 @@
 
 **User story:** As a Venue Staff member, I want to approve a pending venue booking request so that the Event Coordinator knows that the proposed venue arrangement can proceed.
 
-**Created:** 15 Oct 2026 · **Status of all cases:** Not run (feature not yet built) · **Automated tests:** `backend/tests/test_venue_booking_approval.py`, `frontend/src/pages/VenueBookingRequestsPage.test.jsx`, `frontend/src/pages/VenueBookingRequestPage.test.jsx` · **Builds on:** SCRUM-39 (booking requests), SCRUM-36 (availability rule)
+**Created:** 15 Oct 2026 · **Status of all cases:** Automated cases pass (15 Oct 2026, local PostgreSQL with db/venue_booking_decisions.sql applied + Vitest); frontend cases 02, 23, 24, 26 and 29 also to be checked manually in the browser · **Automated tests:** `backend/tests/test_venue_booking_approval.py`, `frontend/src/pages/VenueBookingRequestsPage.test.jsx`, `frontend/src/pages/VenueBookingRequestPage.test.jsx` · **Builds on:** SCRUM-39 (booking requests), SCRUM-36 (availability rule)
 
 ## Acceptance criteria
 
