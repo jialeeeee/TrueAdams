@@ -6,13 +6,14 @@ import statusLabel from "../utils/statusLabel.js";
 
 // SCRUM-39: Venue Staff's list of pending venue requests (GET /api/venues/bookings).
 // SCRUM-40: each can be approved (POST /api/venues/bookings/<id>/approve).
+// SCRUM-41: each shows its conflicts before anyone approves it.
 const NOT_LOADED = "Venue requests could not be loaded. Check your connection and try again.";
 const NOT_APPROVED = "The approval was not saved. Check your connection and try again.";
 
 // Booking times are Singapore time without a time zone: show them as recorded.
 const asText = (value) => value.slice(0, 16).replace("T", " ");
 
-// One line per conflict that blocked an approval, in the order the server lists them.
+// One line per conflict, in the order the server lists them.
 function conflictText(conflict) {
   const period = `${asText(conflict.start)} to ${asText(conflict.end)}`;
   if (conflict.type === "block") {
@@ -26,11 +27,31 @@ function conflictText(conflict) {
   return `This event's confirmed booking at ${conflict.venue.name}, ${period}`;
 }
 
+function ConflictList({ conflicts, label }) {
+  return (
+    <ul aria-label={label}>
+      {conflicts.map((conflict) => (
+        <li key={`${conflict.type}-${conflict.id}`}>{conflictText(conflict)}</li>
+      ))}
+    </ul>
+  );
+}
+
 export default function VenueBookingRequestsPage() {
   const [result, setResult] = useState(null);
   const [loadError, setLoadError] = useState("");
   const [confirmation, setConfirmation] = useState("");
   const [actionError, setActionError] = useState(null);
+
+  const load = useCallback(async () => {
+    setLoadError("");
+    try {
+      const response = await apiClient.get("/venues/bookings");
+      setResult(response.data);
+    } catch (failure) {
+      setLoadError(explain(failure, NOT_LOADED));
+    }
+  }, []);
 
   const approve = async (booking) => {
     setConfirmation("");
@@ -53,16 +74,6 @@ export default function VenueBookingRequestsPage() {
     }
   };
 
-  const load = useCallback(async () => {
-    setLoadError("");
-    try {
-      const response = await apiClient.get("/venues/bookings");
-      setResult(response.data);
-    } catch (failure) {
-      setLoadError(explain(failure, NOT_LOADED));
-    }
-  }, []);
-
   useEffect(() => {
     load();
   }, [load]);
@@ -82,13 +93,7 @@ export default function VenueBookingRequestsPage() {
       {actionError && (
         <div role="alert">
           <p>{actionError.message}</p>
-          {actionError.conflicts.length > 0 && (
-            <ul>
-              {actionError.conflicts.map((conflict) => (
-                <li key={`${conflict.type}-${conflict.id}`}>{conflictText(conflict)}</li>
-              ))}
-            </ul>
-          )}
+          {actionError.conflicts.length > 0 && <ConflictList conflicts={actionError.conflicts} />}
         </div>
       )}
 
@@ -111,11 +116,10 @@ export default function VenueBookingRequestsPage() {
               {booking.conflicts.length === 0 ? (
                 <p>No conflicts found.</p>
               ) : (
-                <ul aria-label={`Conflicts for ${booking.event.title}`}>
-                  {booking.conflicts.map((conflict) => (
-                    <li key={`${conflict.type}-${conflict.id}`}>{conflictText(conflict)}</li>
-                  ))}
-                </ul>
+                <ConflictList
+                  conflicts={booking.conflicts}
+                  label={`Conflicts for ${booking.event.title}`}
+                />
               )}
               <button
                 type="button"
