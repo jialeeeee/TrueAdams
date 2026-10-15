@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -20,6 +20,8 @@ const BOOKING = {
   venue_requirements: "Open-air waterfront space for 250, stage power",
   requested_by: { id: 2, email: "alice.coordinator@connectsphere.test" },
   requested_at: "2026-10-14T03:00:00",
+  // SCRUM-41: the pending list also gives each request's conflicts.
+  conflicts: [],
 };
 
 function renderPage() {
@@ -113,6 +115,8 @@ describe("SCRUM-40 approve a venue booking request", () => {
       },
     });
     const user = await renderList();
+    // SCRUM-41: the list is reloaded after an approval, without the approved request.
+    apiClient.get.mockResolvedValue({ data: { bookings: [OTHER], message: null } });
 
     await user.click(approveButton("Harbour Lights Festival"));
 
@@ -175,5 +179,75 @@ describe("SCRUM-40 approve a venue booking request", () => {
     await user.click(approveButton("Harbour Lights Festival"));
     expect(await screen.findByRole("status")).toBeTruthy();
     expect(screen.queryByRole("alert")).toBeNull();
+  });
+});
+
+// SCRUM-41: conflicts are shown before approval. Frontend cases TC-41-06 and 07 in
+// docs/test-cases/SCRUM-41-prevent-venue-booking-conflicts.md; the API contract
+// mirrors backend/tests/test_venue_booking_conflicts.py.
+describe("SCRUM-41 conflicts are shown before approval", () => {
+  const OTHER = {
+    ...BOOKING, id: 12,
+    event: { id: 8, title: "Winter Networking Night", expected_attendance: 80 },
+  };
+  const APPROVED = {
+    data: {
+      message: "You approved Aurora Ballroom for Harbour Lights Festival. alice.coordinator@connectsphere.test has been notified.",
+      booking: { ...BOOKING, status: "confirmed" },
+      notification: { in_app: true, email_queued: true },
+    },
+  };
+
+  // TC-41-06 · AC2
+  it("shows each request's conflicts with their periods", async () => {
+    const clashing = {
+      ...BOOKING,
+      conflicts: [
+        { type: "block", id: 4, start: "2027-03-12T15:00:00", end: "2027-03-12T17:00:00", reason: "Electrical works" },
+        { type: "booking", id: 6, start: "2027-03-12T18:00:00", end: "2027-03-12T20:00:00", event: { id: 9, title: "Product Launch" } },
+      ],
+    };
+    apiClient.get.mockResolvedValue({ data: { bookings: [clashing, OTHER], message: null } });
+    renderPage();
+
+    const item = await screen.findByRole("listitem", { name: "Harbour Lights Festival" });
+    const conflicts = within(item).getByRole("list", { name: "Conflicts for Harbour Lights Festival" });
+    expect(within(conflicts).getAllByRole("listitem").map((li) => li.textContent)).toEqual([
+      "Blocked (Electrical works), 2027-03-12 15:00 to 2027-03-12 17:00",
+      "Confirmed booking for Product Launch, 2027-03-12 18:00 to 2027-03-12 20:00",
+    ]);
+    const other = screen.getByRole("listitem", { name: "Winter Networking Night" });
+    expect(other.textContent).toContain("No conflicts found.");
+    expect(within(other).queryByRole("list")).toBeNull();
+    for (const title of ["Harbour Lights Festival", "Winter Networking Night"]) {
+      expect(screen.getByRole("button", { name: `Approve booking for ${title}` }).disabled).toBe(false);
+    }
+  });
+
+  // TC-41-07 · AC2 (Q2)
+  it("reloads the list after an approval so new clashes show", async () => {
+    const nowClashing = {
+      ...OTHER,
+      conflicts: [
+        { type: "booking", id: 11, start: "2027-03-12T16:00:00", end: "2027-03-12T22:30:00", event: { id: 7, title: "Harbour Lights Festival" } },
+      ],
+    };
+    apiClient.get
+      .mockResolvedValueOnce({ data: { bookings: [BOOKING, OTHER], message: null } })
+      .mockResolvedValueOnce({ data: { bookings: [nowClashing], message: null } });
+    apiClient.post.mockResolvedValue(APPROVED);
+    const user = renderPage();
+    await screen.findByRole("listitem", { name: "Harbour Lights Festival" });
+
+    await user.click(screen.getByRole("button", { name: "Approve booking for Harbour Lights Festival" }));
+
+    await waitFor(() => expect(apiClient.get).toHaveBeenCalledTimes(2));
+    expect(apiClient.get).toHaveBeenLastCalledWith("/venues/bookings");
+    const other = screen.getByRole("listitem", { name: "Winter Networking Night" });
+    expect(await within(other).findByText(
+      "Confirmed booking for Harbour Lights Festival, 2027-03-12 16:00 to 2027-03-12 22:30",
+    )).toBeTruthy();
+    expect(screen.queryByRole("listitem", { name: "Harbour Lights Festival" })).toBeNull();
+    expect(screen.getByRole("status").textContent).toContain("You approved Aurora Ballroom");
   });
 });
