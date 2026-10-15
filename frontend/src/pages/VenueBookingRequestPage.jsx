@@ -126,6 +126,20 @@ export default function VenueBookingRequestPage() {
     );
   }
 
+  // SCRUM-40: Venue Staff approved a venue; changing it goes through a change request (A3).
+  if (event.venue) {
+    return (
+      <section>
+        {back}
+        <h1>Request a venue: {event.title}</h1>
+        <p>
+          {`Venue confirmed: ${event.venue.name}${event.venue.location ? `, ${event.venue.location}` : ""}`}
+        </p>
+        <p>To change the venue, submit a change request.</p>
+      </section>
+    );
+  }
+
   if (event.status !== "approved") {
     return (
       <section>

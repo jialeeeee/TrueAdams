@@ -228,4 +228,10 @@ describe("SCRUM-40 the coordinator sees the confirmed venue", () => {
     expect(screen.queryByRole("button", { name: "Submit request" })).toBeNull();
     expect(screen.queryByLabelText("Venue")).toBeNull();
   });
+
+  it("shows just the venue's name when its location is not recorded", async () => {
+    await renderLoaded(planning({ venue: { id: 3, name: "Aurora Ballroom", location: null } }));
+
+    expect(screen.getByText("Venue confirmed: Aurora Ballroom")).toBeTruthy();
+  });
 });

@@ -213,7 +213,7 @@ Further confirmed, rejected or cancelled bookings and blocks are added by the ca
 
 **TC-40-24 · Frontend: the coordinator's request page shows the confirmed venue**
 - **Traces to:** AC4 · **Type:** Happy path (frontend) · **Depends on:** Q3
-- **Expected result:** When the event already has a venue, the request page shows "Venue confirmed:" with the venue and location, and says changes need a change request. It offers no request form.
+- **Expected result:** When the event already has a venue, the request page shows "Venue confirmed:" with the venue and location, and says changes need a change request. It offers no request form. If the venue's location is not recorded, only the venue's name is shown.
 
 ## AC5 — A blocked approval leaves the request unapproved
 

@@ -118,6 +118,9 @@ class VenueBooking(db.Model):
     # SCRUM-39: what Venue Staff assess the request against, and who asked.
     venue_requirements = db.Column(db.Text)
     requested_by_id = db.Column(db.Integer, db.ForeignKey("users.id"))
+    # SCRUM-40: when (naive UTC) and by which Venue Staff member it was approved.
+    decided_at = db.Column(db.DateTime)
+    decided_by_id = db.Column(db.Integer, db.ForeignKey("users.id"))
 
 
 class VenueBlock(db.Model):
