@@ -5,6 +5,7 @@ import EventDetailsPage from "./pages/EventDetailsPage.jsx";
 import EventPlanningPage from "./pages/EventPlanningPage.jsx";
 import EventRegistrationPage from "./pages/EventRegistrationPage.jsx";
 import EventsPage from "./pages/EventsPage.jsx";
+import LeadAssignedEventsPage from "./pages/LeadAssignedEventsPage.jsx";
 import LoginPage from "./pages/LoginPage.jsx";
 import ManagedEventsPage from "./pages/ManagedEventsPage.jsx";
 import MyDraftsPage from "./pages/MyDraftsPage.jsx";
@@ -30,6 +31,7 @@ export default function App() {
         <Link to="/events/drafts">My drafts</Link>
         <Link to="/events/requests">My requests</Link>
         <Link to="/events/managed">My managed events</Link>
+        <Link to="/events/supervised">Events I assigned</Link>
         <Link to="/events/review-requests">Requests for review</Link>
         <Link to="/venues">Venues</Link>
         <Link to="/venues/availability">Venue availability</Link>
@@ -47,6 +49,7 @@ export default function App() {
         <Route path="/events/requests" element={<MyRequestsPage />} />
         <Route path="/events/mine" element={<MyEventRequestsPage />} />
         <Route path="/events/managed" element={<ManagedEventsPage />} />
+        <Route path="/events/supervised" element={<LeadAssignedEventsPage />} />
         <Route path="/events/review-requests" element={<ReviewRequestsPage />} />
         <Route path="/events/:eventId" element={<EventDetailsPage />} />
         <Route path="/events/:eventId/planning" element={<EventPlanningPage />} />

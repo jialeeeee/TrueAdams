@@ -59,7 +59,7 @@ Stubs (they return **501** or an empty list) that are free to be built by their 
 ### Who is calling
 - Login (`POST /api/auth/login`) issues a JWT whose identity is `str(user.id)`. Protected routes use `@jwt_required()`.
 - **Load the `User` row on every request** (`_current_user()` in events, `_require_viewer()` in venues) and check `user.role` from the database, not from token claims, so role changes apply without re-issuing tokens. A missing or unparsable identity is a 401: `"Your session is no longer valid. Please log in again."`
-- Roles in use: `admin`, `coordinator`, `organiser`, `venue_staff`, `tech_staff`, `attendee` (default). Define who may do what as a module-level set (`ASSIGNER_ROLES`, `VENUE_VIEWER_ROLES`, …) with a comment, not inline string checks.
+- Roles in use: `admin`, `coordinator`, `coordinator_lead` (Event Coordinator Lead, SCRUM-83), `organiser`, `venue_staff`, `tech_staff`, `attendee` (default). Define who may do what as a module-level set (`ASSIGNER_ROLES`, `VENUE_VIEWER_ROLES`, …) with a comment, not inline string checks.
 - "The event's coordinator" means `user.role == "coordinator" and event.coordinator_id == user.id` (`_is_current_coordinator`). An organiser owns an event through `event.organiser_id`.
 
 ### Order of checks and status codes

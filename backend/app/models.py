@@ -81,6 +81,9 @@ class Event(db.Model):
     # A single column, so an event can never have two current main coordinators.
     coordinator_id = db.Column(db.Integer, db.ForeignKey("users.id"))
     coordinator_assigned_at = db.Column(db.DateTime)
+    # Who made the current assignment (SCRUM-83 A1). NULL means not recorded, e.g. the
+    # automatic assignment on submission.
+    coordinator_assigned_by_id = db.Column(db.Integer, db.ForeignKey("users.id"))
 
     # Attendee registration (SCRUM-45). The period is Singapore time, stored without a
     # time zone. NULL means not recorded, which keeps registration closed.

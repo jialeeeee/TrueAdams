@@ -19,6 +19,7 @@ from ..models import (
 )
 from ..registrations.routes import singapore_now
 from .permissions import (
+    COORDINATOR_LEAD_ROLE,
     COORDINATOR_ROLE,
     can_reassign_coordinator,
     can_view_clarifications,
@@ -519,6 +520,8 @@ def assign_coordinator(event_id: int):
 
         event.coordinator_id = coordinator.id
         event.coordinator_assigned_at = datetime.utcnow()
+        # SCRUM-83 A1: a Lead's list follows whoever made the current assignment.
+        event.coordinator_assigned_by_id = user.id
         payload = {
             "message": f"{coordinator.email} is now the coordinator for {event.title}.",
             **_assignment_payload(event),
@@ -1325,6 +1328,99 @@ def list_managed():
                 for e in events
             ],
             "message": None if events else "You have no events assigned to you yet.",
+        }
+    )
+
+
+# ---------- The events a Coordinator Lead assigned (SCRUM-83) ----------
+
+# Events still being worked on, so a Lead can supervise them (A3, open question Q2).
+SUPERVISED_ACTIVE_STATUSES = {"submitted", "under_review", "approved", "confirmed"}
+# A user ID in the coordinator filter. ASCII only: str.isdigit() also accepts "²".
+_USER_ID = re.compile(r"[0-9]+", re.ASCII)
+NO_ASSIGNED_EVENTS = "You have no active events with a coordinator you assigned."
+NO_EVENTS_FOR_COORDINATOR = "None of your active events are assigned to this coordinator."
+
+
+def _coordinator_filter():
+    """The coordinator ID to filter by, or None for every coordinator (A6)."""
+    value = request.args.get("coordinator_id", "")
+    if value == "":
+        return None
+    if not _USER_ID.fullmatch(value):
+        raise _Rejected("Choose a coordinator from the list.", 400, field="coordinator_id")
+    return int(value)
+
+
+def _supervised_events(lead):
+    """(event, coordinator) pairs for the active events whose current coordinator
+    assignment this Lead made (A1), soonest first, undated last (A5, open question Q4)."""
+    return (
+        db.session.query(Event, User)
+        .join(User, User.id == Event.coordinator_id)
+        .filter(
+            Event.coordinator_assigned_by_id == lead.id,
+            Event.status.in_(SUPERVISED_ACTIVE_STATUSES),
+        )
+        .order_by(Event.start_time.asc().nulls_last(), Event.id)
+        .all()
+    )
+
+
+def _supervised_event_payload(event, coordinator):
+    # A blank name is sent as null, so the page shows "Not recorded" (A5).
+    return {
+        "id": event.id,
+        "title": _recorded(event.title),
+        "start_time": _isoformat(event.start_time),
+        "status": event.status,
+        "coordinator": _user_summary(coordinator),
+    }
+
+
+@events_bp.get("/supervised")
+@jwt_required()
+def list_supervised():
+    """The active events a Coordinator Lead assigned, optionally for one coordinator.
+
+    The whole reply is built inside the try, so a failed load never sends part of the
+    list (AC4). Refusals carry no event or coordinator data (AC3).
+    """
+    try:
+        user = _current_user()
+        if user is None:
+            return _error("Your session is no longer valid. Please log in again.", 401)
+        if user.role != COORDINATOR_LEAD_ROLE:
+            return _error("Only Event Coordinator Leads can view the events they assigned.", 403)
+        coordinator_id = _coordinator_filter()
+
+        rows = _supervised_events(user)
+        # The filter offers every coordinator of the Lead's events, whichever is chosen.
+        coordinators = {coordinator.id: _user_summary(coordinator) for _, coordinator in rows}
+        events = [
+            _supervised_event_payload(event, coordinator)
+            for event, coordinator in rows
+            if coordinator_id in (None, coordinator.id)
+        ]
+    except _Rejected as rejected:
+        return _error(rejected.message, rejected.status_code, **rejected.extra)
+    except SQLAlchemyError:
+        db.session.rollback()
+        return _error(
+            "The events you assigned could not be loaded. Please try again.", 503, retryable=True
+        )
+
+    if events:
+        message = None
+    elif coordinator_id is None:
+        message = NO_ASSIGNED_EVENTS
+    else:
+        message = NO_EVENTS_FOR_COORDINATOR
+    return jsonify(
+        {
+            "events": events,
+            "coordinators": sorted(coordinators.values(), key=lambda c: c["email"]),
+            "message": message,
         }
     )
 
