@@ -537,6 +537,15 @@ def list_booking_requests():
     except SQLAlchemyError:
         return _load_failed("Venue requests could not be loaded. Please try again.")
 
+    try:
+        # SCRUM-41 A2: Venue Staff see each request's conflicts before approving it.
+        for payload, booking in zip(payloads, bookings):
+            payload["conflicts"] = _approval_conflicts(booking)
+    except SQLAlchemyError:
+        # Never show a request as clear when its conflicts were not checked (A5).
+        return _load_failed(
+            "Availability could not be verified for the venue requests. Please try again.")
+
     return jsonify({
         "bookings": payloads,
         "message": None if payloads else "There are no pending venue requests.",
@@ -560,7 +569,10 @@ def _conflict(kind, record, **details):
 
 
 def _approval_conflicts(booking):
-    """Every prohibited conflict for approving `booking`, in time order (A2, A3)."""
+    """Every prohibited conflict for approving `booking` now, in time order (A2, A3).
+
+    Venue Staff also see these in the pending list before approving (SCRUM-41 A2).
+    """
     period = ([booking.venue_id], booking.start_time, booking.end_time)
     conflicts = []
     for other in scheduling.blocking_bookings(*period):
@@ -575,6 +587,30 @@ def _approval_conflicts(booking):
         conflicts.append(_conflict(
             "event_booking", existing, venue={"id": venue.id, "name": venue.name}))
     return sorted(conflicts, key=lambda conflict: conflict["start"])
+
+
+def _clash(venue, conflicts):
+    """The refusal for a booking that clashes with other arrangements at `venue`."""
+    return _Rejected(
+        "This booking can't be approved because it clashes with other arrangements "
+        f"at {venue.name}.", 409, reason="conflict", conflicts=conflicts)
+
+
+def _locked_venue_and_conflicts(booking):
+    """Lock the booking's venue, then find its conflicts (A7; SCRUM-41 A5).
+
+    Without a completed check the booking is never confirmed, so a database failure
+    here is reported as availability that could not be verified.
+    """
+    try:
+        venue = db.session.get(Venue, booking.venue_id, with_for_update=True)
+        return venue, _approval_conflicts(booking)
+    except SQLAlchemyError:
+        db.session.rollback()
+        raise _Rejected(
+            "The venue's availability could not be verified, so the booking was not "
+            "approved. It is still pending. Please try again.", 503, retryable=True,
+        ) from None
 
 
 def _queue_approval_email(to_address, title, venue_name, message, event_id):
@@ -621,17 +657,22 @@ def approve_booking(booking_id: int):
             raise _Rejected(
                 "The requested time has already started, so the booking can't be approved.",
                 409, reason="already_started")
-        venue = db.session.get(Venue, booking.venue_id, with_for_update=True)
-        conflicts = _approval_conflicts(booking)
+        venue, conflicts = _locked_venue_and_conflicts(booking)
         if conflicts:
-            raise _Rejected(
-                "This booking can't be approved because it clashes with other arrangements "
-                f"at {venue.name}.", 409, reason="conflict", conflicts=conflicts)
+            raise _clash(venue, conflicts)
 
         booking.status = CONFIRMED
         booking.decided_at = datetime.utcnow()
         booking.decided_by_id = user.id
         event.venue_id = venue.id
+        try:
+            # Written now, so the database rule is checked before anything is announced.
+            db.session.flush()
+        except IntegrityError:
+            # SCRUM-41 A4: the database rule refused it, so a clashing booking at this
+            # venue was confirmed by code that did not take the venue lock.
+            db.session.rollback()
+            raise _clash(venue, _approval_conflicts(booking)) from None
         coordinator = db.session.get(User, event.coordinator_id)
         message = (
             f'Your venue request for "{event.title}" at {venue.name} '

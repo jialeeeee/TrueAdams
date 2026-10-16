@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import JSONB, ExcludeConstraint
 
 from .extensions import db
 
@@ -102,6 +102,16 @@ class VenueBooking(db.Model):
             "event_id",
             unique=True,
             postgresql_where=db.text("status = 'pending'"),
+        ),
+        # No two confirmed bookings at one venue may overlap, whichever code saves them
+        # (SCRUM-41 A4). Periods are half-open, so touching is allowed; the venue id is
+        # a one-value range so plain GiST can compare it without an extension.
+        ExcludeConstraint(
+            (db.text("int4range(venue_id, venue_id, '[]')"), "&&"),
+            (db.text("tsrange(start_time, end_time)"), "&&"),
+            name="venue_bookings_no_overlapping_confirmed",
+            using="gist",
+            where=db.text("status = 'confirmed'"),
         ),
     )
 
