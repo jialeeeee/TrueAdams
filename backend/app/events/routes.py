@@ -19,6 +19,7 @@ from ..models import (
 )
 from ..registrations.routes import singapore_now
 from .permissions import (
+    COORDINATOR_LEAD_ROLE,
     COORDINATOR_ROLE,
     can_reassign_coordinator,
     can_view_clarifications,
@@ -519,6 +520,7 @@ def assign_coordinator(event_id: int):
 
         event.coordinator_id = coordinator.id
         event.coordinator_assigned_at = datetime.utcnow()
+        event.coordinator_assigned_by_id = user.id
         payload = {
             "message": f"{coordinator.email} is now the coordinator for {event.title}.",
             **_assignment_payload(event),
@@ -1327,6 +1329,64 @@ def list_managed():
             "message": None if events else "You have no events assigned to you yet.",
         }
     )
+
+
+# ---------- The events a Coordinator Lead assigned (SCRUM-83) ----------
+
+SUPERVISED_ACTIVE_STATUSES = {"submitted", "under_review", "approved", "confirmed"}
+
+
+@events_bp.get("/supervised")
+@jwt_required()
+def list_supervised():
+    try:
+        user = _current_user()
+        if user is None:
+            return _error("Your session is no longer valid. Please log in again.", 401)
+        if user.role != COORDINATOR_LEAD_ROLE:
+            return _error("Only Event Coordinator Leads can view the events they assigned.", 403)
+        raw = request.args.get("coordinator_id", "")
+        coordinator_id = None
+        if raw != "":
+            if not raw.isdigit():
+                return _error("Choose a coordinator from the list.", 400, field="coordinator_id")
+            coordinator_id = int(raw)
+        rows = (
+            db.session.query(Event, User)
+            .join(User, User.id == Event.coordinator_id)
+            .filter(Event.coordinator_assigned_by_id == user.id)
+            .filter(Event.status.in_(SUPERVISED_ACTIVE_STATUSES))
+            .order_by(Event.start_time.asc().nulls_last(), Event.id)
+            .all()
+        )
+        coordinators = {}
+        for event, coordinator in rows:
+            coordinators[coordinator.id] = _user_summary(coordinator)
+        items = []
+        for event, coordinator in rows:
+            if coordinator_id is None or coordinator.id == coordinator_id:
+                items.append({
+                    "id": event.id, "title": _recorded(event.title),
+                    "start_time": _isoformat(event.start_time), "status": event.status,
+                    "coordinator": _user_summary(coordinator),
+                })
+    except SQLAlchemyError:
+        db.session.rollback()
+        return _error(
+            "The events you assigned could not be loaded. Please try again.", 503, retryable=True
+        )
+
+    if items:
+        message = None
+    elif coordinator_id is not None:
+        message = "None of your active events are assigned to this coordinator."
+    else:
+        message = "You have no active events with a coordinator you assigned."
+    return jsonify({
+        "events": items,
+        "coordinators": sorted(coordinators.values(), key=lambda c: c["email"]),
+        "message": message,
+    })
 
 
 # ---------- View event details (SCRUM-74) ----------

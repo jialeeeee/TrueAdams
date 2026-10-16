@@ -1,6 +1,8 @@
 """Small event permission rules, independent of Flask and database access."""
 
 COORDINATOR_ROLE = "coordinator"
+# Week 7 change 5: oversees coordinators and assigns events to them (SCRUM-83 A2).
+COORDINATOR_LEAD_ROLE = "coordinator_lead"
 ORGANISER_ROLE = "organiser"
 # Existing coordinator-information visibility; SCRUM-27 does not invent staff scope.
 COORDINATOR_VIEWER_ROLES = {"admin", COORDINATOR_ROLE, "venue_staff", "tech_staff"}
