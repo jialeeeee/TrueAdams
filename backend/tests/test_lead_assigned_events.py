@@ -51,7 +51,8 @@ EVENTS = {
 
 LENAS_ACTIVE_EVENTS = ["S3", "S2", "S4", "S1", "S5"]
 NON_LEADS = ["admin", "alice", "dana", "farah", "gus", "hana"]
-INVALID_FILTERS = ["abc", "1.5", "-3", "true"]
+# "²" passes str.isdigit() but is not a number int() accepts.
+INVALID_FILTERS = ["abc", "1.5", "-3", "true", "²"]
 
 
 class LeadAssignedEventsTestCase(AppTestCase):
