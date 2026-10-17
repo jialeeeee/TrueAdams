@@ -3,6 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import apiClient from "../api/client.js";
 
 // SCRUM-36: view a venue's availability for a date or date range.
+// SCRUM-64: time outside operating hours is unavailable, and each unavailable slot says why.
 // Talks to GET /api/venues/<id>/availability (backend/app/venues/routes.py).
 
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];

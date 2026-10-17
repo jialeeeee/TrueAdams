@@ -16,9 +16,12 @@ BLOCKING_BOOKING_STATUS = "confirmed"
 AVAILABLE = "available"
 UNAVAILABLE = "unavailable"
 HOURS_NOT_RECORDED = "hours_not_recorded"
-# Why time is unavailable, in the order a slot lists them (SCRUM-64 A1).
-CAUSES = ["booking", "block", "outside_operating_hours"]
+# Why time is unavailable, in the order a slot lists them (SCRUM-64 A1). Bookings and
+# blocks are named as on the calendar's list of periods.
+BOOKING = "booking"
+BLOCK = "block"
 OUTSIDE_HOURS = "outside_operating_hours"
+CAUSES = [BOOKING, BLOCK, OUTSIDE_HOURS]
 
 DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 # One "Mon-Fri 09:00-18:00" or "Sat 10:00-14:00" part of an operating-hours text.

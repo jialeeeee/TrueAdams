@@ -184,8 +184,9 @@ def _availability(venue, first, last):
     start = datetime.combine(first, datetime.min.time())
     end = datetime.combine(last + timedelta(days=1), datetime.min.time())
 
-    records = [("booking", b) for b in scheduling.blocking_bookings([venue.id], start, end)]
-    records += [("block", b) for b in scheduling.blocks([venue.id], start, end)]
+    records = [(scheduling.BOOKING, b)
+               for b in scheduling.blocking_bookings([venue.id], start, end)]
+    records += [(scheduling.BLOCK, b) for b in scheduling.blocks([venue.id], start, end)]
     records.sort(key=lambda r: (r[1].start_time, r[1].end_time, r[0], r[1].id))
 
     hours = scheduling.parse_operating_hours(venue.operating_hours)
