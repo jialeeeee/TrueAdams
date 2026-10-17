@@ -2,7 +2,13 @@
 
 **User story:** As an authorised internal user, I want to view a venue's availability for a selected period so that I can identify possible event times.
 
-**Created:** 27 Sep 2026 · **Status of all cases:** Not run (feature not yet built)
+**Created:** 27 Sep 2026 · **Status of all cases:** Automated in `backend/tests/test_scrum36_venue_availability.py` and `frontend/src/pages/VenueAvailabilityPage.test.jsx`; TC-36-10 and TC-36-21 are skipped until Q5 and Q4 are answered
+
+**Changed by SCRUM-64 (17 Oct 2026):** the availability rules were clarified in [SCRUM-64](SCRUM-64-venue-availability-rules.md):
+- time outside operating hours is now shown as **unavailable**;
+- each unavailable slot names its cause (confirmed booking, recorded block, outside operating hours), and slots split where the cause changes.
+
+Assumption A3, the expected calendar and the expected results of TC-36-12, 14–20 below are updated to match. The test case IDs are unchanged.
 
 ## Acceptance criteria
 
@@ -21,14 +27,17 @@ These are the team's current reading of the story. Each one is tied to an open q
 
 - **A1 — Who may view:** coordinators and venue staff, the same roles as View Venue Details (SCRUM-35). Organisers, attendees and technical support staff may not. *(Q3)*
 - **A2 — Incompatible:** any time overlap with a *confirmed* booking or a recorded block at the same venue. Pending, rejected and cancelled bookings do not make time unavailable and are not shown. *(Q2)*
-- **A3 — Scheduling rules:** time is *available* when it falls within the venue's operating hours and is not covered by a confirmed booking or block. Time outside operating hours is shown as *outside operating hours*: it is neither booked nor available. *(Q1)*
+- **A3 — Scheduling rules (replaced by SCRUM-64 A1–A3):**
+  - Time is *available* when it falls within the venue's operating hours and is not covered by a confirmed booking or block.
+  - Any other time is *unavailable*, and says why: confirmed booking, recorded block and/or outside operating hours.
+  - Until SCRUM-64, time outside operating hours was its own status, neither booked nor available. *(Q1)*
 - **A4 — Touching periods:** a period runs from its start up to, but not including, its end. A record ending at 16:00 and another starting at 16:00 do not overlap, and a record ending at exactly 00:00 does not appear on the following day.
 - **A5 — Time zone:** all dates and times are Singapore time (SGT, UTC+8).
 - **A6 — Display:** each displayed period shows its type (confirmed booking or recorded block), its full start date and time, and its full end date and time, even if it extends beyond the selected range.
 
 ## Seed data (AV-SEED)
 
-Reset the database to this data before **every** test case, so that one test cannot affect the next. Users and venues reuse `backend/tests/fixtures/venue_data.py`.
+Reset the database to this data before **every** test case, so that one test cannot affect the next. Users and venues come from `backend/tests/seed_data.py`.
 
 **Users**
 
@@ -65,13 +74,16 @@ Reset the database to this data before **every** test case, so that one test can
 
 | Time | Shown as |
 |------|----------|
-| 00:00–08:00 | Outside operating hours |
+| 00:00–08:00 | Unavailable — outside operating hours |
 | 08:00–10:00 | Available |
-| 10:00–13:00 | Unavailable (B1 10:00–12:00, K3 11:00–13:00) |
+| 10:00–11:00 | Unavailable — confirmed booking (B1) |
+| 11:00–12:00 | Unavailable — confirmed booking, recorded block (B1, K3) |
+| 12:00–13:00 | Unavailable — recorded block (K3) |
 | 13:00–14:00 | Available |
-| 14:00–17:00 | Unavailable (B2 14:00–16:00, K1 16:00–17:00) |
+| 14:00–16:00 | Unavailable — confirmed booking (B2) |
+| 16:00–17:00 | Unavailable — recorded block (K1) |
 | 17:00–23:00 | Available (pending B3 and cancelled B4 do not block) |
-| 23:00–24:00 | Outside operating hours |
+| 23:00–24:00 | Unavailable — outside operating hours |
 
 ---
 
@@ -161,7 +173,7 @@ Reset the database to this data before **every** test case, so that one test can
 - **Preconditions:** AV-SEED loaded, plus these Aurora Ballroom blocks: K4 Wed 14 Oct 22:00 – Thu 15 Oct 00:00; K5 Wed 14 Oct 23:00 – Thu 15 Oct 00:01; K6 Fri 16 Oct 00:00 – 01:00; K7 Thu 15 Oct 23:59 – Fri 16 Oct 00:30. Logged in as `coordinator`.
 - **Steps:** View Aurora Ballroom's availability for Thu 15 Oct 2026 only.
 - **Test data:** Venue = Aurora Ballroom; Date = 2026-10-15.
-- **Expected result:** K4 (ends exactly at the start of the day) and K6 (starts exactly at the end of the day) are **not** listed. K5 (one minute into the day) and K7 (one minute before the day ends) **are** listed, with their full start and end dates and times.
+- **Expected result:** K4 (ends exactly at the start of the day) and K6 (starts exactly at the end of the day) are **not** listed. K5 (one minute into the day) and K7 (one minute before the day ends) **are** listed, with their full start and end dates and times. 00:01 onward is unavailable (outside operating hours; SCRUM-64).
 
 ## AC3 — Incompatible bookings and blocks are never shown as available
 
@@ -177,28 +189,28 @@ Reset the database to this data before **every** test case, so that one test can
 - **Preconditions:** AV-SEED loaded; logged in as `coordinator`.
 - **Steps:** View Aurora Ballroom's availability for 15 Oct 2026.
 - **Test data:** B1 (10:00–12:00) overlaps K3 (11:00–13:00).
-- **Expected result:** Both B1 and K3 are listed with their own times. The whole of 10:00–13:00 is unavailable, and no part of 11:00–12:00 is listed twice or shown as available. Availability resumes at exactly 13:00.
+- **Expected result:** Both B1 and K3 are listed with their own times. The whole of 10:00–13:00 is unavailable: 10:00–11:00 for the booking, 11:00–12:00 for both, and 12:00–13:00 for the block (SCRUM-64). No part of it is shown as available. Availability resumes at exactly 13:00.
 
 **TC-36-15 · Back-to-back records leave no gap**
 - **Traces to:** AC3 · **Type:** Boundary
 - **Preconditions:** AV-SEED loaded; logged in as `coordinator`.
 - **Steps:** View Aurora Ballroom's availability for 15 Oct 2026.
 - **Test data:** B2 ends at 16:00; K1 starts at 16:00.
-- **Expected result:** 14:00–17:00 is one continuous unavailable stretch, with no zero-length "available" slot at 16:00. 13:00–14:00 before it and 17:00 onward after it are available.
+- **Expected result:** 14:00–17:00 is unavailable with no gap: 14:00–16:00 for the booking, then 16:00–17:00 for the block (SCRUM-64). There is no zero-length slot at 16:00. 13:00–14:00 before it and 17:00 onward after it are available.
 
 **TC-36-16 · Another venue's bookings do not affect this venue**
 - **Traces to:** AC3 · **Type:** Negative
 - **Preconditions:** AV-SEED loaded; logged in as `coordinator`.
 - **Steps:** 1. View Civic Hall's availability for 15 Oct 2026. 2. View Aurora Ballroom's availability for 15 Oct 2026.
 - **Test data:** B6 books Civic Hall 09:00–18:00.
-- **Expected result:** (1) Civic Hall lists B6, and 09:00–18:00 is unavailable with no available time that day. (2) Aurora Ballroom matches TC-36-01; B6 does not appear.
+- **Expected result:** (1) Civic Hall lists B6. 09:00–18:00 is unavailable (booking), the rest of the day is unavailable (outside operating hours), and no time is available. (2) Aurora Ballroom matches TC-36-01; B6 does not appear.
 
 **TC-36-17 · Venue with no bookings or blocks**
 - **Traces to:** AC3, AC4 · **Type:** Happy path (empty state)
 - **Preconditions:** AV-SEED loaded (Aurora Ballroom has nothing on Mon 19 Oct); logged in as `coordinator`.
 - **Steps:** View Aurora Ballroom's availability for 19 Oct 2026.
 - **Test data:** Venue = Aurora Ballroom; Date = 2026-10-19.
-- **Expected result:** 08:00–23:00 is available, and the calendar says no bookings or blocks are recorded for the period. This is not shown as an error.
+- **Expected result:** 08:00–23:00 is available; before and after is unavailable (outside operating hours). The calendar says no bookings or blocks are recorded for the period. This is not shown as an error.
 
 ## AC4 — Time outside bookings and blocks is assessed separately
 
@@ -207,21 +219,21 @@ Reset the database to this data before **every** test case, so that one test can
 - **Preconditions:** AV-SEED loaded, plus B8: Civic Hall, confirmed booking, Wed 14 Oct 12:00–13:00. Logged in as `coordinator`.
 - **Steps:** View Civic Hall's availability for 14 Oct 2026.
 - **Test data:** Venue = Civic Hall; Date = 2026-10-14.
-- **Expected result:** 09:00–12:00 and 13:00–18:00 are available; 12:00–13:00 is unavailable (B8).
+- **Expected result:** 09:00–12:00 and 13:00–18:00 are available; 12:00–13:00 is unavailable (booking B8); before 09:00 and from 18:00 is unavailable (outside operating hours).
 
-**TC-36-19 · Closed day is shown as outside operating hours, not as booked**
+**TC-36-19 · Closed day is shown as unavailable because the venue is closed, not as booked**
 - **Traces to:** AC4 · **Type:** Negative (business rule) · **Depends on:** Q1
 - **Preconditions:** AV-SEED loaded; logged in as `coordinator`.
 - **Steps:** View Civic Hall's availability for Sat 17 Oct 2026.
 - **Test data:** Civic Hall operating hours = Mon-Fri 09:00-18:00.
-- **Expected result:** The whole day is shown as outside operating hours. No time is shown as available, and no booking or block is shown.
+- **Expected result:** The whole day is shown as unavailable (outside operating hours; SCRUM-64). No time is shown as available, and no booking or block is shown.
 
 **TC-36-20 · Operating-hours edges**
 - **Traces to:** AC4 · **Type:** Boundary · **Depends on:** Q1
 - **Preconditions:** AV-SEED loaded; logged in as `coordinator`.
 - **Steps:** View Aurora Ballroom's availability for 19 Oct 2026.
 - **Test data:** Aurora Ballroom operating hours = 08:00-23:00.
-- **Expected result:** Available time begins at exactly 08:00 (07:59 is outside operating hours) and ends at exactly 23:00 (23:00 onward is outside operating hours).
+- **Expected result:** Available time begins at exactly 08:00 (07:59 is unavailable, outside operating hours) and ends at exactly 23:00 (23:00 onward is unavailable, outside operating hours).
 
 **TC-36-21 · Venue with no recorded operating hours**
 - **Traces to:** AC4, AC6 · **Type:** Negative · **Depends on:** Q4 (**Blocked** until answered)

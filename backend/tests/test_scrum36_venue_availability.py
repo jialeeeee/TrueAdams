@@ -26,17 +26,21 @@ Endpoint (JWT required, else 401; caller's role not coordinator/venue_staff -> 4
                          "start": ISO datetime, "end": ISO datetime,
                          "reason": str | null}, ...],
             "days": [{"date": "YYYY-MM-DD",
-                      "slots": [{"start": ISO, "end": ISO, "status": str}, ...]}, ...],
+                      "slots": [{"start": ISO, "end": ISO, "status": str,
+                                 "causes": [str, ...]}, ...]}, ...],
             "message": str | null,
         }
         `periods` holds every confirmed booking and every block overlapping the range,
         with its full start and end (not cut off at the range edges), sorted by start.
         Each day's `slots` cover 00:00 to the next 00:00 with no gaps. Neighbouring
-        slots with the same status are merged. Status is one of:
-            "unavailable"              covered by a confirmed booking or block (wins)
-            "available"                within operating hours
-            "outside_operating_hours"  outside operating hours
-            "hours_not_recorded"       the venue has no usable operating hours
+        slots with the same status and causes are merged. Status is one of:
+            "unavailable"          covered by a confirmed booking or block, or outside
+                                   operating hours
+            "available"            within operating hours and not covered
+            "hours_not_recorded"   not covered, and the venue has no usable operating hours
+        `causes` says why a slot is unavailable, in this order: "booking", "block",
+        "outside_operating_hours". It is empty for every other status. (Changed by
+        SCRUM-64; see docs/test-cases/SCRUM-64-venue-availability-rules.md.)
         `message` is the empty-state text when no periods overlap the range.
     503 {"error": str, "retryable": true} if the database fails, even partly.
 
@@ -54,20 +58,38 @@ from tests.scheduling import SchedulingTestCase
 
 AVAILABLE = "available"
 UNAVAILABLE = "unavailable"
-OUTSIDE = "outside_operating_hours"
 HOURS_NOT_RECORDED = "hours_not_recorded"
+# Why a slot is unavailable (SCRUM-64 A1).
+BOOKING = "booking"
+BLOCK = "block"
+OUTSIDE = "outside_operating_hours"
 
 VIEWER_ROLES = ("coordinator", "venue_staff")
 
-# "Expected calendar for Aurora Ballroom on Thu 15 Oct" in the test case document.
+
+def free(start, end):
+    """An available slot, as day_slots() reads it."""
+    return (start, end, AVAILABLE, ())
+
+
+def taken(start, end, *causes):
+    """An unavailable slot and why, as day_slots() reads it."""
+    return (start, end, UNAVAILABLE, causes)
+
+
+# "Expected calendar for Aurora Ballroom on Thu 15 Oct" in the SCRUM-64 test cases,
+# which replaced SCRUM-36's.
 AURORA_15_OCT = [
-    ("00:00", "08:00", OUTSIDE),
-    ("08:00", "10:00", AVAILABLE),
-    ("10:00", "13:00", UNAVAILABLE),  # B1 10:00-12:00 + K3 11:00-13:00
-    ("13:00", "14:00", AVAILABLE),
-    ("14:00", "17:00", UNAVAILABLE),  # B2 14:00-16:00 + K1 16:00-17:00
-    ("17:00", "23:00", AVAILABLE),    # pending B3 and cancelled B4 do not block
-    ("23:00", "24:00", OUTSIDE),
+    taken("00:00", "08:00", OUTSIDE),
+    free("08:00", "10:00"),
+    taken("10:00", "11:00", BOOKING),         # B1 10:00-12:00
+    taken("11:00", "12:00", BOOKING, BLOCK),  # B1 and K3 11:00-13:00
+    taken("12:00", "13:00", BLOCK),           # K3
+    free("13:00", "14:00"),
+    taken("14:00", "16:00", BOOKING),         # B2 14:00-16:00
+    taken("16:00", "17:00", BLOCK),           # K1 16:00-17:00
+    free("17:00", "23:00"),                   # pending B3 and cancelled B4 do not block
+    taken("23:00", "24:00", OUTSIDE),
 ]
 
 
@@ -102,7 +124,7 @@ class AvailabilityTestCase(SchedulingTestCase):
     # ---------- Reading the calendar ----------
 
     def day_slots(self, body, date):
-        """A day's slots as (HH:MM, HH:MM, status), with the next midnight as 24:00."""
+        """A day's slots as (HH:MM, HH:MM, status, causes), with the next midnight as 24:00."""
         day = next(d for d in body["days"] if d["date"] == date)
         day_date = datetime.fromisoformat(date).date()
 
@@ -110,7 +132,9 @@ class AvailabilityTestCase(SchedulingTestCase):
             moment = datetime.fromisoformat(value)
             return "24:00" if moment.date() > day_date else moment.strftime("%H:%M")
 
-        return [(clock(s["start"]), clock(s["end"]), s["status"]) for s in day["slots"]]
+        return [(clock(s["start"]), clock(s["end"]), s["status"],
+                 tuple(s["causes"]) if "causes" in s else "no causes")
+                for s in day["slots"]]
 
     def status_at(self, body, when):
         moment = datetime.fromisoformat(when)
@@ -300,7 +324,7 @@ class PeriodDisplayTests(AvailabilityTestCase):
         self.assertEqual(self.period(body, "K5")["start"], "2026-10-14T23:00:00")
         self.assertEqual(self.period(body, "K7")["end"], "2026-10-16T00:30:00")
         self.assertEqual(self.status_at(body, "2026-10-15T00:00"), UNAVAILABLE)
-        self.assertEqual(self.status_at(body, "2026-10-15T00:01"), OUTSIDE)
+        self.assertEqual(self.status_at(body, "2026-10-15T00:01"), UNAVAILABLE)
         self.assertEqual(self.status_at(body, "2026-10-15T23:59"), UNAVAILABLE)
 
 
@@ -324,7 +348,10 @@ class IncompatiblePeriodTests(AvailabilityTestCase):
 
         self.assertIn("B1", self.listed(body))
         self.assertIn("K3", self.listed(body))
-        self.assertIn(("10:00", "13:00", UNAVAILABLE), self.day_slots(body, "2026-10-15"))
+        slots = self.day_slots(body, "2026-10-15")
+        self.assertIn(taken("10:00", "11:00", BOOKING), slots)
+        self.assertIn(taken("11:00", "12:00", BOOKING, BLOCK), slots)
+        self.assertIn(taken("12:00", "13:00", BLOCK), slots)
         for when in ("10:00", "11:00", "11:59", "12:59"):
             with self.subTest(time=when):
                 self.assertEqual(self.status_at(body, f"2026-10-15T{when}"), UNAVAILABLE)
@@ -334,10 +361,11 @@ class IncompatiblePeriodTests(AvailabilityTestCase):
     def test_back_to_back_records_leave_no_gap(self):
         slots = self.day_slots(self.availability(), "2026-10-15")
 
-        self.assertIn(("14:00", "17:00", UNAVAILABLE), slots)
-        self.assertTrue(all(start < end for start, end, _ in slots), "zero-length slot found")
-        self.assertIn(("13:00", "14:00", AVAILABLE), slots)
-        self.assertIn(("17:00", "23:00", AVAILABLE), slots)
+        self.assertIn(taken("14:00", "16:00", BOOKING), slots)
+        self.assertIn(taken("16:00", "17:00", BLOCK), slots)
+        self.assertTrue(all(start < end for start, end, *_ in slots), "zero-length slot found")
+        self.assertIn(free("13:00", "14:00"), slots)
+        self.assertIn(free("17:00", "23:00"), slots)
 
     # TC-36-15 · AC3 — slots cover the whole day with no gaps or overlaps.
     def test_slots_cover_the_whole_day_without_gaps(self):
@@ -347,7 +375,7 @@ class IncompatiblePeriodTests(AvailabilityTestCase):
         self.assertEqual(slots[-1][1], "24:00")
         for earlier, later in zip(slots, slots[1:]):
             self.assertEqual(earlier[1], later[0])
-            self.assertNotEqual(earlier[2], later[2], "neighbouring slots should be merged")
+            self.assertNotEqual(earlier[2:], later[2:], "neighbouring slots should be merged")
 
     # TC-36-16 · AC3 — another venue's bookings do not affect this venue.
     def test_other_venues_bookings_do_not_affect_this_venue(self):
@@ -357,8 +385,8 @@ class IncompatiblePeriodTests(AvailabilityTestCase):
         self.assertEqual(self.listed(civic), ["B6"])
         self.assertEqual(
             self.day_slots(civic, "2026-10-15"),
-            [("00:00", "09:00", OUTSIDE), ("09:00", "18:00", UNAVAILABLE),
-             ("18:00", "24:00", OUTSIDE)],
+            [taken("00:00", "09:00", OUTSIDE), taken("09:00", "18:00", BOOKING),
+             taken("18:00", "24:00", OUTSIDE)],
         )
         self.assertNotIn("B6", self.listed(aurora))
         self.assertEqual(self.day_slots(aurora, "2026-10-15"), AURORA_15_OCT)
@@ -370,8 +398,8 @@ class IncompatiblePeriodTests(AvailabilityTestCase):
         self.assertEqual(body["periods"], [])
         self.assertEqual(
             self.day_slots(body, "2026-10-19"),
-            [("00:00", "08:00", OUTSIDE), ("08:00", "23:00", AVAILABLE),
-             ("23:00", "24:00", OUTSIDE)],
+            [taken("00:00", "08:00", OUTSIDE), free("08:00", "23:00"),
+             taken("23:00", "24:00", OUTSIDE)],
         )
         self.assertIsInstance(body["message"], str)
         self.assertTrue(body["message"].strip())
@@ -393,26 +421,27 @@ class SchedulingRuleTests(AvailabilityTestCase):
 
         self.assertEqual(
             self.day_slots(body, "2026-10-14"),
-            [("00:00", "09:00", OUTSIDE), ("09:00", "12:00", AVAILABLE),
-             ("12:00", "13:00", UNAVAILABLE), ("13:00", "18:00", AVAILABLE),
-             ("18:00", "24:00", OUTSIDE)],
+            [taken("00:00", "09:00", OUTSIDE), free("09:00", "12:00"),
+             taken("12:00", "13:00", BOOKING), free("13:00", "18:00"),
+             taken("18:00", "24:00", OUTSIDE)],
         )
 
-    # TC-36-19 · AC4 (A3/Q1) — a closed day is outside operating hours, not booked.
+    # TC-36-19 · AC4 (A3/Q1) — a closed day is unavailable as outside operating hours
+    # (SCRUM-64 AC2), with nothing booked.
     def test_closed_day_is_outside_operating_hours(self):
         body = self.availability(venue="recorded_as_none", start="2026-10-17")
 
         self.assertEqual(body["periods"], [])
-        self.assertEqual(self.day_slots(body, "2026-10-17"), [("00:00", "24:00", OUTSIDE)])
+        self.assertEqual(self.day_slots(body, "2026-10-17"), [taken("00:00", "24:00", OUTSIDE)])
 
     # TC-36-20 · AC4 (boundary, A3/Q1) — operating-hours edges.
     def test_operating_hours_edges(self):
         body = self.availability(start="2026-10-19")
 
-        self.assertEqual(self.status_at(body, "2026-10-19T07:59"), OUTSIDE)
+        self.assertEqual(self.status_at(body, "2026-10-19T07:59"), UNAVAILABLE)
         self.assertEqual(self.status_at(body, "2026-10-19T08:00"), AVAILABLE)
         self.assertEqual(self.status_at(body, "2026-10-19T22:59"), AVAILABLE)
-        self.assertEqual(self.status_at(body, "2026-10-19T23:00"), OUTSIDE)
+        self.assertEqual(self.status_at(body, "2026-10-19T23:00"), UNAVAILABLE)
 
     # TC-36-21 · AC4, AC6 — a venue with no recorded operating hours (proposed behaviour).
     @unittest.skip("Blocked: awaiting the customer's answer to Q4 (unrecorded operating hours)")
@@ -420,7 +449,7 @@ class SchedulingRuleTests(AvailabilityTestCase):
         body = self.availability(venue="partially_recorded")
 
         self.assertEqual(self.day_slots(body, "2026-10-15"),
-                         [("00:00", "24:00", HOURS_NOT_RECORDED)])
+                         [("00:00", "24:00", HOURS_NOT_RECORDED, ())])
 
 
 # ---------- AC5: a refreshed calendar reflects saved changes ----------
@@ -455,7 +484,7 @@ class RefreshTests(AvailabilityTestCase):
         body = self.availability()
 
         self.assertNotIn("B2", self.listed(body))
-        self.assertIn(("13:00", "16:00", AVAILABLE), self.day_slots(body, "2026-10-15"))
+        self.assertIn(free("13:00", "16:00"), self.day_slots(body, "2026-10-15"))
         self.assertEqual(self.status_at(body, "2026-10-15T16:00"), UNAVAILABLE)  # K1
 
     # TC-36-24 · AC5 — an edited block moves after refresh.

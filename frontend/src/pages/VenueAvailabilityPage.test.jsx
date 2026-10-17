@@ -5,8 +5,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import apiClient from "../api/client.js";
 import VenueAvailabilityPage from "./VenueAvailabilityPage.jsx";
 
-// Frontend parts of the cases in docs/test-cases/SCRUM-36-venue-availability.md.
-// The API itself is covered by backend/tests/test_scrum36_venue_availability.py;
+// Frontend parts of the cases in docs/test-cases/SCRUM-36-venue-availability.md and
+// docs/test-cases/SCRUM-64-venue-availability-rules.md. The API itself is covered by
+// backend/tests/test_scrum36_venue_availability.py and test_venue_availability_rules.py;
 // these check what the user sees. Responses mirror that API's contract.
 
 vi.mock("../api/client.js", () => ({ default: { get: vi.fn() } }));
@@ -21,11 +22,18 @@ const VENUES = {
   },
 };
 
-const slot = (start, end, status, date = "2026-10-15") => ({
+// SCRUM-64: `causes` says why an unavailable slot is unavailable; it is empty otherwise.
+const nextDay = (date) => {
+  const [year, month, day] = date.split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1, day + 1)).toISOString().slice(0, 10);
+};
+const slot = (start, end, status, { causes = [], date = "2026-10-15" } = {}) => ({
   start: `${date}T${start}:00`,
-  end: end === "24:00" ? "2026-10-16T00:00:00" : `${date}T${end}:00`,
+  end: end === "24:00" ? `${nextDay(date)}T00:00:00` : `${date}T${end}:00`,
   status,
+  causes,
 });
+const taken = (start, end, causes, date) => slot(start, end, "unavailable", { causes, date });
 
 // The "Expected calendar for Aurora Ballroom on Thu 15 Oct" from the test cases.
 const AURORA_15_OCT = {
@@ -40,13 +48,16 @@ const AURORA_15_OCT = {
     days: [{
       date: "2026-10-15",
       slots: [
-        slot("00:00", "08:00", "outside_operating_hours"),
+        taken("00:00", "08:00", ["outside_operating_hours"]),
         slot("08:00", "10:00", "available"),
-        slot("10:00", "13:00", "unavailable"),
+        taken("10:00", "11:00", ["booking"]),
+        taken("11:00", "12:00", ["booking", "block"]),
+        taken("12:00", "13:00", ["block"]),
         slot("13:00", "14:00", "available"),
-        slot("14:00", "17:00", "unavailable"),
+        taken("14:00", "16:00", ["booking"]),
+        taken("16:00", "17:00", ["block"]),
         slot("17:00", "23:00", "available"),
-        slot("23:00", "24:00", "outside_operating_hours"),
+        taken("23:00", "24:00", ["outside_operating_hours"]),
       ],
     }],
     message: null,
@@ -107,14 +118,18 @@ describe("VenueAvailabilityPage", () => {
       "Recorded block: Thu 15 Oct 2026, 16:00 to Thu 15 Oct 2026, 17:00 (Floor polishing)",
     ]);
     const day = within(screen.getByRole("region", { name: "Thu 15 Oct 2026" }));
+    // SCRUM-64 TC-64-16: each unavailable slot says why (AC2, AC4).
     expect(day.getAllByRole("listitem").map((li) => li.textContent)).toEqual([
-      "00:00–08:00 Outside operating hours",
+      "00:00–08:00 Unavailable — outside operating hours",
       "08:00–10:00 Available",
-      "10:00–13:00 Unavailable",
+      "10:00–11:00 Unavailable — confirmed booking",
+      "11:00–12:00 Unavailable — confirmed booking, recorded block",
+      "12:00–13:00 Unavailable — recorded block",
       "13:00–14:00 Available",
-      "14:00–17:00 Unavailable",
+      "14:00–16:00 Unavailable — confirmed booking",
+      "16:00–17:00 Unavailable — recorded block",
       "17:00–23:00 Available",
-      "23:00–24:00 Outside operating hours",
+      "23:00–24:00 Unavailable — outside operating hours",
     ]);
   });
 
@@ -162,7 +177,7 @@ describe("VenueAvailabilityPage", () => {
     vi.mocked(apiClient.get).mockResolvedValueOnce({
       data: {
         venue_id: 1, from: "2026-10-19", to: "2026-10-19", periods: [],
-        days: [{ date: "2026-10-19", slots: [slot("00:00", "24:00", "available", "2026-10-19")] }],
+        days: [{ date: "2026-10-19", slots: [slot("00:00", "24:00", "available", { date: "2026-10-19" })] }],
         message: "No bookings or blocks are recorded for this period.",
       },
     });
@@ -251,5 +266,61 @@ describe("VenueAvailabilityPage", () => {
 
     expect(await screen.findByText(/Operating hours not recorded/)).toBeTruthy();
     expect(screen.queryByText(/Available/)).toBeNull();
+  });
+});
+
+// SCRUM-64: the calendar follows clear availability rules. Frontend case TC-64-16 in
+// docs/test-cases/SCRUM-64-venue-availability-rules.md (also checked by the TC-36-01
+// test above); the API contract mirrors backend/tests/test_venue_availability_rules.py.
+describe("SCRUM-64 availability rules", () => {
+  // TC-64-16 · AC2, AC4 — a record running outside operating hours gives both reasons.
+  it("shows why each unavailable slot is unavailable", async () => {
+    vi.mocked(apiClient.get).mockResolvedValueOnce({
+      data: {
+        venue_id: 1, from: "2026-10-16", to: "2026-10-17",
+        periods: [
+          { type: "block", id: 22, start: "2026-10-16T20:00:00", end: "2026-10-17T12:00:00", reason: "Electrical works" },
+        ],
+        days: [
+          {
+            date: "2026-10-16",
+            slots: [
+              taken("00:00", "08:00", ["outside_operating_hours"], "2026-10-16"),
+              slot("08:00", "20:00", "available", { date: "2026-10-16" }),
+              taken("20:00", "23:00", ["block"], "2026-10-16"),
+              taken("23:00", "24:00", ["block", "outside_operating_hours"], "2026-10-16"),
+            ],
+          },
+          {
+            date: "2026-10-17",
+            slots: [
+              taken("00:00", "08:00", ["block", "outside_operating_hours"], "2026-10-17"),
+              taken("08:00", "12:00", ["block"], "2026-10-17"),
+              slot("12:00", "23:00", "available", { date: "2026-10-17" }),
+              taken("23:00", "24:00", ["outside_operating_hours"], "2026-10-17"),
+            ],
+          },
+        ],
+        message: null,
+      },
+    });
+    const user = await renderPage();
+
+    await view(user, { from: "2026-10-16", to: "2026-10-17" });
+
+    const friday = within(await screen.findByRole("region", { name: "Fri 16 Oct 2026" }));
+    expect(friday.getAllByRole("listitem").map((li) => li.textContent)).toEqual([
+      "00:00–08:00 Unavailable — outside operating hours",
+      "08:00–20:00 Available",
+      "20:00–23:00 Unavailable — recorded block",
+      "23:00–24:00 Unavailable — recorded block, outside operating hours",
+    ]);
+    const saturday = within(screen.getByRole("region", { name: "Sat 17 Oct 2026" }));
+    expect(saturday.getAllByRole("listitem").map((li) => li.textContent)).toEqual([
+      "00:00–08:00 Unavailable — recorded block, outside operating hours",
+      "08:00–12:00 Unavailable — recorded block",
+      "12:00–23:00 Available",
+      "23:00–24:00 Unavailable — outside operating hours",
+    ]);
   });
 });

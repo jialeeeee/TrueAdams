@@ -184,12 +184,13 @@ def _availability(venue, first, last):
     start = datetime.combine(first, datetime.min.time())
     end = datetime.combine(last + timedelta(days=1), datetime.min.time())
 
-    records = [("booking", b) for b in scheduling.blocking_bookings([venue.id], start, end)]
-    records += [("block", b) for b in scheduling.blocks([venue.id], start, end)]
+    records = [(scheduling.BOOKING, b)
+               for b in scheduling.blocking_bookings([venue.id], start, end)]
+    records += [(scheduling.BLOCK, b) for b in scheduling.blocks([venue.id], start, end)]
     records.sort(key=lambda r: (r[1].start_time, r[1].end_time, r[0], r[1].id))
 
     hours = scheduling.parse_operating_hours(venue.operating_hours)
-    covered = [(r.start_time, r.end_time) for _, r in records]
+    covered = [(kind, r.start_time, r.end_time) for kind, r in records]
     days = []
     day = first
     while day <= last:
@@ -197,7 +198,7 @@ def _availability(venue, first, last):
         days.append({
             "date": day.isoformat(),
             "slots": [{"start": s["start"].isoformat(), "end": s["end"].isoformat(),
-                       "status": s["status"]} for s in slots],
+                       "status": s["status"], "causes": s["causes"]} for s in slots],
         })
         day += timedelta(days=1)
 
