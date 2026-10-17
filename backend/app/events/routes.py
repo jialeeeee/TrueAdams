@@ -933,18 +933,7 @@ def submit_draft(event_id: int):
         if event.end_time <= event.start_time:
             raise _field_error("end_time", "The end must be after the start.")
 
-        # SCRUM-28 approved initial-assignment policy: current coordinator role,
-        # lowest user ID. Manual reassignment remains a separate workflow.
-        coordinator = User.query.filter_by(role=COORDINATOR_ROLE).order_by(User.id).first()
-        if coordinator is None:
-            raise _Rejected(
-                "No coordinator is currently available. Your request is still saved "
-                "as a draft, so please try again later.",
-                503, retryable=True,
-            )
         now = datetime.utcnow()
-        event.coordinator_id = coordinator.id
-        event.coordinator_assigned_at = now
         event.status = SUBMITTED_STATUS
         event.submitted_at = now
         payload = _commit_draft_payload(event)
@@ -1593,6 +1582,37 @@ def assign_from_queue(event_id: int):
             "notification": {"in_app": True, "email_queued": queued},
         }
     )
+
+
+@events_bp.get("/queue")
+@jwt_required()
+def list_queue():
+    try:
+        user = _current_user()
+        if user is None:
+            return _error("Your session is no longer valid. Please log in again.", 401)
+        if not is_coordinator_lead(user):
+            return _error("Only Event Coordinator Leads can view the queue.", 403)
+        rows = (
+            db.session.query(Event, User)
+            .join(User, User.id == Event.organiser_id)
+            .filter(Event.status == "submitted", Event.coordinator_id.is_(None))
+            .order_by(Event.submitted_at.asc().nulls_last(), Event.id)
+            .all()
+        )
+        events = [
+            {"id": e.id, "title": _recorded(e.title), "start_time": _isoformat(e.start_time),
+             "status": e.status, "organiser": _user_summary(o),
+             "submitted_at": _isoformat(e.submitted_at)}
+            for e, o in rows
+        ]
+    except SQLAlchemyError:
+        db.session.rollback()
+        return _error("The queue could not be loaded. Please try again.", 503, retryable=True)
+    return jsonify({
+        "events": events,
+        "message": None if events else "No event requests are waiting for a coordinator.",
+    })
 
 
 # ---------- View event details (SCRUM-74) ----------
