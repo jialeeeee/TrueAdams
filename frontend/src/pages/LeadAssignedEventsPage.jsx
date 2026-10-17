@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import apiClient from "../api/client.js";
 import canRetry from "../utils/canRetry.js";
 import explain from "../utils/explain.js";
@@ -18,6 +19,7 @@ function AssignedEvent({ event }) {
       <p>{`Coordinator: ${event.coordinator.email}`}</p>
       <p>{`Proposed date: ${proposedDate(event.start_time)}`}</p>
       <p>{`Status: ${statusLabel(event.status)}`}</p>
+      <Link to={`/events/${event.id}/change-coordinator`}>Reassign coordinator</Link>
     </li>
   );
 }

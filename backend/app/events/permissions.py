@@ -33,7 +33,4 @@ def can_view_clarifications(user, event):
 
 
 def can_reassign_coordinator(user, event):
-    # SCRUM-27: initial assignment belongs to submission, never this endpoint.
-    return user is not None and event.coordinator_id is not None and (
-        is_current_coordinator(user, event) or user.role in REASSIGNMENT_ADMIN_ROLES
-    )
+    return is_coordinator_lead(user)
