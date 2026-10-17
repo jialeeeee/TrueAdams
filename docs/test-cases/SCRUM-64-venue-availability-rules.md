@@ -2,7 +2,7 @@
 
 **User story:** As an Event Coordinator, I want the venue calendar to follow clear availability rules so that I can trust which times a venue can be requested.
 
-**Created:** 17 Oct 2026 · **Status of all cases:** Not yet run · **Automated tests:** `backend/tests/test_venue_availability_rules.py`, `backend/tests/test_scrum36_venue_availability.py` (updated expectations), `frontend/src/pages/VenueAvailabilityPage.test.jsx` · **Addresses:** SCRUM-36 (venue availability calendar), whose assumption A3 and expected calendars this story replaces · **Endpoint:** `GET /api/venues/<id>/availability` (SCRUM-36)
+**Created:** 17 Oct 2026 · **Status of all cases:** Automated cases pass (17 Oct 2026, local PostgreSQL + Vitest; no schema change); TC-64-16 and 17 also to be checked manually in the browser · **Automated tests:** `backend/tests/test_venue_availability_rules.py`, `backend/tests/test_scrum36_venue_availability.py` (updated expectations), `frontend/src/pages/VenueAvailabilityPage.test.jsx` · **Addresses:** SCRUM-36 (venue availability calendar), whose assumption A3 and expected calendars this story replaces · **Endpoint:** `GET /api/venues/<id>/availability` (SCRUM-36)
 
 ## Acceptance criteria
 

@@ -11,9 +11,21 @@ const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "
 const STATUS_LABELS = {
   available: "Available",
   unavailable: "Unavailable",
-  outside_operating_hours: "Outside operating hours",
   hours_not_recorded: "Operating hours not recorded — confirm with venue staff",
 };
+
+// SCRUM-64: why a slot is unavailable, in the order the server lists them.
+const CAUSE_LABELS = {
+  booking: "confirmed booking",
+  block: "recorded block",
+  outside_operating_hours: "outside operating hours",
+};
+
+function slotLabel(slot) {
+  const label = STATUS_LABELS[slot.status];
+  if (slot.causes.length === 0) return label;
+  return `${label} — ${slot.causes.map((cause) => CAUSE_LABELS[cause]).join(", ")}`;
+}
 
 const PERIOD_LABELS = { booking: "Confirmed booking", block: "Recorded block" };
 
@@ -160,7 +172,7 @@ export default function VenueAvailabilityPage() {
                 {day.slots.map((slot) => (
                   <li key={slot.start} data-status={slot.status}>
                     {slotTime(slot.start, day.date)}–{slotTime(slot.end, day.date)}{" "}
-                    {STATUS_LABELS[slot.status]}
+                    {slotLabel(slot)}
                   </li>
                 ))}
               </ul>

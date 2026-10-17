@@ -15,8 +15,10 @@ BLOCKING_BOOKING_STATUS = "confirmed"
 
 AVAILABLE = "available"
 UNAVAILABLE = "unavailable"
-OUTSIDE_HOURS = "outside_operating_hours"
 HOURS_NOT_RECORDED = "hours_not_recorded"
+# Why time is unavailable, in the order a slot lists them (SCRUM-64 A1).
+CAUSES = ["booking", "block", "outside_operating_hours"]
+OUTSIDE_HOURS = "outside_operating_hours"
 
 DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 # One "Mon-Fri 09:00-18:00" or "Sat 10:00-14:00" part of an operating-hours text.
@@ -89,10 +91,11 @@ def within_hours(hours, start, end):
 
 
 def day_slots(day, hours, periods):
-    """Split one day into slots of consistent status, covering 00:00 to next 00:00.
+    """Split one day into slots of consistent status and causes, 00:00 to next 00:00.
 
-    `periods` are (start, end) pairs of confirmed bookings and blocks. Being covered
-    by one makes time unavailable, whatever the operating hours say.
+    `periods` are (kind, start, end) for confirmed bookings ("booking") and blocks
+    ("block"). Time is unavailable while one covers it or outside the operating
+    hours, and each slot lists every cause (SCRUM-64 A1-A3).
     """
     day_start = datetime.combine(day, time())
     day_end = day_start + timedelta(days=1)
@@ -101,29 +104,31 @@ def day_slots(day, hours, periods):
     opens = datetime.combine(day, opening[0]) if opening else None
     closes = datetime.combine(day, opening[1]) if opening else None
 
-    def base_status(moment):
-        if hours is None:
-            return HOURS_NOT_RECORDED
-        if opening and opens <= moment < closes:
-            return AVAILABLE
-        return OUTSIDE_HOURS
-
-    clipped = [(max(s, day_start), min(e, day_end)) for s, e in periods
+    clipped = [(kind, max(s, day_start), min(e, day_end)) for kind, s, e in periods
                if s < day_end and e > day_start]
 
     points = {day_start, day_end}
     if opening:
         points.update({opens, closes})
-    for start, end in clipped:
+    for _, start, end in clipped:
         points.update({start, end})
     points = sorted(points)
 
     slots = []
     for start, end in zip(points, points[1:]):
-        covered = any(s <= start < e for s, e in clipped)
-        status = UNAVAILABLE if covered else base_status(start)
-        if slots and slots[-1]["status"] == status:
+        kinds = {kind for kind, s, e in clipped if s <= start < e}
+        # Unrecorded hours can't place time outside them (SCRUM-64 A5).
+        if hours is not None and not (opening and opens <= start < closes):
+            kinds.add(OUTSIDE_HOURS)
+        causes = [cause for cause in CAUSES if cause in kinds]
+        if causes:
+            status = UNAVAILABLE
+        elif hours is None:
+            status = HOURS_NOT_RECORDED
+        else:
+            status = AVAILABLE
+        if slots and (slots[-1]["status"], slots[-1]["causes"]) == (status, causes):
             slots[-1]["end"] = end
         else:
-            slots.append({"start": start, "end": end, "status": status})
+            slots.append({"start": start, "end": end, "status": status, "causes": causes})
     return slots
