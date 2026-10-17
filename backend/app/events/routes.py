@@ -1425,6 +1425,121 @@ def list_supervised():
     )
 
 
+# ---------- A Coordinator Lead assigns a waiting event (SCRUM-81) ----------
+
+
+@events_bp.get("/<int:event_id>/assignment")
+@jwt_required()
+def get_assignment(event_id: int):
+    try:
+        user = _current_user()
+        if user is None:
+            return _error("Your session is no longer valid. Please log in again.", 401)
+        event = db.session.get(Event, event_id)
+        if event is None:
+            return _error("Event not found.", 404)
+        if user.role != COORDINATOR_LEAD_ROLE:
+            return _error("Only Event Coordinator Leads can assign coordinators.", 403)
+        if event.coordinator_id is not None:
+            return _error(
+                "This event already has a coordinator. Use the reassign function to change it.",
+                409, reason="already_assigned",
+                next_step={"action": "Reassign the coordinator", "method": "PUT",
+                           "url": url_for("events.assign_coordinator", event_id=event.id)},
+            )
+        if event.status != "submitted":
+            return _error(
+                f"Only events waiting in the queue can be assigned. This event is {event.status}.",
+                409, reason="not_in_queue",
+            )
+        coordinators = _eligible_coordinators(event)
+        payload = {
+            "event": {"id": event.id, "title": event.title,
+                      "start_time": _isoformat(event.start_time), "status": event.status},
+            "coordinators": [_user_summary(c) for c in coordinators],
+            "message": None if coordinators else "No eligible coordinator is available for this event.",
+        }
+    except SQLAlchemyError:
+        db.session.rollback()
+        return _error("The event could not be loaded. Please try again.", 503, retryable=True)
+    return jsonify(payload)
+
+
+@events_bp.post("/<int:event_id>/assignment")
+@jwt_required()
+def assign_from_queue(event_id: int):
+    try:
+        user = _current_user()
+        if user is None:
+            return _error("Your session is no longer valid. Please log in again.", 401)
+        event = db.session.get(Event, event_id, with_for_update=True, populate_existing=True)
+        if event is None:
+            return _error("Event not found.", 404)
+        if user.role != COORDINATOR_LEAD_ROLE:
+            return _error("Only Event Coordinator Leads can assign coordinators.", 403)
+        body = request.get_json(silent=True)
+        coordinator_id = body.get("coordinator_id") if isinstance(body, dict) else None
+        if not isinstance(coordinator_id, int) or isinstance(coordinator_id, bool):
+            return _error("Choose a coordinator.", 400, field="coordinator_id")
+        if set(body) != {"coordinator_id"}:
+            return _error("Only coordinator_id can be sent.", 400)
+        if event.coordinator_id is not None:
+            return _error(
+                "This event already has a coordinator. Use the reassign function to change it.",
+                409, reason="already_assigned",
+                next_step={"action": "Reassign the coordinator", "method": "PUT",
+                           "url": url_for("events.assign_coordinator", event_id=event.id)},
+            )
+        if event.status != "submitted":
+            return _error(
+                f"Only events waiting in the queue can be assigned. This event is {event.status}.",
+                409, reason="not_in_queue",
+            )
+        coordinators = _eligible_coordinators(event)
+        coordinator = next((c for c in coordinators if c.id == coordinator_id), None)
+        if coordinator is None:
+            if not coordinators:
+                return _error("No eligible coordinator is available for this event.", 422,
+                              field="coordinator_id")
+            return _error("The selected user is not an eligible coordinator.", 422,
+                          field="coordinator_id")
+
+        event.coordinator_id = coordinator.id
+        event.coordinator_assigned_by_id = user.id
+        event.coordinator_assigned_at = datetime.utcnow()
+        title, to_address = event.title, coordinator.email
+        db.session.add(Notification(
+            recipient_id=coordinator.id, kind="coordinator_assigned",
+            message=f'{user.email} assigned you to coordinate "{title}".',
+            event_id=event.id,
+        ))
+        payload = {
+            "message": f"{coordinator.email} is now the coordinator for {title}.",
+            "assignment": {
+                "event_id": event.id,
+                "coordinator": _user_summary(coordinator),
+                "assigned_by": _user_summary(user),
+                "assigned_at": _isoformat(event.coordinator_assigned_at),
+            },
+        }
+        db.session.commit()
+    except SQLAlchemyError:
+        db.session.rollback()
+        return _error("The assignment was not saved. Please try again.", 503, retryable=True)
+
+    try:
+        tasks.send_notification_email.delay(
+            to_address,
+            f"You are now the coordinator for {title}",
+            f"{payload['message']}\n\nSign in to ConnectSphere to see your managed events.",
+        )
+        queued = True
+    except Exception:
+        current_app.logger.exception("Could not queue assignment email for event %s", event_id)
+        queued = False
+    return jsonify({**payload, "notification": {"in_app": True, "email_queued": queued}})
+
+
 # ---------- View event details (SCRUM-74) ----------
 
 

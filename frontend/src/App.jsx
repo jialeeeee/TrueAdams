@@ -1,4 +1,5 @@
 import { Link, Navigate, Route, Routes } from "react-router-dom";
+import AssignCoordinatorPage from "./pages/AssignCoordinatorPage.jsx";
 import ClarificationPage from "./pages/ClarificationPage.jsx";
 import DraftEventPage from "./pages/DraftEventPage.jsx";
 import EventDetailsPage from "./pages/EventDetailsPage.jsx";
@@ -58,6 +59,7 @@ export default function App() {
         <Route path="/events/:eventId/register" element={<EventRegistrationPage />} />
         <Route path="/events/:eventId/venue-request" element={<VenueBookingRequestPage />} />
         <Route path="/events/:eventId/reassign" element={<ReassignmentRequestPage />} />
+        <Route path="/events/:eventId/assign" element={<AssignCoordinatorPage />} />
         <Route path="/venues" element={<VenuesPage />} />
         <Route path="/venues/availability" element={<VenueAvailabilityPage />} />
         <Route path="/venues/search" element={<VenueSearchPage />} />
