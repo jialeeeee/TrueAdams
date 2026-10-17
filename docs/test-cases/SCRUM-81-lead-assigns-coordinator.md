@@ -18,7 +18,7 @@
 
 These are the team's current reading of the story. Each one is tied to an open question below. If the customer answers differently, update the affected test cases before implementation.
 
-- **A1 — The queue:** an event is waiting in the queue while it is `submitted` and has no coordinator (`ASSIGNMENT_QUEUE_STATUSES` in `app/events/routes.py`). Events in any other status (draft, cancelled, rejected, …) cannot be assigned here. Submission still assigns a coordinator automatically (SCRUM-28); routing new submissions into the queue instead belongs to the queue story. *(Q1)*
+- **A1 — The queue:** an event is waiting in the queue while it is `submitted` and has no coordinator (`ASSIGNMENT_QUEUE_STATUSES` in `app/events/routes.py`). Events in any other status (draft, cancelled, rejected, …) cannot be assigned here. New submissions enter the queue with no coordinator (A9 in [SCRUM-81-unassigned-queue.md](SCRUM-81-unassigned-queue.md), which replaced SCRUM-28's automatic assignment), and the Lead lists them at `GET /api/events/queue`. *(Q1)*
 - **A2 — The Lead:** a user whose stored role is `coordinator_lead` (SCRUM-83), read from the database on every request. Any Lead may assign any waiting event. *(Q2)*
 - **A3 — Eligible coordinator:** any user whose current role is `coordinator`, the same rule as reassignment (`_eligible_coordinators`). Workload and availability are not considered. *(Q3)*
 - **A4 — What is recorded:** `coordinator_id`, `coordinator_assigned_by_id` (the Lead) and `coordinator_assigned_at` (naive UTC), saved together. The event then appears in the Lead's SCRUM-83 list and the coordinator's SCRUM-62 list.

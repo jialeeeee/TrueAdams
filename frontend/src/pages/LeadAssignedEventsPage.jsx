@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import apiClient from "../api/client.js";
+import canRetry from "../utils/canRetry.js";
 import explain from "../utils/explain.js";
+import proposedDate from "../utils/proposedDate.js";
 import statusLabel from "../utils/statusLabel.js";
 
 // The active events a Coordinator Lead assigned, filterable by coordinator (SCRUM-83).
@@ -8,16 +10,6 @@ const NOT_LOADED =
   "The events you assigned could not be loaded. Check your connection and try again.";
 const NOT_RECORDED = "Not recorded";
 const ALL_COORDINATORS = "";
-
-// Proposed dates are Singapore time without a time zone: show them as recorded.
-function proposedDate(value) {
-  return value ? value.slice(0, 16).replace("T", " ") : NOT_RECORDED;
-}
-
-// A network failure, or one the server marks retryable, can be tried again; a refusal cannot.
-function canRetry(failure) {
-  return !failure.response || failure.response.data?.retryable === true;
-}
 
 function AssignedEvent({ event }) {
   return (

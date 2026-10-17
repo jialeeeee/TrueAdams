@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 
 from flask import Blueprint, current_app, jsonify, request, url_for
 from flask_jwt_extended import get_jwt_identity, jwt_required
-from sqlalchemy import func
+from sqlalchemy import and_, func
 from sqlalchemy.exc import DBAPIError, IntegrityError, SQLAlchemyError
 
 from .. import tasks
@@ -933,6 +933,8 @@ def submit_draft(event_id: int):
         if event.end_time <= event.start_time:
             raise _field_error("end_time", "The end must be after the start.")
 
+        # Week 7 change 5 (SCRUM-81 A9): no coordinator is assigned here any more; the
+        # request waits in the Lead's queue (SCRUM-81 assigns it).
         now = datetime.utcnow()
         event.status = SUBMITTED_STATUS
         event.submitted_at = now
@@ -1416,13 +1418,18 @@ def list_supervised():
 
 # ---------- A Coordinator Lead assigns a waiting event (SCRUM-81) ----------
 
-# An event waits in the queue while it has this status and no coordinator (A1, open
-# question Q1). Submission still assigns automatically (SCRUM-28) until the queue story.
+# An event waits in the Lead's queue while it has this status and no coordinator
+# (SCRUM-81 A1, A10). Submissions enter it with no coordinator (A9).
 ASSIGNMENT_QUEUE_STATUSES = {"submitted"}
 COORDINATOR_ASSIGNED_NOTIFICATION = "coordinator_assigned"
 LEAD_ONLY = "Only Event Coordinator Leads can assign coordinators."
 ALREADY_ASSIGNED = "This event already has a coordinator. Use the reassign function to change it."
 NO_ELIGIBLE_COORDINATOR = "No eligible coordinator is available for this event."
+
+
+def _waiting_for_assignment():
+    """The SQL condition for an event in the queue; _require_waiting checks the same rule."""
+    return and_(Event.status.in_(ASSIGNMENT_QUEUE_STATUSES), Event.coordinator_id.is_(None))
 
 
 def _lead_and_event(event_id, lock=False):
@@ -1584,9 +1591,28 @@ def assign_from_queue(event_id: int):
     )
 
 
+# ---------- The Lead's unassigned queue (SCRUM-81) ----------
+
+QUEUE_EMPTY = "No event requests are waiting for a coordinator."
+
+
+def _queue_event_payload(event, organiser):
+    # Blank or missing values are sent as null, so the page shows "Not recorded" (A12).
+    return {
+        "id": event.id,
+        "title": _recorded(event.title),
+        "start_time": _isoformat(event.start_time),
+        "status": event.status,
+        "organiser": _user_summary(organiser),
+        "submitted_at": _isoformat(event.submitted_at),
+    }
+
+
 @events_bp.get("/queue")
 @jwt_required()
 def list_queue():
+    """Every event waiting for a coordinator, for any Lead (A10, A11), oldest submission
+    first so nothing waits unseen; older rows with no submission time last (A13, Q9)."""
     try:
         user = _current_user()
         if user is None:
@@ -1596,23 +1622,16 @@ def list_queue():
         rows = (
             db.session.query(Event, User)
             .join(User, User.id == Event.organiser_id)
-            .filter(Event.status == "submitted", Event.coordinator_id.is_(None))
+            .filter(_waiting_for_assignment())
             .order_by(Event.submitted_at.asc().nulls_last(), Event.id)
             .all()
         )
-        events = [
-            {"id": e.id, "title": _recorded(e.title), "start_time": _isoformat(e.start_time),
-             "status": e.status, "organiser": _user_summary(o),
-             "submitted_at": _isoformat(e.submitted_at)}
-            for e, o in rows
-        ]
+        events = [_queue_event_payload(event, organiser) for event, organiser in rows]
     except SQLAlchemyError:
         db.session.rollback()
         return _error("The queue could not be loaded. Please try again.", 503, retryable=True)
-    return jsonify({
-        "events": events,
-        "message": None if events else "No event requests are waiting for a coordinator.",
-    })
+
+    return jsonify({"events": events, "message": None if events else QUEUE_EMPTY})
 
 
 # ---------- View event details (SCRUM-74) ----------
