@@ -226,13 +226,14 @@ class OtherAssignersTests(LeadAssignedEventsTestCase):
         self.assertEqual(liam_alice["events"], [])
         self.assertEqual(liam_alice["coordinators"], [self.summary("ben")])
 
-    # TC-83-13 · AC2 (A1/Q1) — reassignment by someone else moves the event out.
+    # TC-83-13 · AC2 (A1/Q1) — reassignment by someone else (since SCRUM-82, another
+    # Lead) moves the event out.
     def test_reassignment_by_someone_else_removes_the_event_from_the_leads_list(self):
         lena_headers = self.auth_headers(self.users["lena"])
 
         response = self.client.put(
             f"/api/events/{self.events['S1'].id}/coordinator",
-            headers=self.auth_headers(self.users["admin"]),
+            headers=self.auth_headers(self.users["liam"]),
             json={"coordinator_id": self.users["chloe"].id},
         )
         self.assertEqual(response.status_code, 200, response.get_json())

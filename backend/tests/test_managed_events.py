@@ -47,7 +47,7 @@ NON_COORDINATORS = ["admin", "dana", "farah", "gus", "hana"]
 class ManagedEventsTestCase(AppTestCase):
     def setUp(self):
         super().setUp()
-        self.users = self.seed_users(seed_data.USERS)
+        self.users = self.seed_users(seed_data.USERS + seed_data.LEADS)
         self.events = {}
         for key, row in EVENTS.items():
             coordinator = self.users[row["coordinator"]] if row["coordinator"] else None
@@ -123,14 +123,15 @@ class ManagedListTests(ManagedEventsTestCase):
     def test_events_are_listed_soonest_first_with_undated_last(self):
         self.assertEqual(self.keys(self.listed()["events"]), ["M3", "M2", "M1", "M4"])
 
-    # TC-62-04 · AC1 — reassignment moves the event between lists immediately.
+    # TC-62-04 · AC1 — reassignment moves the event between lists immediately. Since
+    # SCRUM-82 only a Lead reassigns.
     def test_reassignment_moves_the_event_to_the_new_coordinators_list(self):
         alice_headers = self.auth_headers(self.users["alice"])
         ben_headers = self.auth_headers(self.users["ben"])
 
         response = self.client.put(
             f"/api/events/{self.events['M1'].id}/coordinator",
-            headers=self.auth_headers(self.users["admin"]),
+            headers=self.auth_headers(self.users["lena"]),
             json={"coordinator_id": self.users["ben"].id},
         )
         self.assertEqual(response.status_code, 200, response.get_json())

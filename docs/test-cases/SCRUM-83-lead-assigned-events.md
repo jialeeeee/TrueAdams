@@ -127,7 +127,7 @@ Users come from `backend/tests/seed_data.py`, plus three Leads: lena, liam and l
 
 **TC-83-13 · Reassignment by someone else moves the event out of the list**
 - **Traces to:** AC2 · **Type:** Boundary · **Depends on:** Q1
-- **Steps:** An administrator reassigns S1 to chloe through `PUT /api/events/<id>/coordinator`; lena then loads her list with a token issued earlier.
+- **Steps:** Another Lead, liam, reassigns S1 to chloe through `PUT /api/events/<id>/coordinator` (an administrator until SCRUM-82 made reassignment Lead-only); lena then loads her list with a token issued earlier.
 - **Expected result:** S1 is no longer in lena's list; S2–S5 still are.
 - **Automated:** `test_reassignment_by_someone_else_removes_the_event_from_the_leads_list`
 

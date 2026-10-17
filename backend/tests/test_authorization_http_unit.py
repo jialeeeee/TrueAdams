@@ -1,5 +1,8 @@
 """SCRUM-27 TC-27-01..08: Flask/JWT unit tests with mocked persistence.
 
+Since SCRUM-82 only an Event Coordinator Lead (user 6) may reassign; the current
+coordinator (2) and the admin (5) are refused.
+
 No AppTestCase, app factory, engine, Supabase, credentials or SMTP. These verify
 route guards and side-effect calls, NOT database durability or real row locks.
 The equivalent persisted workflows stay in tests/test_authorization.py.
@@ -43,6 +46,7 @@ class AuthorizationHttpUnitTests(unittest.TestCase):
             3: SimpleNamespace(id=3, role="coordinator", email="replacement@test.invalid"),
             4: SimpleNamespace(id=4, role="attendee", email="attendee@test.invalid"),
             5: SimpleNamespace(id=5, role="admin", email="admin@test.invalid"),
+            6: SimpleNamespace(id=6, role="coordinator_lead", email="lead@test.invalid"),
         }
         self.event = SimpleNamespace(**{c.name: None for c in Event.__table__.columns})
         self.event.__dict__.update(id=7, title="Private event", status="submitted", organiser_id=1,
@@ -79,7 +83,7 @@ class AuthorizationHttpUnitTests(unittest.TestCase):
             token = create_access_token(identity=str(user_id), **kwargs)
         return {"Authorization": f"Bearer {token}"}
 
-    def reassign(self, caller=2, target=3, body=None):
+    def reassign(self, caller=6, target=3, body=None):
         return self.client.put("/api/events/7/coordinator", headers=self.headers(caller),
                                json={"coordinator_id": target} if body is None else body)
 
@@ -100,28 +104,37 @@ class AuthorizationHttpUnitTests(unittest.TestCase):
         self.assertEqual(response.status_code, 403)
         self.candidates.assert_not_called()
 
-    def test_current_coordinator_can_reassign_and_lock_is_requested(self):
+    def test_lead_can_reassign_and_lock_is_requested(self):
         response = self.reassign()
         self.assertEqual(response.status_code, 200)
         self.assertEqual(self.event.coordinator_id, 3)
         self.session.get.assert_any_call(Event, 7, with_for_update=True, populate_existing=True)
         self.session.commit.assert_called_once()
 
-    def test_documented_admin_override_is_limited_to_reassignment(self):
-        self.assertEqual(self.reassign(caller=5).status_code, 200)
-        self.session.commit.reset_mock()
+    # SCRUM-82: the former admin override and the current coordinator are refused, and
+    # even a Lead cannot assign an unassigned event here (the SCRUM-81 queue does).
+    def test_admin_and_current_coordinator_cannot_reassign(self):
+        before = dict(self.event.__dict__)
+        for caller in (5, 2):
+            with self.subTest(caller=caller):
+                self.assert_refused_unchanged(self.reassign(caller=caller), before)
         self.event.coordinator_id = None
         before = dict(self.event.__dict__)
-        self.assert_refused_unchanged(self.reassign(caller=5), before)
+        self.assert_refused_unchanged(self.reassign(), before, 409)
 
     def test_old_coordinator_loses_reads_and_writes_new_coordinator_gains_them(self):
         previous, replacement = self.headers(2), self.headers(3)
         self.assertEqual(self.reassign().status_code, 200)
-        for suffix in ("planning", "review", "clarifications", "eligible-coordinators"):
+        for suffix in ("planning", "review", "clarifications"):
             with self.subTest(read=suffix):
                 self.assertEqual(self.client.get(f"/api/events/7/{suffix}", headers=previous).status_code, 403)
                 self.assertEqual(self.client.get(f"/api/events/7/{suffix}", headers=replacement).status_code, 200)
-        self.session.commit.reset_mock()
+        # SCRUM-82: listing replacements is the Lead's, not either coordinator's.
+        for headers in (previous, replacement):
+            self.assertEqual(self.client.get("/api/events/7/eligible-coordinators", headers=headers).status_code, 403)
+        # The reassignment itself saved and notified; only the refused writes below may not.
+        for call in (self.session.commit, self.session.add, self.email):
+            call.reset_mock()
         for method, suffix, body in (("PATCH", "", {"title": "Forged"}),
                                      ("POST", "/decision", {"decision": "approve"}),
                                      ("POST", "/clarifications", {"message": "Question?"}),
@@ -160,10 +173,12 @@ class AuthorizationHttpUnitTests(unittest.TestCase):
                     self.assertNotIn(self.event.title, response.get_data(as_text=True))
 
     def test_forged_role_claim_cannot_authorize_reassignment(self):
-        headers = self.headers(4, additional_claims={"role": "admin"})
         before = dict(self.event.__dict__)
-        response = self.client.put("/api/events/7/coordinator", json={"coordinator_id": 4}, headers=headers)
-        self.assert_refused_unchanged(response, before)
+        for claim in ("admin", "coordinator_lead"):
+            with self.subTest(claim=claim):
+                headers = self.headers(4, additional_claims={"role": claim})
+                response = self.client.put("/api/events/7/coordinator", json={"coordinator_id": 4}, headers=headers)
+                self.assert_refused_unchanged(response, before)
 
     def test_forged_relationship_fields_are_rejected_before_mutation(self):
         before = dict(self.event.__dict__)

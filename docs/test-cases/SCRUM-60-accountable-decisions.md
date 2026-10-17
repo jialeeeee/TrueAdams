@@ -56,7 +56,7 @@ Users: alice and ben (coordinators), dana (organiser) from `backend/tests/seed_d
 
 **TC-60-02 · Reassigning the event later does not change who decided**
 - **Traces to:** AC1 · **Type:** Boundary · **Depends on:** Q1
-- **Steps:** alice rejects R1. An admin then reassigns R1 to ben. ben opens R1's review view, and dana lists her requests.
+- **Steps:** alice rejects R1. A Lead (an admin until SCRUM-82 made reassignment Lead-only) then reassigns R1 to ben. ben opens R1's review view, and dana lists her requests.
 - **Expected result:** Both still show alice as the decider and the original decision time.
 - **Automated:** `test_reassigning_the_event_later_does_not_change_who_decided`
 

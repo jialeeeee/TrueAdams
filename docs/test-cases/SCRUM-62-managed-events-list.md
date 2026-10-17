@@ -70,7 +70,7 @@ chloe is a coordinator with no events.
 
 **TC-62-04 · Reassignment moves the event between lists immediately**
 - **Traces to:** AC1 · **Type:** Boundary
-- **Steps:** Reassign M1 from alice to ben through the SCRUM-33 endpoint, then load both lists with tokens issued earlier.
+- **Steps:** Reassign M1 from alice to ben through the SCRUM-33 endpoint (as a Lead, since SCRUM-82), then load both lists with tokens issued earlier.
 - **Expected result:** M1 is no longer in alice's list and is in ben's.
 - **Automated:** `test_reassignment_moves_the_event_to_the_new_coordinators_list`
 
