@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 
 from flask import Blueprint, current_app, jsonify, request, url_for
 from flask_jwt_extended import get_jwt_identity, jwt_required
-from sqlalchemy import func
+from sqlalchemy import and_, func
 from sqlalchemy.exc import DBAPIError, IntegrityError, SQLAlchemyError
 
 from .. import tasks
@@ -19,11 +19,11 @@ from ..models import (
 )
 from ..registrations.routes import singapore_now
 from .permissions import (
-    COORDINATOR_LEAD_ROLE,
     COORDINATOR_ROLE,
     can_reassign_coordinator,
     can_view_clarifications,
     can_view_coordinator,
+    is_coordinator_lead,
     is_current_coordinator as _is_current_coordinator,
     is_current_organiser,
 )
@@ -933,18 +933,9 @@ def submit_draft(event_id: int):
         if event.end_time <= event.start_time:
             raise _field_error("end_time", "The end must be after the start.")
 
-        # SCRUM-28 approved initial-assignment policy: current coordinator role,
-        # lowest user ID. Manual reassignment remains a separate workflow.
-        coordinator = User.query.filter_by(role=COORDINATOR_ROLE).order_by(User.id).first()
-        if coordinator is None:
-            raise _Rejected(
-                "No coordinator is currently available. Your request is still saved "
-                "as a draft, so please try again later.",
-                503, retryable=True,
-            )
+        # Week 7 change 5 (SCRUM-81 A9): no coordinator is assigned here any more; the
+        # request waits in the Lead's queue (SCRUM-81 assigns it).
         now = datetime.utcnow()
-        event.coordinator_id = coordinator.id
-        event.coordinator_assigned_at = now
         event.status = SUBMITTED_STATUS
         event.submitted_at = now
         payload = _commit_draft_payload(event)
@@ -1390,7 +1381,7 @@ def list_supervised():
         user = _current_user()
         if user is None:
             return _error("Your session is no longer valid. Please log in again.", 401)
-        if user.role != COORDINATOR_LEAD_ROLE:
+        if not is_coordinator_lead(user):
             return _error("Only Event Coordinator Leads can view the events they assigned.", 403)
         coordinator_id = _coordinator_filter()
 
@@ -1423,6 +1414,224 @@ def list_supervised():
             "message": message,
         }
     )
+
+
+# ---------- A Coordinator Lead assigns a waiting event (SCRUM-81) ----------
+
+# An event waits in the Lead's queue while it has this status and no coordinator
+# (SCRUM-81 A1, A10). Submissions enter it with no coordinator (A9).
+ASSIGNMENT_QUEUE_STATUSES = {"submitted"}
+COORDINATOR_ASSIGNED_NOTIFICATION = "coordinator_assigned"
+LEAD_ONLY = "Only Event Coordinator Leads can assign coordinators."
+ALREADY_ASSIGNED = "This event already has a coordinator. Use the reassign function to change it."
+NO_ELIGIBLE_COORDINATOR = "No eligible coordinator is available for this event."
+
+
+def _waiting_for_assignment():
+    """The SQL condition for an event in the queue; _require_waiting checks the same rule."""
+    return and_(Event.status.in_(ASSIGNMENT_QUEUE_STATUSES), Event.coordinator_id.is_(None))
+
+
+def _lead_and_event(event_id, lock=False):
+    """The calling Lead and the event, checked 401, 404, 403 (A7).
+
+    With `lock`, the event row is re-read and locked, so when two Leads assign at once
+    the second sees the first's coordinator and is refused (A6).
+    """
+    user = _current_user()
+    if user is None:
+        raise _Rejected("Your session is no longer valid. Please log in again.", 401)
+    event = db.session.get(Event, event_id, with_for_update=lock, populate_existing=lock)
+    if event is None:
+        raise _Rejected(EVENT_NOT_FOUND, 404)
+    if not is_coordinator_lead(user):
+        raise _Rejected(LEAD_ONLY, 403)
+    return user, event
+
+
+def _require_waiting(event):
+    """Refuse (409) an event that already has a coordinator or is not in the queue."""
+    if event.coordinator_id is not None:
+        raise _Rejected(
+            ALREADY_ASSIGNED,
+            409,
+            reason="already_assigned",
+            next_step={
+                "action": "Reassign the coordinator",
+                "method": "PUT",
+                "url": url_for("events.assign_coordinator", event_id=event.id),
+            },
+        )
+    if event.status not in ASSIGNMENT_QUEUE_STATUSES:
+        raise _Rejected(
+            f"Only events waiting in the queue can be assigned. This event is {event.status}.",
+            409,
+            reason="not_in_queue",
+        )
+
+
+def _parse_assignment(body):
+    """The chosen coordinator's ID; nothing else may be sent (no forged assigner)."""
+    coordinator_id = body.get("coordinator_id") if isinstance(body, dict) else None
+    if not isinstance(coordinator_id, int) or isinstance(coordinator_id, bool):
+        raise _Rejected("Choose a coordinator.", 400, field="coordinator_id")
+    if set(body) != {"coordinator_id"}:
+        raise _Rejected("Only coordinator_id can be sent.", 400)
+    return coordinator_id
+
+
+def _chosen_coordinator(event, coordinator_id):
+    """The chosen user, if eligible (A3); the same rule as the list the Lead chose from."""
+    eligible = _eligible_coordinators(event)
+    coordinator = next((c for c in eligible if c.id == coordinator_id), None)
+    if coordinator is None:
+        message = NO_ELIGIBLE_COORDINATOR if not eligible else (
+            "The selected user is not an eligible coordinator."
+        )
+        raise _Rejected(message, 422, field="coordinator_id")
+    return coordinator
+
+
+def _queued_event_payload(event):
+    return {
+        "id": event.id,
+        "title": event.title,
+        "start_time": _isoformat(event.start_time),
+        "status": event.status,
+    }
+
+
+def _queue_assignment_email(to_address, title, message, event_id):
+    """Queue the coordinator's email; False if the queue could not be reached (A5).
+
+    The assignment and in-app notification are already saved by then, so a broker
+    outage must not undo them. It takes plain values, so it never needs the database.
+    """
+    try:
+        tasks.send_notification_email.delay(
+            to_address,
+            f"You are now the coordinator for {title}",
+            f"{message}\n\nSign in to ConnectSphere to see your managed events.",
+        )
+    except Exception:
+        current_app.logger.exception("Could not queue assignment email for event %s", event_id)
+        return False
+    return True
+
+
+@events_bp.get("/<int:event_id>/assignment")
+@jwt_required()
+def get_assignment(event_id: int):
+    """A waiting event and the coordinators the Lead may choose from (AC1, AC5)."""
+    try:
+        _, event = _lead_and_event(event_id)
+        _require_waiting(event)
+        coordinators = _eligible_coordinators(event)
+        payload = {
+            "event": _queued_event_payload(event),
+            "coordinators": [_user_summary(c) for c in coordinators],
+            "message": None if coordinators else NO_ELIGIBLE_COORDINATOR,
+        }
+    except _Rejected as rejected:
+        return _error(rejected.message, rejected.status_code, **rejected.extra)
+    except SQLAlchemyError:
+        db.session.rollback()
+        return _error("The event could not be loaded. Please try again.", 503, retryable=True)
+    return jsonify(payload)
+
+
+@events_bp.post("/<int:event_id>/assignment")
+@jwt_required()
+def assign_from_queue(event_id: int):
+    """Assign a waiting event's coordinator, record who did it, and notify them (AC1, AC2).
+
+    The assignment and its in-app notification are saved in one commit, so a failed
+    save changes nothing (AC5); the email is queued only after the commit.
+    """
+    try:
+        lead, event = _lead_and_event(event_id, lock=True)
+        coordinator_id = _parse_assignment(request.get_json(silent=True))
+        _require_waiting(event)
+        coordinator = _chosen_coordinator(event, coordinator_id)
+
+        event.coordinator_id = coordinator.id
+        event.coordinator_assigned_by_id = lead.id
+        event.coordinator_assigned_at = datetime.utcnow()
+        # Plain values, so nothing needs the database after the commit.
+        title, to_address = event.title, coordinator.email
+        message = f"{to_address} is now the coordinator for {title}."
+        db.session.add(
+            Notification(
+                recipient_id=coordinator.id,
+                kind=COORDINATOR_ASSIGNED_NOTIFICATION,
+                message=f'{lead.email} assigned you to coordinate "{title}".',
+                event_id=event.id,
+            )
+        )
+        assignment = {
+            "event_id": event.id,
+            "coordinator": _user_summary(coordinator),
+            "assigned_by": _user_summary(lead),
+            "assigned_at": _isoformat(event.coordinator_assigned_at),
+        }
+        db.session.commit()
+    except _Rejected as rejected:
+        return _error(rejected.message, rejected.status_code, **rejected.extra)
+    except SQLAlchemyError:
+        db.session.rollback()
+        return _error("The assignment was not saved. Please try again.", 503, retryable=True)
+
+    queued = _queue_assignment_email(to_address, title, message, event_id)
+    return jsonify(
+        {
+            "message": message,
+            "assignment": assignment,
+            "notification": {"in_app": True, "email_queued": queued},
+        }
+    )
+
+
+# ---------- The Lead's unassigned queue (SCRUM-81) ----------
+
+QUEUE_EMPTY = "No event requests are waiting for a coordinator."
+
+
+def _queue_event_payload(event, organiser):
+    # Blank or missing values are sent as null, so the page shows "Not recorded" (A12).
+    return {
+        "id": event.id,
+        "title": _recorded(event.title),
+        "start_time": _isoformat(event.start_time),
+        "status": event.status,
+        "organiser": _user_summary(organiser),
+        "submitted_at": _isoformat(event.submitted_at),
+    }
+
+
+@events_bp.get("/queue")
+@jwt_required()
+def list_queue():
+    """Every event waiting for a coordinator, for any Lead (A10, A11), oldest submission
+    first so nothing waits unseen; older rows with no submission time last (A13, Q9)."""
+    try:
+        user = _current_user()
+        if user is None:
+            return _error("Your session is no longer valid. Please log in again.", 401)
+        if not is_coordinator_lead(user):
+            return _error("Only Event Coordinator Leads can view the queue.", 403)
+        rows = (
+            db.session.query(Event, User)
+            .join(User, User.id == Event.organiser_id)
+            .filter(_waiting_for_assignment())
+            .order_by(Event.submitted_at.asc().nulls_last(), Event.id)
+            .all()
+        )
+        events = [_queue_event_payload(event, organiser) for event, organiser in rows]
+    except SQLAlchemyError:
+        db.session.rollback()
+        return _error("The queue could not be loaded. Please try again.", 503, retryable=True)
+
+    return jsonify({"events": events, "message": None if events else QUEUE_EMPTY})
 
 
 # ---------- View event details (SCRUM-74) ----------

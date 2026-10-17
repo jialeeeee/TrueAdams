@@ -1,4 +1,5 @@
 import { Link, Navigate, Route, Routes } from "react-router-dom";
+import AssignCoordinatorPage from "./pages/AssignCoordinatorPage.jsx";
 import ClarificationPage from "./pages/ClarificationPage.jsx";
 import DraftEventPage from "./pages/DraftEventPage.jsx";
 import EventDetailsPage from "./pages/EventDetailsPage.jsx";
@@ -16,6 +17,7 @@ import ResourcesPage from "./pages/ResourcesPage.jsx";
 import ReassignmentRequestPage from "./pages/ReassignmentRequestPage.jsx";
 import ReviewRequestPage from "./pages/ReviewRequestPage.jsx";
 import ReviewRequestsPage from "./pages/ReviewRequestsPage.jsx";
+import UnassignedQueuePage from "./pages/UnassignedQueuePage.jsx";
 import VenueAvailabilityPage from "./pages/VenueAvailabilityPage.jsx";
 import VenueBookingRequestPage from "./pages/VenueBookingRequestPage.jsx";
 import VenueBookingRequestsPage from "./pages/VenueBookingRequestsPage.jsx";
@@ -31,6 +33,7 @@ export default function App() {
         <Link to="/events/drafts">My drafts</Link>
         <Link to="/events/requests">My requests</Link>
         <Link to="/events/managed">My managed events</Link>
+        <Link to="/events/queue">Waiting events</Link>
         <Link to="/events/supervised">Events I assigned</Link>
         <Link to="/events/review-requests">Requests for review</Link>
         <Link to="/venues">Venues</Link>
@@ -50,6 +53,7 @@ export default function App() {
         <Route path="/events/mine" element={<MyEventRequestsPage />} />
         <Route path="/events/managed" element={<ManagedEventsPage />} />
         <Route path="/events/supervised" element={<LeadAssignedEventsPage />} />
+        <Route path="/events/queue" element={<UnassignedQueuePage />} />
         <Route path="/events/review-requests" element={<ReviewRequestsPage />} />
         <Route path="/events/:eventId" element={<EventDetailsPage />} />
         <Route path="/events/:eventId/planning" element={<EventPlanningPage />} />
@@ -58,6 +62,7 @@ export default function App() {
         <Route path="/events/:eventId/register" element={<EventRegistrationPage />} />
         <Route path="/events/:eventId/venue-request" element={<VenueBookingRequestPage />} />
         <Route path="/events/:eventId/reassign" element={<ReassignmentRequestPage />} />
+        <Route path="/events/:eventId/assign" element={<AssignCoordinatorPage />} />
         <Route path="/venues" element={<VenuesPage />} />
         <Route path="/venues/availability" element={<VenueAvailabilityPage />} />
         <Route path="/venues/search" element={<VenueSearchPage />} />

@@ -1,5 +1,8 @@
 """SCRUM-28 RED cases TC-28-09/10/15/16 from the coverage workbook.
 
+TC-28-09 and TC-28-10 were updated for Week 7 change 5 (SCRUM-81 TC-81-23/24): a
+submission no longer assigns a coordinator, it waits in the Lead's unassigned queue.
+
 Run SubmissionUnitTests alone for database-independent Flask/JWT coverage.
 The fake query exercises production filtering/ordering calls over unordered
 fixtures; it does not establish PostgreSQL execution or transaction guarantees.
@@ -9,7 +12,6 @@ ORM session. Existing SCRUM-29 integration tests retain rollback coverage.
 
 import socket
 import unittest
-from copy import deepcopy
 from datetime import datetime
 from types import SimpleNamespace
 from unittest import mock
@@ -123,47 +125,37 @@ class SubmissionUnitTests(unittest.TestCase):
     def submit(self):
         return self.client.post("/api/events/drafts/7/submit", headers=self.headers())
 
-    # TC-28-09: AC4/5. Production routes, not a mocked selector or permission rule.
-    def test_submission_assigns_reviewer_and_preserves_access_boundaries(self):
+    # TC-28-09 (SCRUM-81 TC-81-23): AC4/5. Submission no longer assigns a coordinator:
+    # the request waits in the Lead's queue, so no one can review it yet.
+    def test_submission_leaves_the_request_unassigned_and_preserves_access_boundaries(self):
         before = {field: getattr(self.event, field) for field in DRAFT_FIELDS}
         response = self.submit()
         self.assertEqual(response.status_code, 200, response.get_json())
-        self.assertEqual(self.event.coordinator_id, 5, "Select lowest current coordinator ID.")
-        self.assertIsInstance(self.event.coordinator_assigned_at, datetime)
+        self.assertIsNone(self.event.coordinator_id, "Submissions wait in the Lead's queue.")
+        self.assertIsNone(self.event.coordinator_assigned_at)
+        self.assertIsNone(self.event.coordinator_assigned_by_id)
         self.assertEqual(response.get_json()["id"], 7)
         self.assertEqual(response.get_json()["status"], "submitted")
         self.assertEqual({field: getattr(self.event, field) for field in DRAFT_FIELDS}, before)
         self.session.commit.assert_called_once()
         self.session.add.assert_not_called()  # Submission does not insert another row/reservation.
-        review = self.client.get("/api/events/7/review", headers=self.headers(5))
-        self.assertEqual(review.status_code, 200, review.get_json())
-        self.assertEqual(review.get_json()["request"]["id"], 7)
-        for user_id in (1, 2, 9):
+        for user_id in (1, 2, 5, 9):
             with self.subTest(viewer=user_id):
                 refused = self.client.get("/api/events/7/review", headers=self.headers(user_id))
                 self.assertEqual(refused.status_code, 403)
                 self.assertNotIn(COMPLETE["title"], refused.get_data(as_text=True))
 
-    # TC-28-10: AC4/6. No candidate is an operational refusal, never a partial save.
-    def test_no_eligible_coordinator_uses_agreed_submission_outcome(self):
+    # TC-28-10 (SCRUM-81 TC-81-24): AC4/6. With no coordinator available the request is
+    # still submitted, where SCRUM-28 used to refuse it: it waits in the Lead's queue.
+    def test_submission_does_not_need_an_available_coordinator(self):
         for user in self.users.values():
             if user.role == "coordinator":
                 user.role = "attendee"
-        before = deepcopy(self.event.__dict__)
         response = self.submit()
-        self.assertEqual(response.status_code, 503, response.get_json())
-        body = response.get_json()
-        self.assertIs(body.get("retryable"), True)
-        self.assertRegex(body["error"].lower(), r"coordinator.*availab")
-        self.assertEqual(self.event.__dict__, before)
-        self.session.commit.assert_not_called()
-        self.session.add.assert_not_called()
-        # A later current-role change enables safe retry on the same identity.
-        self.users[5].role = "coordinator"
-        retried = self.submit()
-        self.assertEqual(retried.status_code, 200, retried.get_json())
-        self.assertEqual(retried.get_json()["id"], 7)
-        self.assertEqual(self.event.coordinator_id, 5)
+        self.assertEqual(response.status_code, 200, response.get_json())
+        self.assertEqual(response.get_json()["status"], "submitted")
+        self.assertIsNone(self.event.coordinator_id)
+        self.session.commit.assert_called_once()
 
     # TC-28-15: AC4/6. Inject response-read failure; not proof of durable DB commit.
     def test_successful_submission_survives_post_commit_read_outage(self):

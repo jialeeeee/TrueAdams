@@ -26,13 +26,6 @@ from app.models import Event
 from tests import seed_data
 from tests.base import AppTestCase
 
-# Event Coordinator Leads, alongside seed_data.USERS (LS-SEED). lucy assigned nothing.
-LEADS = [
-    {"key": "lena", "email": "lena.lead@connectsphere.test", "role": "coordinator_lead"},
-    {"key": "liam", "email": "liam.lead@connectsphere.test", "role": "coordinator_lead"},
-    {"key": "lucy", "email": "lucy.lead@connectsphere.test", "role": "coordinator_lead"},
-]
-
 # LS-SEED. Times are Singapore time. `coordinator` and `assigned_by` are user keys.
 EVENTS = {
     "S1": ("Harbour Lights Festival", "submitted", "alice", "lena", datetime(2026, 12, 12, 17, 0)),
@@ -58,7 +51,7 @@ INVALID_FILTERS = ["abc", "1.5", "-3", "true", "²"]
 class LeadAssignedEventsTestCase(AppTestCase):
     def setUp(self):
         super().setUp()
-        self.users = self.seed_users(seed_data.USERS + LEADS)
+        self.users = self.seed_users(seed_data.USERS + seed_data.LEADS)
         self.events = {}
         for key, (title, status, coordinator, assigned_by, start) in EVENTS.items():
             self.events[key] = Event(
