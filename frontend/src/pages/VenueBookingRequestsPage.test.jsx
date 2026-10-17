@@ -251,3 +251,81 @@ describe("SCRUM-41 conflicts are shown before approval", () => {
     expect(screen.getByRole("status").textContent).toContain("You approved Aurora Ballroom");
   });
 });
+
+// SCRUM-87: Venue Staff place a tentative hold. Frontend cases TC-87-34 and 35 in
+// docs/test-cases/SCRUM-87-tentative-venue-hold.md; the API contract mirrors
+// backend/tests/test_venue_holds.py.
+describe("SCRUM-87 place a tentative hold", () => {
+  const HELD = {
+    data: {
+      message: "You placed a tentative hold on Aurora Ballroom for Harbour Lights Festival until 2027-03-01 17:00. alice.coordinator@connectsphere.test has been notified.",
+      booking: {
+        ...BOOKING, status: "tentative",
+        hold: { held_at: "2027-02-20T01:00:00", held_by: { id: 9, email: "gus.venue@connectsphere.test" }, expires_at: "2027-03-01T17:00:00" },
+      },
+      notification: { in_app: true, email_queued: true },
+    },
+  };
+  const expiryField = () => screen.getByLabelText("Hold expiry for Harbour Lights Festival");
+  const holdButton = () => screen.getByRole("button", { name: "Place tentative hold for Harbour Lights Festival" });
+
+  function httpFailure(status, data) {
+    return Object.assign(new Error(`Request failed with status ${status}`), {
+      isAxiosError: true, response: { status, data },
+    });
+  }
+
+  async function renderList() {
+    apiClient.get.mockResolvedValue({ data: { bookings: [BOOKING], message: null } });
+    const user = renderPage();
+    await screen.findByRole("listitem", { name: "Harbour Lights Festival" });
+    return user;
+  }
+
+  // TC-87-34 · AC1, AC2
+  it("places a tentative hold with the expiry entered", async () => {
+    apiClient.post.mockResolvedValue(HELD);
+    const user = await renderList();
+    apiClient.get.mockResolvedValue({ data: { bookings: [], message: "There are no pending venue requests." } });
+
+    await user.type(expiryField(), "2027-03-01T17:00");
+    await user.click(holdButton());
+
+    expect(apiClient.post).toHaveBeenCalledWith("/venues/bookings/11/hold", { expires_at: "2027-03-01T17:00" });
+    expect((await screen.findByRole("status")).textContent).toContain(
+      "You placed a tentative hold on Aurora Ballroom for Harbour Lights Festival until 2027-03-01 17:00.",
+    );
+    expect(await screen.findByText("There are no pending venue requests.")).toBeTruthy();
+    expect(screen.queryByRole("listitem", { name: "Harbour Lights Festival" })).toBeNull();
+    expect(apiClient.get).toHaveBeenCalledTimes(2);
+  });
+
+  // TC-87-35 · AC2, AC4, AC7
+  it.each([
+    ["an invalid expiry", httpFailure(400, { error: "The hold must expire no later than the booking's start (2027-03-12 16:00).", field: "expires_at" }),
+      "no later than the booking's start", null],
+    ["a clash with a hold", httpFailure(409, {
+      error: "This booking can't be placed on hold because it clashes with other arrangements at Aurora Ballroom.",
+      reason: "conflict",
+      conflicts: [{ type: "hold", id: 31, start: "2027-03-12T18:00:00", end: "2027-03-12T20:00:00", event: { id: 9, title: "Product Launch" }, expires_at: "2027-03-01T17:00:00" }],
+    }), "clashes with other arrangements", "Tentative hold for Product Launch until 2027-03-01 17:00, 2027-03-12 18:00 to 2027-03-12 20:00"],
+    ["a save failure", httpFailure(503, { error: "The hold was not saved, so the request is still pending. Please try again.", retryable: true }),
+      "still pending", null],
+    ["no network", new Error("Network Error"), "Check your connection and try again", null],
+  ])("explains a refused hold (%s) and keeps the request and expiry", async (_label, failure, message, conflictLine) => {
+    apiClient.post.mockRejectedValue(failure);
+    const user = await renderList();
+
+    await user.type(expiryField(), "2027-03-01T17:00");
+    await user.click(holdButton());
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain(message);
+    if (conflictLine) {
+      expect(Array.from(alert.querySelectorAll("li")).map((li) => li.textContent)).toEqual([conflictLine]);
+    }
+    expect(screen.getByRole("listitem", { name: "Harbour Lights Festival" })).toBeTruthy();
+    expect(expiryField().value).toBe("2027-03-01T17:00");
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+});
