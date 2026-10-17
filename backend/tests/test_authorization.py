@@ -1,6 +1,8 @@
 """SCRUM-27 authorization evidence for existing protected endpoints only.
 
-Confirmed SCRUM-27 rules supersede unrestricted coordinator reassignment.
+Confirmed SCRUM-27 rules supersede unrestricted coordinator reassignment. SCRUM-82 then
+made reassignment Lead-only: the admin override and the current coordinator's own
+reassignment are refused, so the reassignment cases below act as a Lead.
 These are Supabase-backed integration tests; run the isolated unit modules
 instead for fast local authorization checks (see the SCRUM-27 test cases).
 JWTs are issued directly here to isolate authorization from tested login code.
@@ -90,38 +92,43 @@ class AuthorizationEvidenceTests(AppTestCase):
         # Reuse the exact JWT that still contains a coordinator role claim.
         self.assert_denied_without_details(self.client.get(url, headers=headers))
 
+    # SCRUM-82: reassignment is the Lead's, so its role change is checked with a Lead.
     def test_event_access_and_reassignment_use_current_role_with_an_existing_token(self):
+        lead = self.make_user(role="coordinator_lead")
         target = self.make_user(role="coordinator")
         target_id = target.id
         url = f"/api/events/{self.event.id}/coordinator"
         eligible_url = f"/api/events/{self.event.id}/eligible-coordinators"
-        headers = self.auth_headers(self.coordinator)
+        headers, lead_headers = self.auth_headers(self.coordinator), self.auth_headers(lead)
         self.assertEqual(self.client.get(url, headers=headers).status_code, 200)
-        self.assertEqual(self.client.get(eligible_url, headers=headers).status_code, 200)
+        self.assertEqual(self.client.get(eligible_url, headers=lead_headers).status_code, 200)
         # A no-op reassignment reaches the business-rule 409 while authorised.
         self.assertEqual(self.client.put(
-            url, json={"coordinator_id": self.coordinator.id}, headers=headers,
+            url, json={"coordinator_id": self.coordinator.id}, headers=lead_headers,
         ).status_code, 409)
         before = self.event_state()
 
         self.coordinator.role = "attendee"
+        lead.role = "attendee"
         self.db.session.commit()
         self.db.session.expire_all()
 
         self.assert_denied_without_details(self.client.get(url, headers=headers))
-        self.assert_denied_without_details(self.client.get(eligible_url, headers=headers))
-        response = self.client.put(url, json={"coordinator_id": target_id}, headers=headers)
+        self.assert_denied_without_details(self.client.get(eligible_url, headers=lead_headers))
+        response = self.client.put(url, json={"coordinator_id": target_id}, headers=lead_headers)
         self.assert_denied_without_details(response)
         self.assertEqual(self.event_state(), before)
 
+    # SCRUM-82: the admin and the event's current coordinator are refused too.
     def test_unauthorized_reassignment_preserves_every_persisted_event_field(self):
         target = self.make_user(role="coordinator")
         target_id = target.id
         url = f"/api/events/{self.event.id}/coordinator"
         before = self.event_state()
-        for role in ("organiser", "attendee", "venue_staff", "tech_staff"):
+        own = {"organiser": self.organiser, "coordinator": self.coordinator}
+        for role in ("organiser", "attendee", "venue_staff", "tech_staff", "admin", "coordinator"):
             with self.subTest(role=role):
-                caller = self.organiser if role == "organiser" else self.make_user(role=role)
+                caller = own.get(role) or self.make_user(role=role)
                 response = self.client.put(
                     url, json={"coordinator_id": target_id}, headers=self.auth_headers(caller),
                 )
@@ -143,22 +150,30 @@ class AuthorizationEvidenceTests(AppTestCase):
         self.assert_denied_without_details(self.client.get(
             f"/api/events/{event_id}/eligible-coordinators", headers=headers))
 
-    # TC-27-03: original tokens are reused across the real persisted reassignment.
+    # TC-27-03: original tokens are reused across the real persisted reassignment. Since
+    # SCRUM-82 a Lead makes it, and neither coordinator may list replacements.
     def test_reassignment_moves_event_specific_read_and_write_privileges(self):
+        lead = self.make_user(role="coordinator_lead")
         replacement = self.make_user(role="coordinator")
         event_id, replacement_id = self.event.id, replacement.id
         previous_headers, new_headers = self.auth_headers(self.coordinator), self.auth_headers(replacement)
-        response = self.client.put(f"/api/events/{event_id}/coordinator",
-                                   json={"coordinator_id": replacement_id}, headers=previous_headers)
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(self.event_state()["coordinator_id"], replacement_id)
-        for suffix in ("planning", "review", "clarifications", "eligible-coordinators"):
-            with self.subTest(read=suffix):
-                url = f"/api/events/{event_id}/{suffix}"
-                self.assert_denied_without_details(self.client.get(url, headers=previous_headers))
-                self.assertEqual(self.client.get(url, headers=new_headers).status_code, 200)
-        before = self.event_state()
         with mock.patch.object(tasks.send_notification_email, "delay") as email:
+            response = self.client.put(f"/api/events/{event_id}/coordinator",
+                                       json={"coordinator_id": replacement_id},
+                                       headers=self.auth_headers(lead))
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(self.event_state()["coordinator_id"], replacement_id)
+            for suffix in ("planning", "review", "clarifications"):
+                with self.subTest(read=suffix):
+                    url = f"/api/events/{event_id}/{suffix}"
+                    self.assert_denied_without_details(self.client.get(url, headers=previous_headers))
+                    self.assertEqual(self.client.get(url, headers=new_headers).status_code, 200)
+            for headers in (previous_headers, new_headers):
+                self.assert_denied_without_details(self.client.get(
+                    f"/api/events/{event_id}/eligible-coordinators", headers=headers))
+            before = self.event_state()
+            notified = Notification.query.filter_by(event_id=event_id).count()
+            email.reset_mock()
             for method, suffix, body in (("PATCH", "", {"title": "Unauthorized"}),
                                          ("POST", "/decision", {"decision": "approve"}),
                                          ("POST", "/clarifications", {"message": "Unauthorized?"}),
@@ -168,7 +183,7 @@ class AuthorizationEvidenceTests(AppTestCase):
                                                 json=body, headers=previous_headers)
                     self.assert_denied_without_details(response)
                     self.assertEqual(self.event_state(), before)
-            self.assertEqual(Notification.query.filter_by(event_id=event_id).count(), 0)
+            self.assertEqual(Notification.query.filter_by(event_id=event_id).count(), notified)
             email.assert_not_called()
             self.assertEqual(self.client.patch(f"/api/events/{event_id}",
                 json={"description": "Authorized update"}, headers=new_headers).status_code, 200)
@@ -179,6 +194,7 @@ class AuthorizationEvidenceTests(AppTestCase):
         self.assertEqual(self.event_state()["status"], "approved")
 
     # TC-27-04: no manual initial assignment, including the retained admin exception.
+    # SCRUM-82: a Lead may reassign, but an unassigned event goes through the queue (409).
     def test_unassigned_event_cannot_be_assigned_through_reassignment_api(self):
         self.event.coordinator_id = None
         self.db.session.commit()
@@ -190,6 +206,12 @@ class AuthorizationEvidenceTests(AppTestCase):
                 json={"coordinator_id": target_id}, headers=self.auth_headers(caller))
             self.assert_denied_without_details(response)
             self.assertEqual(self.event_state(), before)
+        lead = self.make_user(role="coordinator_lead")
+        response = self.client.put(f"/api/events/{self.event.id}/coordinator",
+            json={"coordinator_id": target_id}, headers=self.auth_headers(lead))
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.get_json()["reason"], "not_assigned")
+        self.assertEqual(self.event_state(), before)
 
     # TC-27-05: historical ownership is insufficient; new-role access is retained.
     def test_former_organiser_loses_owner_only_reads_with_original_token(self):
@@ -216,6 +238,7 @@ class AuthorizationEvidenceTests(AppTestCase):
 
     # TC-27-07: extra identity/relationship fields cannot be smuggled with a valid target.
     def test_forged_reassignment_fields_leave_all_persisted_fields_unchanged(self):
+        lead = self.make_user(role="coordinator_lead")  # SCRUM-82: only a Lead gets past 403.
         replacement = self.make_user(role="coordinator")
         replacement_id = replacement.id
         before = self.event_state()
@@ -223,6 +246,6 @@ class AuthorizationEvidenceTests(AppTestCase):
             with self.subTest(field=field):
                 response = self.client.put(f"/api/events/{self.event.id}/coordinator",
                     json={"coordinator_id": replacement_id, field: replacement_id},
-                    headers=self.auth_headers(self.coordinator))
+                    headers=self.auth_headers(lead))
                 self.assertEqual(response.status_code, 400)
                 self.assertEqual(self.event_state(), before)

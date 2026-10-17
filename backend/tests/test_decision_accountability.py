@@ -24,6 +24,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import OperationalError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from app import tasks
 from tests.test_event_decisions import REASON, DecisionTestCase
 
 REASON_REQUIRED = "A reason is required to reject this request."
@@ -72,14 +73,17 @@ class WhoAndWhenTests(AccountabilityTestCase):
                 self.assertEqual(request["decided_at"], stored["decided_at"].isoformat())
 
     # TC-60-02 · AC1 (boundary, Q1) — reassigning the event later does not change who decided.
+    # Since SCRUM-82 a Lead, not an admin, reassigns.
     def test_reassigning_the_event_later_does_not_change_who_decided(self):
         self.decide("R1", "reject", reason=REASON)
         decided_at = self.stored("R1")["decided_at"].isoformat()
+        lead = self.make_user(role="coordinator_lead")
 
-        reassigned = self.client.put(
-            f"/api/events/{self.requests['R1'].id}/coordinator",
-            json={"coordinator_id": self.users["ben"].id},
-            headers=self.auth_headers(self.users["admin"]))
+        with mock.patch.object(tasks.send_notification_email, "delay"):
+            reassigned = self.client.put(
+                f"/api/events/{self.requests['R1'].id}/coordinator",
+                json={"coordinator_id": self.users["ben"].id},
+                headers=self.auth_headers(lead))
         self.assertEqual(reassigned.status_code, 200, reassigned.get_json())
 
         review = self.review("R1", as_user="ben")

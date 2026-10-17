@@ -20,9 +20,11 @@ Endpoints (JWT required, else 401; unknown event -> 404)
     Errors are {"error": "<message shown to the user>"}.
 
 Assignment rules
-    - SCRUM-27: only the current coordinator or the documented admin override
-      may reassign an already assigned event or list its eligible replacements.
-      Initial assignment belongs to automatic submission, not this API.
+    - SCRUM-82 (replacing SCRUM-27's rule): only Event Coordinator Leads may
+      reassign an already assigned event or list its eligible replacements;
+      administrators and the current coordinator are refused (a coordinator asks
+      through SCRUM-61). An event with no coordinator is assigned from the
+      SCRUM-81 queue, not this API (409).
     - Eligible = users whose role is "coordinator", excluding the event's current
       coordinator. A coordinator may be the main coordinator of several events.
     - Events in NON_ASSIGNABLE_STATUSES cannot be (re)assigned.
@@ -61,7 +63,7 @@ class CoordinatorTestCase(AppTestCase):
 
     def setUp(self):
         super().setUp()
-        self.users = self.seed_users(seed_data.USERS)
+        self.users = self.seed_users(seed_data.USERS + seed_data.LEADS)
         self.events = self.seed_events(seed_data.EVENTS, self.users)
 
     # ---------- Requests ----------
@@ -78,7 +80,7 @@ class CoordinatorTestCase(AppTestCase):
         )
 
     def assign(self, event_id, coordinator_id, as_user=None):
-        as_user = as_user or self.users["admin"]
+        as_user = as_user or self.users["lena"]
         return self.client.put(
             f"/api/events/{event_id}/coordinator",
             json={"coordinator_id": coordinator_id},
@@ -199,7 +201,7 @@ class ViewCurrentCoordinatorTests(CoordinatorTestCase):
         self.assertEqual(response.status_code, 401)
 
     def test_token_for_a_deleted_user_is_rejected(self):
-        ghost = self.make_user(role="admin")
+        ghost = self.make_user(role="coordinator_lead")
         headers = self.auth_headers(ghost)
         self.db.session.delete(ghost)
         self.db.session.commit()
@@ -224,7 +226,7 @@ class ViewCurrentCoordinatorTests(CoordinatorTestCase):
 
 class EligibleCoordinatorTests(CoordinatorTestCase):
     def test_lists_every_user_with_the_coordinator_role(self):
-        response = self.get_eligible(self.events["assigned"].id, self.users["alice"])
+        response = self.get_eligible(self.events["assigned"].id, self.users["lena"])
 
         self.assertEqual(
             self.eligible_ids(response),
@@ -232,13 +234,13 @@ class EligibleCoordinatorTests(CoordinatorTestCase):
         )
 
     def test_listing_includes_contact_details_for_selection(self):
-        response = self.get_eligible(self.events["assigned"].id, self.users["alice"])
+        response = self.get_eligible(self.events["assigned"].id, self.users["lena"])
 
         by_id = {c["id"]: c for c in response.get_json()["coordinators"]}
         self.assert_coordinator_payload(by_id[self.users["ben"].id], self.users["ben"])
 
     def test_never_lists_users_without_the_coordinator_role(self):
-        response = self.get_eligible(self.events["assigned"].id, self.users["admin"])
+        response = self.get_eligible(self.events["assigned"].id, self.users["lena"])
 
         ids = self.eligible_ids(response)
         for key in ("admin", "dana", "evan", "farah", "gus", "hana"):
@@ -246,7 +248,7 @@ class EligibleCoordinatorTests(CoordinatorTestCase):
                 self.assertNotIn(self.users[key].id, ids)
 
     def test_excludes_the_events_current_coordinator(self):
-        response = self.get_eligible(self.events["assigned"].id, self.users["admin"])
+        response = self.get_eligible(self.events["assigned"].id, self.users["lena"])
 
         self.assertEqual(
             self.eligible_ids(response), {self.users["ben"].id, self.users["chloe"].id}
@@ -254,7 +256,7 @@ class EligibleCoordinatorTests(CoordinatorTestCase):
 
     def test_coordinator_of_another_event_is_still_eligible(self):
         # Ben already coordinates Evan's event.
-        response = self.get_eligible(self.events["assigned"].id, self.users["alice"])
+        response = self.get_eligible(self.events["assigned"].id, self.users["lena"])
 
         self.assertIn(self.users["ben"].id, self.eligible_ids(response))
 
@@ -263,7 +265,7 @@ class EligibleCoordinatorTests(CoordinatorTestCase):
         event = self.events["assigned"]
         before = self.snapshot(event)
 
-        response = self.get_eligible(event.id, self.users["admin"])
+        response = self.get_eligible(event.id, self.users["lena"])
 
         self.assertEqual(response.status_code, 200)
         body = response.get_json()
@@ -275,21 +277,22 @@ class EligibleCoordinatorTests(CoordinatorTestCase):
     def test_informs_the_user_when_there_are_no_coordinators_at_all(self):
         self.demote_other_coordinators()
 
-        response = self.get_eligible(self.events["assigned"].id, self.users["admin"])
+        response = self.get_eligible(self.events["assigned"].id, self.users["lena"])
 
         body = response.get_json()
         self.assertEqual(body["coordinators"], [])
         self.assertTrue(body["message"].strip())
 
     def test_message_is_null_when_coordinators_are_available(self):
-        response = self.get_eligible(self.events["assigned"].id, self.users["alice"])
+        response = self.get_eligible(self.events["assigned"].id, self.users["lena"])
 
         self.assertIsNone(response.get_json()["message"])
 
+    # SCRUM-82: the admin and the current coordinator (alice) are refused too.
     def test_only_assigners_can_list_eligible_coordinators(self):
         event = self.events["assigned"]
 
-        for key in ("ben", "chloe", "dana", "farah", "gus", "hana"):
+        for key in ("admin", "alice", "ben", "chloe", "dana", "farah", "gus", "hana"):
             with self.subTest(user=key):
                 self.assert_error(self.get_eligible(event.id, self.users[key]), 403)
 
@@ -301,7 +304,7 @@ class EligibleCoordinatorTests(CoordinatorTestCase):
         self.assertEqual(response.status_code, 401)
 
     def test_listing_for_an_unknown_event_returns_not_found(self):
-        self.assert_error(self.get_eligible(self.missing_id(Event), self.users["admin"]), 404)
+        self.assert_error(self.get_eligible(self.missing_id(Event), self.users["lena"]), 404)
 
 
 class AssignCoordinatorTests(CoordinatorTestCase):
@@ -310,7 +313,7 @@ class AssignCoordinatorTests(CoordinatorTestCase):
         replacement = self.users["ben"]
 
         before_request = datetime.utcnow()
-        response = self.assign(event.id, replacement.id, as_user=self.users["alice"])
+        response = self.assign(event.id, replacement.id, as_user=self.users["lena"])
         after_request = datetime.utcnow()
 
         self.assertEqual(response.status_code, 200)
@@ -341,7 +344,7 @@ class AssignCoordinatorTests(CoordinatorTestCase):
         self.assertEqual(self.reload(event).status, "submitted")
 
     def test_every_assigner_role_can_assign(self):
-        for key, event_key in (("admin", "assigned"), ("ben", "evans_event")):
+        for key, event_key in (("lena", "assigned"), ("liam", "evans_event")):
             with self.subTest(assigner=key):
                 event = self.events[event_key]
                 target = self.users["chloe"]
@@ -372,7 +375,7 @@ class AssignCoordinatorTests(CoordinatorTestCase):
         event = self.events["assigned"]
         before = self.snapshot(event)
 
-        for key in ("admin", "dana", "farah", "gus", "hana"):
+        for key in ("admin", "lena", "dana", "farah", "gus", "hana"):
             with self.subTest(selected=key):
                 self.assert_error(self.assign(event.id, self.users[key].id), 422)
                 self.assert_unchanged(event, before)
@@ -400,7 +403,7 @@ class AssignCoordinatorTests(CoordinatorTestCase):
         event = self.events["assigned"]
         before = self.snapshot(event)
         url = f"/api/events/{event.id}/coordinator"
-        headers = self.auth_headers(self.users["admin"])
+        headers = self.auth_headers(self.users["lena"])
 
         bodies = {
             "missing coordinator_id": {"json": {}},
@@ -419,8 +422,9 @@ class AssignCoordinatorTests(CoordinatorTestCase):
         event = self.events["assigned"]
         before = self.snapshot(event)
 
-        # Includes Dana, the event's own organiser.
-        for key in ("ben", "chloe", "dana", "evan", "farah", "gus", "hana"):
+        # Includes Dana, the event's own organiser, and (SCRUM-82) the admin and the
+        # current coordinator, alice.
+        for key in ("admin", "alice", "ben", "chloe", "dana", "evan", "farah", "gus", "hana"):
             with self.subTest(user=key):
                 response = self.assign(event.id, self.users["chloe"].id, as_user=self.users[key])
 
@@ -491,7 +495,7 @@ class ReassignCoordinatorTests(CoordinatorTestCase):
 
         self.assign(event.id, self.users["ben"].id)
 
-        response = self.get_eligible(event.id, self.users["admin"])
+        response = self.get_eligible(event.id, self.users["lena"])
         self.assertEqual(
             self.eligible_ids(response), {self.users["alice"].id, self.users["chloe"].id}
         )
@@ -544,6 +548,7 @@ class SaveFailureTests(CoordinatorTestCase):
         ):
             return self.assign(event_id, coordinator_id)
 
+    # SCRUM-82 A2: even a Lead is refused (409); the queue assigns it (SCRUM-81).
     def test_manual_initial_assignment_is_refused_without_a_commit(self):
         event = self.events["unassigned"]
         before = self.snapshot(event)
@@ -552,7 +557,7 @@ class SaveFailureTests(CoordinatorTestCase):
             response = self.assign(event.id, self.users["alice"].id)
 
             commit.assert_not_called()
-        self.assert_error(response, 403)
+        self.assert_error(response, 409)
         self.assert_unchanged(event, before)
 
     def test_failed_reassignment_keeps_previous_coordinator(self):

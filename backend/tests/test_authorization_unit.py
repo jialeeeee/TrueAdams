@@ -21,29 +21,33 @@ class EventPermissionTests(unittest.TestCase):
     def user(self, role, user_id=3):
         return SimpleNamespace(id=user_id, role=role)
 
-    def test_only_current_coordinator_and_documented_admin_can_reassign(self):
-        self.assertTrue(rules["can_reassign_coordinator"](self.user("coordinator", 2), self.event))
-        self.assertTrue(rules["can_reassign_coordinator"](self.user("admin"), self.event))
-        for role in ("organiser", "attendee", "venue_staff", "tech_staff", "unknown"):
+    # SCRUM-82: only Event Coordinator Leads reassign; the event's current coordinator
+    # and the former admin override are refused.
+    def test_only_leads_can_reassign(self):
+        self.assertTrue(rules["is_coordinator_lead"](self.user("coordinator_lead")))
+        for role in ("coordinator", "admin", "organiser", "attendee", "venue_staff",
+                     "tech_staff", "unknown"):
             with self.subTest(role=role):
-                self.assertFalse(rules["can_reassign_coordinator"](self.user(role, 2), self.event))
+                self.assertFalse(rules["is_coordinator_lead"](self.user(role, 2)))
+        self.assertFalse(rules["is_coordinator_lead"](None))
 
     def test_unrelated_coordinator_cannot_reassign_or_self_assign(self):
-        self.assertFalse(rules["can_reassign_coordinator"](self.user("coordinator"), self.event))
+        self.assertFalse(rules["is_coordinator_lead"](self.user("coordinator")))
         self.assertEqual(self.event.coordinator_id, 2)
 
+    # SCRUM-82: no non-Lead may; a Lead is sent to the SCRUM-81 queue by the route (409).
     def test_unassigned_event_has_no_manual_initial_assignment(self):
         self.event.coordinator_id = None
         for role in ("coordinator", "admin", "organiser", "attendee", "venue_staff", "tech_staff"):
             with self.subTest(role=role):
-                self.assertFalse(rules["can_reassign_coordinator"](self.user(role), self.event))
+                self.assertFalse(rules["is_coordinator_lead"](self.user(role)))
 
     def test_event_access_moves_to_new_coordinator(self):
         previous, replacement = self.user("coordinator", 2), self.user("coordinator", 3)
         self.assertTrue(rules["is_current_coordinator"](previous, self.event))
         self.assertFalse(rules["is_current_coordinator"](replacement, self.event))
         self.event.coordinator_id = replacement.id
-        for rule in ("is_current_coordinator", "can_reassign_coordinator", "can_view_clarifications"):
+        for rule in ("is_current_coordinator", "can_view_clarifications"):
             with self.subTest(rule=rule):
                 self.assertFalse(rules[rule](previous, self.event))
                 self.assertTrue(rules[rule](replacement, self.event))

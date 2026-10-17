@@ -79,6 +79,19 @@ describe("SCRUM-83 events a Lead assigned", () => {
     ]);
   });
 
+  // SCRUM-82 TC-82-13 · AC1 — each event starts a reassignment.
+  it("links each event to its reassign page", async () => {
+    apiClient.get.mockResolvedValue(loaded());
+    renderPage();
+
+    await screen.findByRole("heading", { name: "Alumni Mixer" });
+    for (const event of EVENTS) {
+      const row = item(event.title || "Not recorded");
+      expect(row.getByRole("link", { name: "Reassign coordinator" }).getAttribute("href"))
+        .toBe(`/events/${event.id}/change-coordinator`);
+    }
+  });
+
   it("shows a missing name and proposed date as Not recorded", async () => {
     apiClient.get.mockResolvedValue(loaded());
     renderPage();
