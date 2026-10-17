@@ -60,48 +60,37 @@ export default function VenueBookingRequestsPage() {
     }
   }, []);
 
-  const approve = async (booking) => {
+  // Approving (SCRUM-40) or holding (SCRUM-87) a request: on success the request leaves
+  // the list, which is reloaded so the rest show any new clash (SCRUM-41 A6). On failure
+  // it stays listed and pending, with what was entered, so it can be tried again.
+  const decide = async (booking, send, fallback) => {
     setConfirmation("");
     setActionError(null);
     try {
-      const response = await apiClient.post(`/venues/bookings/${booking.id}/approve`);
+      const response = await send();
       setConfirmation(response.data.message);
       setResult((current) => ({
         ...current,
         bookings: current.bookings.filter((b) => b.id !== booking.id),
       }));
-      // SCRUM-41: reloaded so the remaining requests show any clash with this booking (A6).
       load();
     } catch (failure) {
-      // The request stays listed and pending, so it can be approved later (AC5, AC6).
       setActionError({
-        message: explain(failure, NOT_APPROVED),
+        message: explain(failure, fallback),
         conflicts: failure.response?.data?.conflicts ?? [],
       });
     }
   };
 
-  const placeHold = async (booking) => {
-    setConfirmation("");
-    setActionError(null);
-    try {
-      const response = await apiClient.post(`/venues/bookings/${booking.id}/hold`, {
-        expires_at: expiries[booking.id],
-      });
-      setConfirmation(response.data.message);
-      setResult((current) => ({
-        ...current,
-        bookings: current.bookings.filter((b) => b.id !== booking.id),
-      }));
-      load();
-    } catch (failure) {
-      // The request and the entered expiry stay, so the hold can be tried again (AC7).
-      setActionError({
-        message: explain(failure, NOT_HELD),
-        conflicts: failure.response?.data?.conflicts ?? [],
-      });
-    }
-  };
+  const approve = (booking) =>
+    decide(booking, () => apiClient.post(`/venues/bookings/${booking.id}/approve`), NOT_APPROVED);
+
+  const placeHold = (booking) =>
+    decide(
+      booking,
+      () => apiClient.post(`/venues/bookings/${booking.id}/hold`, { expires_at: expiries[booking.id] }),
+      NOT_HELD,
+    );
 
   useEffect(() => {
     load();

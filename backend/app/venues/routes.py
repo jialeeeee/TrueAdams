@@ -566,8 +566,12 @@ CONFIRMED = scheduling.BLOCKING_BOOKING_STATUS
 APPROVAL_NOTIFICATION = "venue_booking_approved"
 
 
+def _when(value):
+    return f"{value:%Y-%m-%d %H:%M}"
+
+
 def _period_text(start, end):
-    return f"{start:%Y-%m-%d %H:%M} to {end:%Y-%m-%d %H:%M}"
+    return f"{_when(start)} to {_when(end)}"
 
 
 def _conflict(kind, record, **details):
@@ -626,20 +630,20 @@ def _locked_venue_and_conflicts(booking, outcome="the booking was not approved")
         ) from None
 
 
-def _queue_approval_email(to_address, title, venue_name, message, event_id):
-    """Queue the coordinator's email; False if the queue could not be reached.
+def _queue_coordinator_email(to_address, subject, message, event_id):
+    """Queue the coordinator's email about a venue decision; False if the queue could
+    not be reached.
 
-    The approval and in-app notification are already saved by then, so a broker
+    The decision and its in-app notification are already saved by then, so a broker
     outage must not undo or hide them. It takes plain values, not models.
     """
     try:
         tasks.send_notification_email.delay(
-            to_address,
-            f"Venue confirmed for {title}: {venue_name}",
+            to_address, subject,
             f"{message}\n\nSign in to ConnectSphere to see the event's planning information.",
         )
     except Exception:
-        current_app.logger.exception("Could not queue venue approval email for event %s",
+        current_app.logger.exception("Could not queue venue booking email for event %s",
                                      event_id)
         return False
     return True
@@ -714,7 +718,8 @@ def approve_booking(booking_id: int):
             503, retryable=True,
         )
 
-    email_queued = _queue_approval_email(to_address, title, venue_name, message, event_id)
+    email_queued = _queue_coordinator_email(
+        to_address, f"Venue confirmed for {title}: {venue_name}", message, event_id)
     return jsonify({
         "message": f"You approved {venue_name} for {title}. {to_address} has been notified.",
         "booking": payload,
@@ -729,10 +734,6 @@ HOLD_PLACED_NOTIFICATION = "venue_hold_placed"
 HOLD_CHANGED_NOTIFICATION = "venue_hold_expiry_changed"
 # The only field a hold or a change of its expiry takes (A2).
 HOLD_FIELDS = {"expires_at"}
-
-
-def _when(value):
-    return f"{value:%Y-%m-%d %H:%M}"
 
 
 def _hold_expiry(body, booking):
@@ -766,23 +767,6 @@ def _hold_payload(booking):
             "expires_at": booking.hold_expires_at.isoformat(),
         },
     }
-
-
-def _queue_hold_email(to_address, subject, message, event_id):
-    """Queue the coordinator's email; False if the queue could not be reached.
-
-    The hold and its in-app notification are already saved by then, so a broker outage
-    must not undo them. It takes plain values, not models.
-    """
-    try:
-        tasks.send_notification_email.delay(
-            to_address, subject,
-            f"{message}\n\nSign in to ConnectSphere to see the event's planning information.",
-        )
-    except Exception:
-        current_app.logger.exception("Could not queue venue hold email for event %s", event_id)
-        return False
-    return True
 
 
 @venues_bp.post("/bookings/<int:booking_id>/hold")
@@ -837,7 +821,7 @@ def place_hold(booking_id: int):
             503, retryable=True,
         )
 
-    email_queued = _queue_hold_email(
+    email_queued = _queue_coordinator_email(
         to_address, f"Tentative hold on {venue_name} for {title}", message, event_id)
     return jsonify({
         "message": (
@@ -896,7 +880,7 @@ def change_hold_expiry(booking_id: int):
             "Please try again.", 503, retryable=True,
         )
 
-    email_queued = _queue_hold_email(
+    email_queued = _queue_coordinator_email(
         to_address, f"Tentative hold on {venue_name} for {title}: new expiry", message,
         event_id)
     return jsonify({
