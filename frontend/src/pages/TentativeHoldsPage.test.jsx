@@ -64,6 +64,17 @@ describe("SCRUM-87 tentative holds for Venue Staff", () => {
     expect(expiryField().value).toBe("2027-03-01T17:00");
   });
 
+  // TC-87-36 · AC3 — a venue whose location is not recorded shows only its name.
+  it("shows only the venue's name when its location is not recorded", async () => {
+    apiClient.get.mockResolvedValue({
+      data: { holds: [{ ...HOLD, venue: { ...HOLD.venue, location: null } }], message: null },
+    });
+    renderPage();
+
+    const item = await screen.findByRole("listitem", { name: "Harbour Lights Festival" });
+    expect(within(item).getByText("Venue: Aurora Ballroom")).toBeTruthy();
+  });
+
   // TC-87-36 · AC3
   it("shows the empty state", async () => {
     apiClient.get.mockResolvedValue({ data: { holds: [], message: "There are no tentative holds." } });

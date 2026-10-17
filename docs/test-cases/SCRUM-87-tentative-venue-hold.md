@@ -2,7 +2,7 @@
 
 **User story:** As Venue Staff, I want to approve a venue booking request as a tentative hold with an expiry date and time that I set, so that the coordinator can finalise the event without the venue being held indefinitely.
 
-**Created:** 17 Oct 2026 · **Status of all cases:** Not yet run · **Automated tests:** `backend/tests/test_venue_holds.py`, `frontend/src/pages/VenueBookingRequestsPage.test.jsx`, `frontend/src/pages/TentativeHoldsPage.test.jsx`, `frontend/src/pages/VenueAvailabilityPage.test.jsx` · **Related:** Week 7 customer change 4 (tentative venue holds expire), SCRUM-40 (approving a request), SCRUM-41 (conflict checks), SCRUM-64 (calendar rules), SCRUM-37 (venue search)
+**Created:** 17 Oct 2026 · **Status of all cases:** Automated cases pass (17 Oct 2026, local PostgreSQL with db/venue_booking_holds.sql applied + Vitest); frontend cases 34–38 also to be checked manually in the browser · **Automated tests:** `backend/tests/test_venue_holds.py`, `frontend/src/pages/VenueBookingRequestsPage.test.jsx`, `frontend/src/pages/TentativeHoldsPage.test.jsx`, `frontend/src/pages/VenueAvailabilityPage.test.jsx` · **Related:** Week 7 customer change 4 (tentative venue holds expire), SCRUM-40 (approving a request), SCRUM-41 (conflict checks), SCRUM-64 (calendar rules), SCRUM-37 (venue search)
 
 ## Acceptance criteria
 
@@ -399,7 +399,7 @@ SCRUM-40's VA-SEED, reset before **every** test case:
 **TC-87-36 · Holds page: the unexpired holds**
 - **Traces to:** AC3 · **Type:** Happy path (frontend)
 - **Expected result:**
-  - **Each hold** shows its event, venue, period, "Expires: 2027-03-01 17:00" and who held it.
+  - **Each hold** shows its event, venue, period, "Expires: 2027-03-01 17:00" and who held it. A venue with no recorded location shows only its name.
   - **An empty list** shows the server's message.
   - **A load failure** shows the error with Retry.
   - **A 403** shows its message with no Retry.

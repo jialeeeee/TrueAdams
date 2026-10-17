@@ -12,16 +12,21 @@ from ..models import VenueBlock, VenueBooking
 # Only confirmed bookings make a venue unavailable; pending, rejected and cancelled
 # ones do not (open question Q2 in the SCRUM-36 test cases).
 BLOCKING_BOOKING_STATUS = "confirmed"
+# A tentative hold blocks its time too, but only until it expires (SCRUM-87 A3).
+TENTATIVE_STATUS = "tentative"
 
 AVAILABLE = "available"
 UNAVAILABLE = "unavailable"
 HOURS_NOT_RECORDED = "hours_not_recorded"
-# Why time is unavailable, in the order a slot lists them (SCRUM-64 A1). Bookings and
-# blocks are named as on the calendar's list of periods.
+# Time covered only by an unexpired hold (SCRUM-87 A3).
+TENTATIVE = "tentative"
+# Why time is unavailable or tentative, in the order a slot lists them (SCRUM-64 A1,
+# SCRUM-87 A3). Bookings, blocks and holds are named as on the calendar's periods.
 BOOKING = "booking"
 BLOCK = "block"
+HOLD = "hold"
 OUTSIDE_HOURS = "outside_operating_hours"
-CAUSES = [BOOKING, BLOCK, OUTSIDE_HOURS]
+CAUSES = [BOOKING, BLOCK, HOLD, OUTSIDE_HOURS]
 
 DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 # One "Mon-Fri 09:00-18:00" or "Sat 10:00-14:00" part of an operating-hours text.
@@ -84,6 +89,17 @@ def blocks(venue_ids, start, end):
     return overlapping(query, VenueBlock, start, end).all()
 
 
+def unexpired_holds(now):
+    """Tentative holds whose expiry is later than `now`; at its expiry a hold has expired."""
+    return VenueBooking.query.filter(VenueBooking.status == TENTATIVE_STATUS,
+                                     VenueBooking.hold_expires_at > now)
+
+
+def holds(venue_ids, start, end, now):
+    query = unexpired_holds(now).filter(VenueBooking.venue_id.in_(venue_ids))
+    return overlapping(query, VenueBooking, start, end).all()
+
+
 def within_hours(hours, start, end):
     """Whether [start, end), within one day, falls inside the venue's opening hours."""
     opening = hours.get(start.weekday()) if hours is not None else None
@@ -96,9 +112,10 @@ def within_hours(hours, start, end):
 def day_slots(day, hours, periods):
     """Split one day into slots of consistent status and causes, 00:00 to next 00:00.
 
-    `periods` are (kind, start, end) for confirmed bookings ("booking") and blocks
-    ("block"). Time is unavailable while one covers it or outside the operating
-    hours, and each slot lists every cause (SCRUM-64 A1-A3).
+    `periods` are (kind, start, end) for confirmed bookings ("booking"), blocks
+    ("block") and unexpired holds ("hold"). Time is unavailable while a booking or
+    block covers it or outside the operating hours, and tentative while only a hold
+    covers it. Each slot lists every cause (SCRUM-64 A1-A3, SCRUM-87 A3).
     """
     day_start = datetime.combine(day, time())
     day_end = day_start + timedelta(days=1)
@@ -124,8 +141,10 @@ def day_slots(day, hours, periods):
         if hours is not None and not (opening and opens <= start < closes):
             kinds.add(OUTSIDE_HOURS)
         causes = [cause for cause in CAUSES if cause in kinds]
-        if causes:
+        if kinds - {HOLD}:
             status = UNAVAILABLE
+        elif causes:
+            status = TENTATIVE
         elif hours is None:
             status = HOURS_NOT_RECORDED
         else:

@@ -171,13 +171,16 @@ def _date_range(args):
 
 
 def _period(kind, record):
-    return {
+    period = {
         "type": kind,
         "id": record.id,
         "start": record.start_time.isoformat(),
         "end": record.end_time.isoformat(),
         "reason": getattr(record, "reason", None),
     }
+    if kind == scheduling.HOLD:
+        period["expires_at"] = record.hold_expires_at.isoformat()  # SCRUM-87 A3
+    return period
 
 
 def _availability(venue, first, last):
@@ -187,6 +190,8 @@ def _availability(venue, first, last):
     records = [(scheduling.BOOKING, b)
                for b in scheduling.blocking_bookings([venue.id], start, end)]
     records += [(scheduling.BLOCK, b) for b in scheduling.blocks([venue.id], start, end)]
+    records += [(scheduling.HOLD, h)
+                for h in scheduling.holds([venue.id], start, end, singapore_now())]
     records.sort(key=lambda r: (r[1].start_time, r[1].end_time, r[0], r[1].id))
 
     hours = scheduling.parse_operating_hours(venue.operating_hours)
@@ -337,6 +342,8 @@ def _search(filters):
         ids = [r["id"] for r in results]
         taken = {b.venue_id for b in scheduling.blocking_bookings(ids, start, end)}
         taken |= {b.venue_id for b in scheduling.blocks(ids, start, end)}
+        # A venue held for the time is not offered either (SCRUM-87 A3, open question Q2).
+        taken |= {h.venue_id for h in scheduling.holds(ids, start, end, singapore_now())}
         results = [r for r in results if r["id"] not in taken]
 
     return results
@@ -582,6 +589,11 @@ def _approval_conflicts(booking):
             "booking", other, event={"id": event.id, "title": event.title} if event else None))
     for block in scheduling.blocks(*period):
         conflicts.append(_conflict("block", block, reason=block.reason))
+    # An unexpired tentative hold blocks its time until it expires (SCRUM-87 A3).
+    for hold in scheduling.holds(*period, singapore_now()):
+        event = db.session.get(Event, hold.event_id)
+        conflicts.append(_conflict("hold", hold, event={"id": event.id, "title": event.title},
+                                   expires_at=hold.hold_expires_at.isoformat()))
     # An event can have only one confirmed venue (A3).
     for existing in VenueBooking.query.filter_by(event_id=booking.event_id, status=CONFIRMED):
         venue = db.session.get(Venue, existing.venue_id)
@@ -590,18 +602,18 @@ def _approval_conflicts(booking):
     return sorted(conflicts, key=lambda conflict: conflict["start"])
 
 
-def _clash(venue, conflicts):
+def _clash(venue, conflicts, refused="approved"):
     """The refusal for a booking that clashes with other arrangements at `venue`."""
     return _Rejected(
-        "This booking can't be approved because it clashes with other arrangements "
+        f"This booking can't be {refused} because it clashes with other arrangements "
         f"at {venue.name}.", 409, reason="conflict", conflicts=conflicts)
 
 
-def _locked_venue_and_conflicts(booking):
+def _locked_venue_and_conflicts(booking, outcome="the booking was not approved"):
     """Lock the booking's venue, then find its conflicts (A7; SCRUM-41 A5).
 
-    Without a completed check the booking is never confirmed, so a database failure
-    here is reported as availability that could not be verified.
+    Without a completed check the booking is never confirmed or held, so a database
+    failure here is reported as availability that could not be verified.
     """
     try:
         venue = db.session.get(Venue, booking.venue_id, with_for_update=True)
@@ -609,8 +621,8 @@ def _locked_venue_and_conflicts(booking):
     except SQLAlchemyError:
         db.session.rollback()
         raise _Rejected(
-            "The venue's availability could not be verified, so the booking was not "
-            "approved. It is still pending. Please try again.", 503, retryable=True,
+            f"The venue's availability could not be verified, so {outcome}. It is still "
+            "pending. Please try again.", 503, retryable=True,
         ) from None
 
 
@@ -707,4 +719,211 @@ def approve_booking(booking_id: int):
         "message": f"You approved {venue_name} for {title}. {to_address} has been notified.",
         "booking": payload,
         "notification": {"in_app": True, "email_queued": email_queued},
+    })
+
+
+# ---------- Tentative holds (SCRUM-87) ----------
+
+TENTATIVE = scheduling.TENTATIVE_STATUS
+HOLD_PLACED_NOTIFICATION = "venue_hold_placed"
+HOLD_CHANGED_NOTIFICATION = "venue_hold_expiry_changed"
+# The only field a hold or a change of its expiry takes (A2).
+HOLD_FIELDS = {"expires_at"}
+
+
+def _when(value):
+    return f"{value:%Y-%m-%d %H:%M}"
+
+
+def _hold_expiry(body, booking):
+    """The expiry Venue Staff entered: later than now and no later than the start (A2)."""
+    body = body if isinstance(body, dict) else {}
+    for key in body:
+        if key not in HOLD_FIELDS:
+            raise _Rejected(f"{key} is not part of a hold.", 400, field=key)
+    expires_at, problem = _parse_local_time(
+        body.get("expires_at"), "Enter the hold's expiry date and time.",
+        "Enter the expiry as a date and time (YYYY-MM-DDTHH:MM).")
+    if problem:
+        raise _Rejected(problem, 400, field="expires_at")
+    if expires_at <= singapore_now():
+        raise _Rejected("The expiry must be in the future.", 400, field="expires_at")
+    # A hold can't outlast the time it holds (open question Q1).
+    if expires_at > booking.start_time:
+        raise _Rejected(
+            "The hold must expire no later than the booking's start "
+            f"({_when(booking.start_time)}).", 400, field="expires_at")
+    return expires_at
+
+
+def _hold_payload(booking):
+    holder = db.session.get(User, booking.held_by_id)
+    return {
+        **_booking_payload(booking),
+        "hold": {
+            "held_at": booking.held_at.isoformat(),
+            "held_by": {"id": holder.id, "email": holder.email},
+            "expires_at": booking.hold_expires_at.isoformat(),
+        },
+    }
+
+
+def _queue_hold_email(to_address, subject, message, event_id):
+    """Queue the coordinator's email; False if the queue could not be reached.
+
+    The hold and its in-app notification are already saved by then, so a broker outage
+    must not undo them. It takes plain values, not models.
+    """
+    try:
+        tasks.send_notification_email.delay(
+            to_address, subject,
+            f"{message}\n\nSign in to ConnectSphere to see the event's planning information.",
+        )
+    except Exception:
+        current_app.logger.exception("Could not queue venue hold email for event %s", event_id)
+        return False
+    return True
+
+
+@venues_bp.post("/bookings/<int:booking_id>/hold")
+@jwt_required()
+def place_hold(booking_id: int):
+    try:
+        user = _require_viewer(BOOKING_REVIEWER_ROLES,
+                               "Only Venue Staff can place tentative holds.")
+        # Locked as for an approval, so decisions on one venue are made one at a time (A4).
+        booking = db.session.get(VenueBooking, booking_id, with_for_update=True,
+                                 populate_existing=True)
+        if booking is None:
+            raise _Rejected("Booking request not found.", 404)
+        expires_at = _hold_expiry(request.get_json(silent=True), booking)
+        if booking.status != PENDING:
+            raise _Rejected(
+                f"This request is {booking.status}, so it can't be placed on hold.",
+                409, reason="not_pending")
+        event = db.session.get(Event, booking.event_id)
+        if event.status != REQUESTABLE_EVENT_STATUS:
+            raise _Rejected(
+                f"The event is {event.status}, so its venue booking can't be placed on hold.",
+                409, reason="event_not_approved")
+        venue, conflicts = _locked_venue_and_conflicts(booking, "no hold was placed")
+        if conflicts:
+            raise _clash(venue, conflicts, refused="placed on hold")
+
+        # The hold starts now (A1); the event's venue and status are unchanged.
+        booking.status = TENTATIVE
+        booking.held_at = datetime.utcnow()
+        booking.held_by_id = user.id
+        booking.hold_expires_at = expires_at
+        coordinator = db.session.get(User, event.coordinator_id)
+        message = (
+            f'{user.email} placed a tentative hold on {venue.name} for "{event.title}" '
+            f"({_period_text(booking.start_time, booking.end_time)}). It expires on "
+            f"{_when(expires_at)} (Singapore time)."
+        )
+        # Saved in the same commit as the hold (A6).
+        db.session.add(Notification(recipient_id=coordinator.id, kind=HOLD_PLACED_NOTIFICATION,
+                                    message=message, event_id=event.id))
+        payload = _hold_payload(booking)
+        to_address, title, venue_name, event_id = (coordinator.email, event.title,
+                                                    venue.name, event.id)
+        db.session.commit()
+    except _Rejected as rejected:
+        return _error(rejected.message, rejected.status_code, **rejected.extra)
+    except SQLAlchemyError:
+        db.session.rollback()
+        return _error(
+            "The hold was not saved, so the request is still pending. Please try again.",
+            503, retryable=True,
+        )
+
+    email_queued = _queue_hold_email(
+        to_address, f"Tentative hold on {venue_name} for {title}", message, event_id)
+    return jsonify({
+        "message": (
+            f"You placed a tentative hold on {venue_name} for {title} until "
+            f"{_when(expires_at)}. {to_address} has been notified."
+        ),
+        "booking": payload,
+        "notification": {"in_app": True, "email_queued": email_queued},
+    })
+
+
+@venues_bp.patch("/bookings/<int:booking_id>/hold")
+@jwt_required()
+def change_hold_expiry(booking_id: int):
+    try:
+        user = _require_viewer(BOOKING_REVIEWER_ROLES,
+                               "Only Venue Staff can change a hold's expiry.")
+        booking = db.session.get(VenueBooking, booking_id, with_for_update=True,
+                                 populate_existing=True)
+        if booking is None:
+            raise _Rejected("Booking request not found.", 404)
+        expires_at = _hold_expiry(request.get_json(silent=True), booking)
+        if booking.status != TENTATIVE:
+            raise _Rejected(
+                "This booking is not a tentative hold, so it has no expiry to change.",
+                409, reason="not_a_hold")
+        previous = booking.hold_expires_at
+        if previous <= singapore_now():
+            raise _Rejected(
+                f"This hold expired on {_when(previous)}, so its expiry can no longer be "
+                "changed.", 409, reason="expired")
+
+        booking.hold_expires_at = expires_at
+        event = db.session.get(Event, booking.event_id)
+        venue = db.session.get(Venue, booking.venue_id)
+        coordinator = db.session.get(User, event.coordinator_id)
+        message = (
+            f'{user.email} changed the tentative hold on {venue.name} for "{event.title}" '
+            f"({_period_text(booking.start_time, booking.end_time)}). It now expires on "
+            f"{_when(expires_at)} (Singapore time) instead of {_when(previous)}."
+        )
+        # Saved in the same commit as the change (A6, open question Q3).
+        db.session.add(Notification(recipient_id=coordinator.id,
+                                    kind=HOLD_CHANGED_NOTIFICATION,
+                                    message=message, event_id=event.id))
+        payload = _hold_payload(booking)
+        to_address, title, venue_name, event_id = (coordinator.email, event.title,
+                                                    venue.name, event.id)
+        db.session.commit()
+    except _Rejected as rejected:
+        return _error(rejected.message, rejected.status_code, **rejected.extra)
+    except SQLAlchemyError:
+        db.session.rollback()
+        return _error(
+            "The new expiry was not saved, so the hold's expiry is unchanged. "
+            "Please try again.", 503, retryable=True,
+        )
+
+    email_queued = _queue_hold_email(
+        to_address, f"Tentative hold on {venue_name} for {title}: new expiry", message,
+        event_id)
+    return jsonify({
+        "message": (
+            f"The hold on {venue_name} for {title} now expires on {_when(expires_at)}. "
+            f"{to_address} has been notified."
+        ),
+        "booking": payload,
+        "notification": {"in_app": True, "email_queued": email_queued},
+    })
+
+
+@venues_bp.get("/holds")
+@jwt_required()
+def list_holds():
+    try:
+        _require_viewer(BOOKING_REVIEWER_ROLES, "Only Venue Staff can view tentative holds.")
+        # Soonest expiry first, so the holds about to lapse are seen first (A8).
+        holds = (scheduling.unexpired_holds(singapore_now())
+                 .order_by(VenueBooking.hold_expires_at, VenueBooking.id).all())
+        payloads = [_hold_payload(hold) for hold in holds]
+    except _Rejected as rejected:
+        return _error(rejected.message, rejected.status_code, **rejected.extra)
+    except SQLAlchemyError:
+        return _load_failed("Tentative holds could not be loaded. Please try again.")
+
+    return jsonify({
+        "holds": payloads,
+        "message": None if payloads else "There are no tentative holds.",
     })
