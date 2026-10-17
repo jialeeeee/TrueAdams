@@ -14,6 +14,10 @@ def is_current_coordinator(user, event):
     return user is not None and user.role == COORDINATOR_ROLE and event.coordinator_id == user.id
 
 
+def is_coordinator_lead(user):
+    return user is not None and user.role == COORDINATOR_LEAD_ROLE
+
+
 def is_current_organiser(user, event):
     return user is not None and user.role == ORGANISER_ROLE and event.organiser_id == user.id
 

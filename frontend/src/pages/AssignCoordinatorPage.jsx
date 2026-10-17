@@ -1,30 +1,84 @@
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import apiClient from "../api/client.js";
+import explain from "../utils/explain.js";
 import statusLabel from "../utils/statusLabel.js";
+
+// A Coordinator Lead assigns a coordinator to an event waiting in the queue (SCRUM-81).
+const NOT_LOADED = "The event could not be loaded. Check your connection and try again.";
+const NOT_SAVED = "The assignment was not saved. Check your connection and try again.";
+const NOT_RECORDED = "Not recorded";
+const CHOOSE = "Choose a coordinator.";
+
+// Proposed dates are Singapore time without a time zone: show them as recorded.
+function proposedDate(value) {
+  return value ? value.slice(0, 16).replace("T", " ") : NOT_RECORDED;
+}
+
+// A network failure, or one the server marks retryable, can be tried again; a refusal cannot.
+function canRetry(failure) {
+  return !failure.response || failure.response.data?.retryable === true;
+}
+
+function EventSummary({ event }) {
+  return (
+    <>
+      <h2>{event.title || NOT_RECORDED}</h2>
+      <p>{`Proposed date: ${proposedDate(event.start_time)}`}</p>
+      <p>{`Status: ${statusLabel(event.status)}`}</p>
+    </>
+  );
+}
+
+function Confirmation({ result }) {
+  return (
+    <>
+      <p>{result.message}</p>
+      <p>
+        {result.notification.email_queued
+          ? "They have been notified."
+          : "They were notified in ConnectSphere, but the email could not be sent."}
+      </p>
+    </>
+  );
+}
+
+function AssignmentForm({ coordinators, choice, onChoose, onSubmit }) {
+  return (
+    <form onSubmit={onSubmit}>
+      <label>
+        Coordinator
+        <select value={choice} onChange={(e) => onChoose(e.target.value)}>
+          <option value="">Choose a coordinator</option>
+          {coordinators.map((coordinator) => (
+            <option key={coordinator.id} value={String(coordinator.id)}>
+              {coordinator.email}
+            </option>
+          ))}
+        </select>
+      </label>
+      <button type="submit">Assign coordinator</button>
+    </form>
+  );
+}
 
 export default function AssignCoordinatorPage() {
   const { eventId } = useParams();
-  const [data, setData] = useState(null);
+  const [queued, setQueued] = useState(null);
   const [loadError, setLoadError] = useState(null);
   const [choice, setChoice] = useState("");
-  const [error, setError] = useState("");
-  const [done, setDone] = useState(null);
+  const [saveError, setSaveError] = useState("");
+  const [result, setResult] = useState(null);
+  // Set when the server says the event can no longer be assigned here (HTTP 409).
   const [closed, setClosed] = useState(false);
 
   const load = useCallback(async () => {
     setLoadError(null);
     try {
       const response = await apiClient.get(`/events/${eventId}/assignment`);
-      setData(response.data);
+      setQueued(response.data);
     } catch (failure) {
-      const message = failure.response?.data?.error;
-      setLoadError({
-        message: typeof message === "string" && message.trim()
-          ? message
-          : "The event could not be loaded. Check your connection and try again.",
-        retryable: !failure.response || failure.response.data?.retryable === true,
-      });
+      setLoadError({ message: explain(failure, NOT_LOADED), retryable: canRetry(failure) });
     }
   }, [eventId]);
 
@@ -32,28 +86,26 @@ export default function AssignCoordinatorPage() {
     load();
   }, [load]);
 
-  async function submit(e) {
+  async function assign(e) {
     e.preventDefault();
     if (!choice) {
-      setError("Choose a coordinator.");
+      setSaveError(CHOOSE);
       return;
     }
-    setError("");
+    setSaveError("");
     try {
       const response = await apiClient.post(`/events/${eventId}/assignment`, {
         coordinator_id: Number(choice),
       });
-      setDone(response.data);
+      setResult(response.data);
     } catch (failure) {
-      const message = failure.response?.data?.error;
-      setError(typeof message === "string" && message.trim()
-        ? message
-        : "The assignment was not saved. Check your connection and try again.");
-      if (failure.response?.status === 409) {
-        setClosed(true);
-      }
+      // The choice is kept, so a retryable failure can simply be sent again.
+      setSaveError(explain(failure, NOT_SAVED));
+      setClosed(failure.response?.status === 409);
     }
   }
+
+  const canAssign = queued && !result && !closed && queued.coordinators.length > 0;
 
   return (
     <section>
@@ -66,40 +118,19 @@ export default function AssignCoordinatorPage() {
         </>
       )}
 
-      {data && (
+      {queued && (
         <>
-          <h2>{data.event.title || "Not recorded"}</h2>
-          <p>{`Proposed date: ${data.event.start_time ? data.event.start_time.slice(0, 16).replace("T", " ") : "Not recorded"}`}</p>
-          <p>{`Status: ${statusLabel(data.event.status)}`}</p>
-
-          {done && (
-            <>
-              <p>{done.message}</p>
-              <p>
-                {done.notification.email_queued
-                  ? "They have been notified."
-                  : "They were notified in ConnectSphere, but the email could not be sent."}
-              </p>
-            </>
-          )}
-
-          {error && <p role="alert">{error}</p>}
-
-          {data.coordinators.length === 0 && <p>{data.message}</p>}
-
-          {!done && !closed && data.coordinators.length > 0 && (
-            <form onSubmit={submit}>
-              <label>
-                Coordinator
-                <select value={choice} onChange={(e) => setChoice(e.target.value)}>
-                  <option value="">Choose a coordinator</option>
-                  {data.coordinators.map((c) => (
-                    <option key={c.id} value={String(c.id)}>{c.email}</option>
-                  ))}
-                </select>
-              </label>
-              <button type="submit">Assign coordinator</button>
-            </form>
+          <EventSummary event={queued.event} />
+          {result && <Confirmation result={result} />}
+          {saveError && <p role="alert">{saveError}</p>}
+          {queued.coordinators.length === 0 && <p>{queued.message}</p>}
+          {canAssign && (
+            <AssignmentForm
+              coordinators={queued.coordinators}
+              choice={choice}
+              onChoose={setChoice}
+              onSubmit={assign}
+            />
           )}
         </>
       )}

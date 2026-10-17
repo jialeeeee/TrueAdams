@@ -22,6 +22,14 @@ USERS = [
     {"key": "hana", "email": "hana.tech@connectsphere.test", "role": "tech_staff"},
 ]
 
+# Event Coordinator Leads (SCRUM-83, SCRUM-81), seeded alongside USERS by the stories
+# that need them. lucy has assigned nothing.
+LEADS = [
+    {"key": "lena", "email": "lena.lead@connectsphere.test", "role": "coordinator_lead"},
+    {"key": "liam", "email": "liam.lead@connectsphere.test", "role": "coordinator_lead"},
+    {"key": "lucy", "email": "lucy.lead@connectsphere.test", "role": "coordinator_lead"},
+]
+
 # `organiser` and `coordinator` refer to USERS keys.
 EVENTS = [
     {

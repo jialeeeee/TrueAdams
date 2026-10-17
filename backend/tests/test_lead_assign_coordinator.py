@@ -28,12 +28,6 @@ from app.models import Event, Notification, User
 from tests import seed_data
 from tests.base import AppTestCase
 
-# Event Coordinator Leads, alongside seed_data.USERS (AQ-SEED).
-LEADS = [
-    {"key": "lena", "email": "lena.lead@connectsphere.test", "role": "coordinator_lead"},
-    {"key": "liam", "email": "liam.lead@connectsphere.test", "role": "coordinator_lead"},
-]
-
 ASSIGNED_AT = datetime(2026, 9, 2, 15, 30)
 
 # AQ-SEED. `coordinator` and `assigned_by` are user keys.
@@ -53,7 +47,7 @@ NOT_IN_QUEUE = ["D1", "C1", "R1"]
 class AssignCoordinatorTestCase(AppTestCase):
     def setUp(self):
         super().setUp()
-        self.users = self.seed_users(seed_data.USERS + LEADS)
+        self.users = self.seed_users(seed_data.USERS + seed_data.LEADS)
         self.events = {}
         for key, (title, status, coordinator, assigned_by) in EVENTS.items():
             self.events[key] = Event(
