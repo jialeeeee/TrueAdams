@@ -214,4 +214,4 @@ Users come from `backend/tests/seed_data.py` (alice, ben and chloe are coordinat
 | Q1 | Which events are "in the queue": only newly submitted ones with no coordinator, or also events whose coordinator left? Assumed submitted and unassigned. | A1, TC-81-06 |
 | Q2 | Can any Lead assign any waiting event, or do Leads have their own areas or teams? Assumed any Lead, any event. | A2, TC-81-11 |
 | Q3 | What makes a coordinator "eligible": just the role, or also workload, availability or skills? Assumed the role only. | A3, TC-81-04 |
-| Q4 | Leads cannot use the reassign function yet (it allows administrators and the current coordinator). Will a Lead reassignment story extend it? Assumed so; the refusal already points to it. | A6, TC-81-09 |
+| Q4 | ~~Leads cannot use the reassign function yet. Will a Lead reassignment story extend it?~~ **Resolved by SCRUM-82 (17 Oct 2026):** the reassign function is now Lead-only, so the refusal's `next_step` is usable. | A6, TC-81-09 |

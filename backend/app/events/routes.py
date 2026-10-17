@@ -20,7 +20,6 @@ from ..models import (
 from ..registrations.routes import singapore_now
 from .permissions import (
     COORDINATOR_ROLE,
-    can_reassign_coordinator,
     can_view_clarifications,
     can_view_coordinator,
     is_coordinator_lead,
@@ -462,38 +461,49 @@ def get_coordinator(event_id: int):
     return jsonify(payload)
 
 
+# Reassigning an event's coordinator: Leads only since SCRUM-82 (A1).
+REASSIGN_LEAD_ONLY = "Only Event Coordinator Leads can reassign coordinators."
+COORDINATOR_UNASSIGNED_NOTIFICATION = "coordinator_unassigned"
+NO_OTHER_ELIGIBLE_COORDINATOR = "No other eligible coordinator is available for this event."
+
+
+def _require_reassignable(event):
+    """Refuse (409) an event with no coordinator yet, or a draft or cancelled one (A2)."""
+    if event.coordinator_id is None:
+        raise _Rejected(
+            "This event has no coordinator yet. Assign one from the queue.",
+            409,
+            reason="not_assigned",
+            next_step={
+                "action": "Assign a coordinator",
+                "method": "POST",
+                "url": url_for("events.assign_from_queue", event_id=event.id),
+            },
+        )
+    if event.status in NON_ASSIGNABLE_STATUSES:
+        raise _Rejected(f"A coordinator cannot be assigned to a {event.status} event.", 409)
+
+
 @events_bp.get("/<int:event_id>/eligible-coordinators")
 @jwt_required()
 def list_eligible_coordinators(event_id: int):
+    """Who the Lead may reassign the event to, with the event and its current
+    coordinator for the reassign page (SCRUM-82 A3, A7)."""
     try:
-        user = _current_user()
-        if user is None:
-            return _error("Your session is no longer valid. Please log in again.", 401)
-        event = db.session.get(Event, event_id)
-        if event is None:
-            return _error("Event not found.", 404)
-        if not can_reassign_coordinator(user, event):
-            return _error("Only Event Coordinator Leads can reassign coordinators.", 403)
-        if event.coordinator_id is None:
-            return _error(
-                "This event has no coordinator yet. Assign one from the queue.", 409,
-                reason="not_assigned",
-                next_step={"action": "Assign a coordinator", "method": "POST",
-                           "url": url_for("events.assign_from_queue", event_id=event.id)},
-            )
-        if event.status in NON_ASSIGNABLE_STATUSES:
-            return _error(f"A coordinator cannot be assigned to a {event.status} event.", 409)
+        _, event = _lead_and_event(event_id, denied=REASSIGN_LEAD_ONLY)
+        _require_reassignable(event)
         coordinators = _eligible_coordinators(event)
-        current = db.session.get(User, event.coordinator_id)
         payload = {
             "event_id": event.id,
-            "event": _queued_event_payload(event),
-            "current_coordinator": _user_summary(current),
+            "event": _event_summary(event),
+            "current_coordinator": _user_summary(db.session.get(User, event.coordinator_id)),
             "coordinators": [_user_summary(c) for c in coordinators],
             "message": None
             if coordinators
             else "No eligible coordinators are available for this event.",
         }
+    except _Rejected as rejected:
+        return _error(rejected.message, rejected.status_code, **rejected.extra)
     except SQLAlchemyError:
         db.session.rollback()
         return _error("Eligible coordinators could not be loaded. Please try again.", 503, retryable=True)
@@ -503,85 +513,58 @@ def list_eligible_coordinators(event_id: int):
 @events_bp.put("/<int:event_id>/coordinator")
 @jwt_required()
 def assign_coordinator(event_id: int):
-    try:
-        user = _current_user()
-        if user is None:
-            return _error("Your session is no longer valid. Please log in again.", 401)
-        # SCRUM-27: re-read and lock before checking the relationship, so a
-        # concurrent reassignment cannot authorize the former coordinator.
-        event = db.session.get(Event, event_id, with_for_update=True, populate_existing=True)
-        if event is None:
-            return _error("Event not found.", 404)
-        if not can_reassign_coordinator(user, event):
-            return _error("Only Event Coordinator Leads can reassign coordinators.", 403)
+    """Reassign an event to another coordinator (SCRUM-82).
 
-        body = request.get_json(silent=True)
-        coordinator_id = body.get("coordinator_id") if isinstance(body, dict) else None
-        if not isinstance(coordinator_id, int) or isinstance(coordinator_id, bool):
-            return _error("coordinator_id must be an integer.", 400)
-        # Do not accept forged ownership/assignment/audit fields alongside the target.
-        if set(body) != {"coordinator_id"}:
-            return _error("Only coordinator_id can be changed here.", 400)
-        if event.coordinator_id is None:
-            return _error(
-                "This event has no coordinator yet. Assign one from the queue.", 409,
-                reason="not_assigned",
-                next_step={"action": "Assign a coordinator", "method": "POST",
-                           "url": url_for("events.assign_from_queue", event_id=event.id)},
-            )
-        if event.status in NON_ASSIGNABLE_STATUSES:
-            return _error(f"A coordinator cannot be assigned to a {event.status} event.", 409)
+    The single coordinator column is replaced, so an event never has two main
+    coordinators. The change, who made it and when, and both coordinators' in-app
+    notifications are saved in one commit, so a failed save changes nothing; the
+    emails are queued only after it (A4-A6).
+    """
+    try:
+        # SCRUM-27: re-read and lock, so two reassignments at once apply one at a time.
+        lead, event = _lead_and_event(event_id, lock=True, denied=REASSIGN_LEAD_ONLY)
+        coordinator_id = _parse_assignment(request.get_json(silent=True))
+        _require_reassignable(event)
         if coordinator_id == event.coordinator_id:
-            return _error("This user is already the event's coordinator.", 409)
-        eligible = _eligible_coordinators(event)
-        coordinator = next((c for c in eligible if c.id == coordinator_id), None)
-        if coordinator is None:
-            if not eligible:
-                return _error("No other eligible coordinator is available for this event.", 422)
-            return _error("The selected user is not an eligible coordinator.", 422)
+            raise _Rejected("This user is already the event's coordinator.", 409)
+        coordinator = _chosen_coordinator(
+            event, coordinator_id, none_left=NO_OTHER_ELIGIBLE_COORDINATOR
+        )
 
         previous = db.session.get(User, event.coordinator_id)
-        event.coordinator_id = coordinator.id
-        event.coordinator_assigned_at = datetime.utcnow()
-        # SCRUM-83 A1: a Lead's list follows whoever made the current assignment.
-        event.coordinator_assigned_by_id = user.id
-        title = event.title
-        message = f"{coordinator.email} is now the coordinator for {title}."
-        db.session.add(Notification(
-            recipient_id=coordinator.id, kind="coordinator_assigned",
-            message=f'{user.email} assigned you to coordinate "{title}".', event_id=event.id,
-        ))
-        db.session.add(Notification(
-            recipient_id=previous.id, kind="coordinator_unassigned",
-            message=f'{user.email} reassigned "{title}" to {coordinator.email}.', event_id=event.id,
-        ))
+        message = _record_assignment(event, lead, coordinator)
+        # Plain values, so nothing needs the database after the commit.
+        title, new_address, previous_address = event.title, coordinator.email, previous.email
+        unassigned = f'{lead.email} reassigned "{title}" to {new_address}.'
+        db.session.add(
+            Notification(
+                recipient_id=previous.id,
+                kind=COORDINATOR_UNASSIGNED_NOTIFICATION,
+                message=unassigned,
+                event_id=event.id,
+            )
+        )
         payload = {
             "message": message,
             **_assignment_payload(event),
             "previous_coordinator": _user_summary(previous),
-            "assigned_by": _user_summary(user),
+            "assigned_by": _user_summary(lead),
         }
-        emails = [
-            (coordinator.email, f"You are now the coordinator for {title}",
-             f"{message}\n\nSign in to ConnectSphere to see your managed events."),
-            (previous.email, f"You are no longer the coordinator for {title}",
-             f'{user.email} reassigned "{title}" to {coordinator.email}.'),
-        ]
         db.session.commit()
+    except _Rejected as rejected:
+        return _error(rejected.message, rejected.status_code, **rejected.extra)
     except SQLAlchemyError:
         db.session.rollback()
         return _error(
             "The coordinator assignment could not be saved. Please try again.", 503, retryable=True
         )
 
-    queued = True
-    for to_address, subject, body in emails:
-        try:
-            tasks.send_notification_email.delay(to_address, subject, body)
-        except Exception:
-            current_app.logger.exception("Could not queue reassignment email for event %s", event_id)
-            queued = False
-    return jsonify({**payload, "notification": {"in_app": True, "email_queued": queued}})
+    queued = [
+        _queue_assignment_email(new_address, title, message, event_id),
+        _queue_email(previous_address, f"You are no longer the coordinator for {title}",
+                     unassigned, event_id),
+    ]
+    return jsonify({**payload, "notification": {"in_app": True, "email_queued": all(queued)}})
 
 
 def _clarification_payload(clarification, sender):
@@ -1480,8 +1463,8 @@ def _waiting_for_assignment():
     return and_(Event.status.in_(ASSIGNMENT_QUEUE_STATUSES), Event.coordinator_id.is_(None))
 
 
-def _lead_and_event(event_id, lock=False):
-    """The calling Lead and the event, checked 401, 404, 403 (A7).
+def _lead_and_event(event_id, lock=False, denied=LEAD_ONLY):
+    """The calling Lead and the event, checked 401, 404, 403 (A7); `denied` is the 403.
 
     With `lock`, the event row is re-read and locked, so when two Leads assign at once
     the second sees the first's coordinator and is refused (A6).
@@ -1493,7 +1476,7 @@ def _lead_and_event(event_id, lock=False):
     if event is None:
         raise _Rejected(EVENT_NOT_FOUND, 404)
     if not is_coordinator_lead(user):
-        raise _Rejected(LEAD_ONLY, 403)
+        raise _Rejected(denied, 403)
     return user, event
 
 
@@ -1528,19 +1511,22 @@ def _parse_assignment(body):
     return coordinator_id
 
 
-def _chosen_coordinator(event, coordinator_id):
-    """The chosen user, if eligible (A3); the same rule as the list the Lead chose from."""
+def _chosen_coordinator(event, coordinator_id, none_left=NO_ELIGIBLE_COORDINATOR):
+    """The chosen user, if eligible (A3); the same rule as the list the Lead chose from.
+
+    `none_left` is the refusal when nobody is eligible at all.
+    """
     eligible = _eligible_coordinators(event)
     coordinator = next((c for c in eligible if c.id == coordinator_id), None)
     if coordinator is None:
-        message = NO_ELIGIBLE_COORDINATOR if not eligible else (
+        message = none_left if not eligible else (
             "The selected user is not an eligible coordinator."
         )
         raise _Rejected(message, 422, field="coordinator_id")
     return coordinator
 
 
-def _queued_event_payload(event):
+def _event_summary(event):
     return {
         "id": event.id,
         "title": event.title,
@@ -1549,22 +1535,45 @@ def _queued_event_payload(event):
     }
 
 
-def _queue_assignment_email(to_address, title, message, event_id):
-    """Queue the coordinator's email; False if the queue could not be reached (A5).
+def _record_assignment(event, lead, coordinator):
+    """Make `coordinator` the event's coordinator, recording the Lead and the time, and
+    notify them in the app (A4, A5). Returns the confirmation message; not committed."""
+    event.coordinator_id = coordinator.id
+    event.coordinator_assigned_by_id = lead.id
+    event.coordinator_assigned_at = datetime.utcnow()
+    db.session.add(
+        Notification(
+            recipient_id=coordinator.id,
+            kind=COORDINATOR_ASSIGNED_NOTIFICATION,
+            message=f'{lead.email} assigned you to coordinate "{event.title}".',
+            event_id=event.id,
+        )
+    )
+    return f"{coordinator.email} is now the coordinator for {event.title}."
 
-    The assignment and in-app notification are already saved by then, so a broker
+
+def _queue_email(to_address, subject, body, event_id):
+    """Queue an email; False if the queue could not be reached (A5).
+
+    The change and its in-app notifications are already saved by then, so a broker
     outage must not undo them. It takes plain values, so it never needs the database.
     """
     try:
-        tasks.send_notification_email.delay(
-            to_address,
-            f"You are now the coordinator for {title}",
-            f"{message}\n\nSign in to ConnectSphere to see your managed events.",
-        )
+        tasks.send_notification_email.delay(to_address, subject, body)
     except Exception:
-        current_app.logger.exception("Could not queue assignment email for event %s", event_id)
+        current_app.logger.exception("Could not queue an email for event %s", event_id)
         return False
     return True
+
+
+def _queue_assignment_email(to_address, title, message, event_id):
+    """Tell a newly assigned coordinator by email (SCRUM-81, SCRUM-82)."""
+    return _queue_email(
+        to_address,
+        f"You are now the coordinator for {title}",
+        f"{message}\n\nSign in to ConnectSphere to see your managed events.",
+        event_id,
+    )
 
 
 @events_bp.get("/<int:event_id>/assignment")
@@ -1576,7 +1585,7 @@ def get_assignment(event_id: int):
         _require_waiting(event)
         coordinators = _eligible_coordinators(event)
         payload = {
-            "event": _queued_event_payload(event),
+            "event": _event_summary(event),
             "coordinators": [_user_summary(c) for c in coordinators],
             "message": None if coordinators else NO_ELIGIBLE_COORDINATOR,
         }
@@ -1602,20 +1611,9 @@ def assign_from_queue(event_id: int):
         _require_waiting(event)
         coordinator = _chosen_coordinator(event, coordinator_id)
 
-        event.coordinator_id = coordinator.id
-        event.coordinator_assigned_by_id = lead.id
-        event.coordinator_assigned_at = datetime.utcnow()
+        message = _record_assignment(event, lead, coordinator)
         # Plain values, so nothing needs the database after the commit.
         title, to_address = event.title, coordinator.email
-        message = f"{to_address} is now the coordinator for {title}."
-        db.session.add(
-            Notification(
-                recipient_id=coordinator.id,
-                kind=COORDINATOR_ASSIGNED_NOTIFICATION,
-                message=f'{lead.email} assigned you to coordinate "{title}".',
-                event_id=event.id,
-            )
-        )
         assignment = {
             "event_id": event.id,
             "coordinator": _user_summary(coordinator),

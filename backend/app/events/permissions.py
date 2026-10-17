@@ -3,11 +3,11 @@
 COORDINATOR_ROLE = "coordinator"
 # Week 7 change 5: oversees coordinators and assigns events to them (SCRUM-83 A2).
 COORDINATOR_LEAD_ROLE = "coordinator_lead"
+# Only Leads reassign (SCRUM-82); admins and coordinators no longer can, and a coordinator
+# asks for a reassignment through SCRUM-61 instead.
 ORGANISER_ROLE = "organiser"
 # Existing coordinator-information visibility; SCRUM-27 does not invent staff scope.
 COORDINATOR_VIEWER_ROLES = {"admin", COORDINATOR_ROLE, "venue_staff", "tech_staff"}
-# The existing coordinator story documents administrator reassignment authority.
-REASSIGNMENT_ADMIN_ROLES = {"admin"}
 
 
 def is_current_coordinator(user, event):
@@ -31,6 +31,3 @@ def can_view_coordinator(user, event):
 def can_view_clarifications(user, event):
     return is_current_coordinator(user, event) or is_current_organiser(user, event)
 
-
-def can_reassign_coordinator(user, event):
-    return is_coordinator_lead(user)
