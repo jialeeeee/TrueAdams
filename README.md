@@ -21,10 +21,14 @@ python -m unittest -v tests.test_models     # one file
 coverage run -m unittest && coverage report # with coverage
 ```
 
-They run against the app's own `public` tables in Supabase, connecting as the
-restricted `connectsphere_test` role (set `TEST_DATABASE_URL` in `backend/.env`;
-CI reads it from the `TEST_DATABASE_URL` repository secret). That role can read
-and write rows but cannot create, alter or drop tables.
+Locally they run against the app's own `public` tables in Supabase, connecting as
+the restricted `connectsphere_test` role (set `TEST_DATABASE_URL` in `backend/.env`).
+That role can read and write rows but cannot create, alter or drop tables.
+
+CI runs them against a throwaway PostgreSQL built from the models by
+`backend/ci/build_test_database.py`, which takes about a minute instead of 30–60
+against Supabase. A second CI job checks that the Supabase tables still match the
+models (`tests.test_app_factory`, using the `TEST_DATABASE_URL` repository secret).
 
 - **Each test inserts its own data and rolls it back.** Every test runs in a
   transaction that is rolled back afterwards, so test rows are never saved and
