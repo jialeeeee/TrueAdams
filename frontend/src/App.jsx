@@ -15,6 +15,7 @@ import MyRegistrationsPage from "./pages/MyRegistrationsPage.jsx";
 import MyRequestsPage from "./pages/MyRequestsPage.jsx";
 import ResourcesPage from "./pages/ResourcesPage.jsx";
 import ReassignCoordinatorPage from "./pages/ReassignCoordinatorPage.jsx";
+import RegistrationSettingsPage from "./pages/RegistrationSettingsPage.jsx";
 import ReassignmentRequestPage from "./pages/ReassignmentRequestPage.jsx";
 import ReviewRequestPage from "./pages/ReviewRequestPage.jsx";
 import ReviewRequestsPage from "./pages/ReviewRequestsPage.jsx";
@@ -63,6 +64,7 @@ export default function App() {
         <Route path="/events/:eventId/review" element={<ReviewRequestPage />} />
         <Route path="/events/:eventId/clarifications" element={<ClarificationPage />} />
         <Route path="/events/:eventId/register" element={<EventRegistrationPage />} />
+        <Route path="/events/:eventId/registration-settings" element={<RegistrationSettingsPage />} />
         <Route path="/events/:eventId/venue-request" element={<VenueBookingRequestPage />} />
         <Route path="/events/:eventId/reassign" element={<ReassignmentRequestPage />} />
         <Route path="/events/:eventId/assign" element={<AssignCoordinatorPage />} />

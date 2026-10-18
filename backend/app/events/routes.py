@@ -1680,6 +1680,129 @@ def list_queue():
     return jsonify({"events": events, "message": None if events else QUEUE_EMPTY})
 
 
+# ---------- The coordinator sets up registration (SCRUM-45 AC7) ----------
+
+
+def _settings_payload(event):
+    registered = Registration.query.filter_by(event_id=event.id, status=REGISTERED).count()
+    venue = db.session.get(Venue, event.venue_id) if event.venue_id else None
+    if event.status != REGISTRABLE_STATUS:
+        message = ("Registration can only be set up for an approved event. "
+                   f"This event is {event.status}.")
+    elif event.registration_required is not True:
+        message = ("The organiser said this event doesn't need attendee registration. "
+                   "Change that through a change request first.")
+    else:
+        message = None
+    return {
+        "event_id": event.id,
+        "capacity": event.registration_capacity,
+        "opens_at": _isoformat(event.registration_opens_at),
+        "closes_at": _isoformat(event.registration_closes_at),
+        "registered_count": registered,
+        "venue_capacity": venue.capacity if venue else None,
+        "can_edit": message is None,
+        "message": message,
+    }
+
+
+@events_bp.get("/<int:event_id>/registration-settings")
+@jwt_required()
+def get_registration_settings(event_id: int):
+    try:
+        user = _current_user()
+        if user is None:
+            return _error("Your session is no longer valid. Please log in again.", 401)
+        event = db.session.get(Event, event_id) if event_id <= DB_INTEGER_MAX else None
+        if event is None:
+            return _error(EVENT_NOT_FOUND, 404)
+        if not _is_current_coordinator(user, event):
+            return _error("Only the event's coordinator can set up registration.", 403)
+        payload = _settings_payload(event)
+    except SQLAlchemyError:
+        db.session.rollback()
+        return _error("The registration settings could not be loaded. Please try again.",
+                      503, retryable=True)
+    return jsonify(payload)
+
+
+@events_bp.put("/<int:event_id>/registration-settings")
+@jwt_required()
+def save_registration_settings(event_id: int):
+    try:
+        user = _current_user()
+        if user is None:
+            return _error("Your session is no longer valid. Please log in again.", 401)
+        event = (db.session.get(Event, event_id, with_for_update=True, populate_existing=True)
+                 if event_id <= DB_INTEGER_MAX else None)
+        if event is None:
+            return _error(EVENT_NOT_FOUND, 404)
+        if not _is_current_coordinator(user, event):
+            return _error("Only the event's coordinator can set up registration.", 403)
+
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            return _error("Enter the number of places and the registration period.", 400)
+        for key in body:
+            if key not in ("capacity", "opens_at", "closes_at"):
+                return _error(f"{key} can't be set here.", 400, field=key)
+        capacity = body.get("capacity")
+        if (not isinstance(capacity, int) or isinstance(capacity, bool)
+                or capacity < 1 or capacity > DB_INTEGER_MAX):
+            return _error("Enter the number of places as a whole number of at least 1.",
+                          400, field="capacity")
+        times = {}
+        for field, label in (("opens_at", "opens"), ("closes_at", "closes")):
+            value = body.get(field)
+            parsed = None
+            if isinstance(value, str) and _LOCAL_DATETIME.match(value):
+                try:
+                    parsed = datetime.fromisoformat(value)
+                except ValueError:
+                    parsed = None
+            if parsed is None:
+                return _error(f"Enter when registration {label} (YYYY-MM-DDTHH:MM).",
+                              400, field=field)
+            times[field] = parsed
+        if times["opens_at"] >= times["closes_at"]:
+            return _error("Registration must open before it closes.", 400, field="closes_at")
+        if event.start_time is not None and times["closes_at"] > event.start_time:
+            return _error(
+                "Registration must close no later than the event starts "
+                f"({event.start_time:%Y-%m-%d %H:%M}).", 400, field="closes_at")
+        venue = db.session.get(Venue, event.venue_id) if event.venue_id else None
+        if venue is not None and venue.capacity is not None and capacity > venue.capacity:
+            return _error(f"The venue holds {venue.capacity} people, so there can be at most "
+                          f"{venue.capacity} places.", 400, field="capacity")
+
+        if event.status != REGISTRABLE_STATUS:
+            return _error("Registration can only be set up for an approved event. "
+                          f"This event is {event.status}.", 409, reason="not_approved")
+        if event.registration_required is not True:
+            return _error("The organiser said this event doesn't need attendee registration. "
+                          "Change that through a change request first.", 409,
+                          reason="registration_not_needed")
+        registered = Registration.query.filter_by(event_id=event.id, status=REGISTERED).count()
+        if capacity < registered:
+            return _error(f"{registered} people are already registered, so there must be at "
+                          f"least {registered} places.", 409, reason="below_registered")
+
+        event.registration_capacity = capacity
+        event.registration_opens_at = times["opens_at"]
+        event.registration_closes_at = times["closes_at"]
+        payload = _settings_payload(event)
+        payload["message"] = (
+            f"Registration for {event.title} is set up: {capacity} places, open from "
+            f"{times['opens_at']:%Y-%m-%d %H:%M} to {times['closes_at']:%Y-%m-%d %H:%M}."
+        )
+        db.session.commit()
+    except SQLAlchemyError:
+        db.session.rollback()
+        return _error("The registration settings were not saved. Please try again.",
+                      503, retryable=True)
+    return jsonify(payload)
+
+
 # ---------- View event details (SCRUM-74) ----------
 
 
