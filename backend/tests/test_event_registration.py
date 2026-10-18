@@ -4,19 +4,21 @@ Each test names the case it automates from
 docs/test-cases/SCRUM-45-register-for-event.md (TC-45-nn) and the acceptance
 criteria it checks. Assumptions A1-A12 and questions Q1-Q9 are there.
 
-Model (db/event_registration.sql):
+Reopened on 18 Oct 2026: an event must be Approved (no longer "confirmed"), and the
+waiting list is removed, so a full event is blocked with "This event is full."
+
+Model (db/event_registration.sql, then db/remove_waitlist.sql):
     Event.registration_opens_at, registration_closes_at   DateTime, Singapore time
     Event.registration_capacity                           Integer, number of places
-    Event.waitlist_enabled                                Boolean
-    Registration.status   "registered" | "waitlisted" | "cancelled"
-    At most one active ("registered" or "waitlisted") registration per event and attendee.
+    Registration.status   "registered" | "withdrawn" (SCRUM-68) | "cancelled"
+    At most one active ("registered") registration per event and attendee.
 
 Endpoint (JWT required, else 401)
     POST /api/registrations/   body {"event_id": int}
-        201 {"message", "registration"}                              registered or waitlisted
+        201 {"message", "registration"}                              registered
         200 {"message", "registration", "already_registered": true}  existing active one
         403 not an attendee   400 bad body   404 unknown event
-        409 {"error", "reason"}   reason: not_confirmed | disabled | not_open_yet | closed | full
+        409 {"error", "reason"}   reason: not_approved | disabled | not_open_yet | closed | full
         503 {"error", "retryable": true} if saving fails
     registration = {"id", "event_id", "status", "registered_at"}
 
@@ -45,13 +47,15 @@ EXTRA_ATTENDEES = [
     {"key": "jon", "email": "jon.attendee@connectsphere.test", "role": "attendee"},
 ]
 
+# The exact message AC4 asks for when an event is full.
+FULL_MESSAGE = "This event is full."
+
 # Every RG-SEED event has these unless its row says otherwise.
 EVENT_DEFAULTS = {
-    "status": "confirmed",
+    "status": "approved",
     "registration_required": True,
     "registration_opens_at": OPENS,
     "registration_closes_at": CLOSES,
-    "waitlist_enabled": False,
     "start_time": datetime(2026, 12, 12, 17, 0),
     "end_time": datetime(2026, 12, 12, 22, 0),
 }
@@ -59,8 +63,7 @@ EVENT_DEFAULTS = {
 # RG-SEED. Every event is organised by dana and coordinated by alice.
 EVENTS = {
     "E1": {"title": "Harbour Lights Festival", "registration_capacity": 3},
-    "E2": {"title": "Winter Networking Night", "registration_capacity": 2,
-           "waitlist_enabled": True},
+    "E2": {"title": "Winter Networking Night", "registration_capacity": 2},
     "E3": {"title": "Product Launch", "registration_capacity": 1},
     "E4": {"title": "Rooftop Cinema", "registration_capacity": 50,
            "registration_required": False},
@@ -78,7 +81,7 @@ REGISTRATIONS = [
     ("E3", "ivy", "registered"),
 ]
 
-NOT_CONFIRMED = ["draft", "submitted", "under_review", "approved", "rejected", "cancelled"]
+NOT_APPROVED = ["draft", "submitted", "under_review", "confirmed", "rejected", "cancelled"]
 NON_ATTENDEES = ["admin", "alice", "dana", "gus", "hana"]
 
 
@@ -171,21 +174,21 @@ class RegistrationTestCase(AppTestCase):
 
 
 class EligibilityTests(RegistrationTestCase):
-    # TC-45-01 · AC1, AC2 — register for a confirmed, open event with places.
-    def test_register_for_a_confirmed_open_event_with_places(self):
+    # TC-45-01 · AC1, AC2 — register for an approved, open event with places.
+    def test_register_for_an_approved_open_event_with_places(self):
         body = self.assert_registered(self.register("E1"))
 
         self.assertIn("Harbour Lights Festival", body["message"])
         self.assertFalse(body.get("already_registered", False))
 
-    # TC-45-02 · AC1, AC5 (A2/Q2) — only confirmed events accept registrations.
-    def test_only_confirmed_events_accept_registrations(self):
+    # TC-45-02 · AC1 (A2) — only approved events accept registrations.
+    def test_only_approved_events_accept_registrations(self):
         before = self.saved()
-        for status in NOT_CONFIRMED:
+        for status in NOT_APPROVED:
             with self.subTest(status=status):
                 self.update_event("E1", status=status)
 
-                body = self.assert_blocked(self.register("E1"), "not_confirmed")
+                body = self.assert_blocked(self.register("E1"), "not_approved")
 
                 self.assertNotIn("Harbour Lights Festival", body["error"])
                 self.assertNotIn(status.replace("_", " "), body["error"].lower())
@@ -239,7 +242,7 @@ class EligibilityTests(RegistrationTestCase):
 
     # TC-45-06 · AC1 (A5/Q5) — only registered attendees take places.
     def test_the_last_place_and_what_takes_a_place(self):
-        for status in ("registered", "registered", "waitlisted", "cancelled"):
+        for status in ("registered", "registered", "withdrawn", "cancelled"):
             self.add_registration("E1", self.make_user(role="attendee"), status)
 
         self.assert_registered(self.register("E1"))
@@ -344,17 +347,6 @@ class AlreadyRegisteredTests(RegistrationTestCase):
         self.assertIn("Registered", body["message"])
         self.assertEqual(len(self.rows_for("E1", "farah")), 1)
 
-    # TC-45-13 · AC3, AC4 — already on the waiting list.
-    def test_already_on_the_waiting_list(self):
-        first = self.register("E2").get_json()["registration"]
-
-        body = self.assert_registered(self.register("E2"), status="waitlisted", code=200)
-
-        self.assertIs(body.get("already_registered"), True)
-        self.assertEqual(body["registration"], first)
-        self.assertIn("Waitlisted", body["message"])
-        self.assertEqual(len(self.rows_for("E2", "farah")), 1)
-
     # TC-45-14 · AC3 (A8) — the existing status is shown even after registration
     # closes or the event fills up.
     def test_existing_status_is_shown_after_registration_closes_or_fills(self):
@@ -383,8 +375,7 @@ class AlreadyRegisteredTests(RegistrationTestCase):
 
     # TC-45-16 · AC2, AC3 (A7) — the database allows only one active registration.
     def test_database_allows_only_one_active_registration(self):
-        for first, second in (("registered", "registered"), ("registered", "waitlisted"),
-                              ("waitlisted", "waitlisted")):
+        for first, second in (("registered", "registered"),):
             with self.subTest(first=first, second=second):
                 attendee = self.make_user(role="attendee")
                 self.add_registration("E1", attendee, first)
@@ -397,26 +388,29 @@ class AlreadyRegisteredTests(RegistrationTestCase):
 
         attendee = self.make_user(role="attendee")
         self.add_registration("E1", attendee, "cancelled")
-        self.add_registration("E1", attendee, "cancelled")
+        self.add_registration("E1", attendee, "withdrawn")
         self.add_registration("E1", attendee, "registered")
 
 
-# ---------- AC4: waiting list ----------
+# ---------- AC4: a full event ----------
 
 
-class WaitingListTests(RegistrationTestCase):
-    # TC-45-17 · AC4 (A6/Q6) — full with a waiting list: added as Waitlisted.
-    def test_full_with_a_waiting_list_adds_to_the_waiting_list(self):
-        body = self.assert_registered(self.register("E2"), status="waitlisted")
+class FullEventTests(RegistrationTestCase):
+    # TC-45-17 · AC4 (A6) — a full event is blocked with "This event is full.", and
+    # nobody is put on a waiting list.
+    def test_full_event_is_blocked_with_this_event_is_full(self):
+        before = self.saved()
 
-        self.assertIn("Waitlisted", body["message"])
-        self.assertIn("full", body["message"].lower())
-        registered = [s for event, _, s in self.saved() if event == "E2" and s == "registered"]
-        self.assertEqual(len(registered), 2)
-        self.assertEqual([r.status for r in self.rows_for("E2", "farah")], ["waitlisted"])
+        body = self.assert_blocked(self.register("E2"), "full")
 
-    # TC-45-18 · AC4, AC5 (A6/Q6) — a waiting list does not get around other rules.
-    def test_a_waiting_list_does_not_get_around_other_rules(self):
+        self.assertEqual(body["error"], FULL_MESSAGE)
+        self.assertEqual(self.saved(), before)
+        self.assertEqual(self.rows_for("E2", "farah"), [])
+        self.assertNotIn("waitlist_enabled", Event.__table__.columns)
+
+    # TC-45-18 · AC4, AC5 (A10) — a full event that is also closed, disabled or not
+    # approved says which, rather than "full".
+    def test_other_reasons_are_reported_before_full(self):
         before = self.saved()
 
         self.clock.return_value = CLOSES
@@ -426,8 +420,8 @@ class WaitingListTests(RegistrationTestCase):
         self.update_event("E2", registration_required=False)
         self.assert_blocked(self.register("E2"), "disabled")
 
-        self.update_event("E2", registration_required=True, status="approved")
-        self.assert_blocked(self.register("E2"), "not_confirmed")
+        self.update_event("E2", registration_required=True, status="confirmed")
+        self.assert_blocked(self.register("E2"), "not_approved")
 
         self.assertEqual(self.saved(), before)
 
@@ -436,27 +430,31 @@ class WaitingListTests(RegistrationTestCase):
 
 
 class BlockedTests(RegistrationTestCase):
-    # TC-45-19 · AC5 — full without a waiting list.
-    def test_full_without_a_waiting_list(self):
+    # TC-45-19 · AC4 — the last place taken by someone else blocks with the same message.
+    def test_full_after_the_last_place_is_taken(self):
         before = self.saved()
 
         body = self.assert_blocked(self.register("E3"), "full")
 
-        self.assertIn("full", body["error"].lower())
+        self.assertEqual(body["error"], FULL_MESSAGE)
         self.assertEqual(self.saved(), before)
 
-    # TC-45-20 · AC5 (A9) — each reason has its own clear message.
+    # TC-45-20 · AC5 (A9) — each reason has its own message, and closed and disabled
+    # say which.
     def test_each_reason_has_its_own_message(self):
-        self.update_event("E1", status="approved")
+        self.update_event("E1", status="submitted")
         before = self.saved()
 
         messages = {
             reason: self.assert_blocked(self.register(key), reason)["error"]
-            for key, reason in (("E1", "not_confirmed"), ("E4", "disabled"),
+            for key, reason in (("E1", "not_approved"), ("E4", "disabled"),
                                 ("E5", "not_open_yet"), ("E6", "closed"), ("E3", "full"))
         }
 
         self.assertEqual(len(set(messages.values())), 5, messages)
+        self.assertRegex(messages["disabled"].lower(), r"not been enabled|disabled")
+        self.assertRegex(messages["closed"].lower(), r"\bclosed\b")
+        self.assertRegex(messages["not_open_yet"].lower(), r"opens")
         self.assertEqual(self.saved(), before)
 
 

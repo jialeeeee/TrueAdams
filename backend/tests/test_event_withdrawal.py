@@ -7,16 +7,16 @@ Each test names the case it automates from
 docs/test-cases/SCRUM-68-event-withdrawal.md (TC-68-nn) and the acceptance
 criteria it checks. Assumptions A1-A11 and questions Q1-Q6 are there.
 
-Model: Registration.status gains "withdrawn" next to "registered", "waitlisted" and
-"cancelled". The column is a plain varchar(20), so there is no schema change. Only
-"registered" takes a place; "registered" and "waitlisted" are active.
+Model: Registration.status gains "withdrawn" next to "registered" and "cancelled". The
+column is a plain varchar(20), so there is no schema change. Only "registered" takes a
+place and is active. (SCRUM-45 removed the waiting list on 18 Oct 2026.)
 
 Endpoints (JWT required, else 401; the caller must be an attendee, else 403)
     GET  /api/registrations/
         200 {"active": [item], "history": [item], "message": str | null}
         item = {"id", "event": {"id", "title", "start_time", "end_time", "status"},
                 "status", "registered_at", "can_withdraw": bool}
-        active = registered and waitlisted, soonest event first; history = every other
+        active = registered, soonest event first; history = every other
         status (withdrawn, cancelled); message is set only when both lists are empty.
     POST /api/registrations/<id>/withdraw
         200 {"message", "registration": {"id", "event_id", "status", "registered_at"},
@@ -25,10 +25,8 @@ Endpoints (JWT required, else 401; the caller must be an attendee, else 403)
         409 {"error", "reason"}   reason: already_withdrawn | event_cancelled | event_started
         503 {"error", "retryable": true} if saving fails
 
-When a registered place is freed and the event has attendees waiting, the one who has
-waited longest becomes "registered" in the same save and gets an in-app notification
-(kind "registration_promoted") and an email. Nothing about them is returned to the
-person withdrawing.
+A freed place simply becomes available again: there is no waiting list (SCRUM-45, 18 Oct
+2026), so withdrawing promotes, notifies and emails nobody (TC-68-14).
 
 "Now" is app.registrations.routes.singapore_now(), patched here to a fixed time.
 """
@@ -50,23 +48,19 @@ from tests.base import AppTestCase
 NOW = datetime(2026, 10, 13, 12, 0)
 OPENS = datetime(2026, 10, 1, 9, 0)
 CLOSES = datetime(2026, 11, 19, 0, 0)
-# Must match PROMOTION_NOTIFICATION in app/registrations/routes.py.
-PROMOTION_NOTIFICATION = "registration_promoted"
 
 EXTRA_ATTENDEES = [
     {"key": "ivy", "email": "ivy.attendee@connectsphere.test", "role": "attendee"},
     {"key": "jon", "email": "jon.attendee@connectsphere.test", "role": "attendee"},
-    {"key": "kim", "email": "kim.attendee@connectsphere.test", "role": "attendee"},
 ]
 
 # Every WD-SEED event has these unless its row says otherwise.
 EVENT_DEFAULTS = {
-    "status": "confirmed",
+    "status": "approved",
     "registration_required": True,
     "registration_opens_at": OPENS,
     "registration_closes_at": CLOSES,
     "registration_capacity": 5,
-    "waitlist_enabled": False,
     "start_time": datetime(2026, 11, 20, 10, 0),
     "end_time": datetime(2026, 11, 20, 12, 0),
 }
@@ -82,13 +76,11 @@ EVENTS = {
     "E4": {"title": "Cancelled Concert", "status": "cancelled"},
     "E5": {"title": "Robotics Day"},
     "E6": {"title": "Full Gala", "registration_capacity": 2},
-    "E7": {"title": "Waitlist Night", "registration_capacity": 2, "waitlist_enabled": True},
     "E8": {"title": "Past Seminar", "start_time": datetime(2026, 9, 1, 10, 0),
            "end_time": datetime(2026, 9, 1, 12, 0)},
 }
 
-# (event, attendee, status), in the order they were made: the waiting list order on E7
-# is ivy, then kim.
+# (event, attendee, status), in the order they were made.
 REGISTRATIONS = [
     ("E1", "farah", "registered"),
     ("E1", "jon", "registered"),
@@ -98,10 +90,6 @@ REGISTRATIONS = [
     ("E5", "farah", "withdrawn"),
     ("E6", "farah", "registered"),
     ("E6", "jon", "registered"),
-    ("E7", "farah", "registered"),
-    ("E7", "jon", "registered"),
-    ("E7", "ivy", "waitlisted"),
-    ("E7", "kim", "waitlisted"),
     ("E8", "farah", "registered"),
 ]
 
@@ -182,14 +170,14 @@ class WithdrawalTestCase(AppTestCase):
                 .order_by(Registration.registered_at, Registration.id).all())
         return {(user_keys.get(r.attendee_id, r.attendee_id)): r.status for r in rows}
 
-    def promotion_notifications(self):
+    def notifications(self):
+        """Recipients of every notification about the seeded events, by user key."""
         self.db.session.expire_all()
         user_keys = {user.id: key for key, user in self.users.items()}
         rows = (Notification.query
-                .filter(Notification.kind == PROMOTION_NOTIFICATION,
-                        Notification.event_id.in_([e.id for e in self.events.values()]))
+                .filter(Notification.event_id.in_([e.id for e in self.events.values()]))
                 .order_by(Notification.id).all())
-        return [user_keys.get(n.recipient_id, n.recipient_id) for n in rows], rows
+        return [user_keys.get(n.recipient_id, n.recipient_id) for n in rows]
 
     # ---------- Assertions ----------
 
@@ -223,10 +211,10 @@ class MyRegistrationsTests(WithdrawalTestCase):
         body = self.my_registrations("ivy").get_json()
 
         shown = {item["id"] for item in body["active"] + body["history"]}
-        self.assertEqual(shown, {self.reg("E2", "ivy").id, self.reg("E7", "ivy").id})
+        self.assertEqual(shown, {self.reg("E2", "ivy").id})
         self.assertIsNone(body["message"])
         titles = {item["event"]["title"] for item in body["active"]}
-        self.assertEqual(titles, {"Biology Fair", "Waitlist Night"})
+        self.assertEqual(titles, {"Biology Fair"})
         item = body["active"][0]
         self.assertEqual(set(item), {"id", "event", "status", "registered_at", "can_withdraw"})
         self.assertEqual(set(item["event"]), {"id", "title", "start_time", "end_time", "status"})
@@ -286,11 +274,9 @@ class WithdrawActionTests(WithdrawalTestCase):
         wanted = self.reg(event_key, user_key).id
         return next(i for i in body["active"] + body["history"] if i["id"] == wanted)
 
-    # TC-68-03 · AC2 — offered for a future event, for a registration or a waiting list place.
+    # TC-68-03 · AC2 — offered for a future event.
     def test_withdraw_is_offered_before_the_event_starts(self):
         self.assertIs(self.item("E1", "farah")["can_withdraw"], True)
-        self.assertEqual(self.item("E7", "ivy")["status"], "waitlisted")
-        self.assertIs(self.item("E7", "ivy")["can_withdraw"], True)
 
     # TC-68-04 · AC2 — not offered once the event has started, ended or been cancelled.
     def test_withdraw_is_not_offered_once_the_event_has_started(self):
@@ -343,14 +329,6 @@ class WithdrawTests(WithdrawalTestCase):
         self.assertEqual(self.registered_count("E1"), 1)
         self.assertEqual(self.status_of("E1", "jon"), "registered")
 
-    # TC-68-07 · AC5 — withdrawing from the waiting list frees no place.
-    def test_leaving_the_waiting_list_does_not_change_the_count(self):
-        body = self.assert_withdrawn(self.withdraw("E7", "ivy"))
-
-        self.assertEqual(body["event"]["registered_count"], 2)
-        self.assertEqual(body["event"]["slots_remaining"], 0)
-        self.assertEqual(self.registered_count("E7"), 2)
-
     # TC-68-08 · AC5 — a place freed on a full event can be taken by someone else.
     def test_freed_place_on_a_full_event_can_be_taken(self):
         blocked = self.register("E6", "ivy")
@@ -394,7 +372,7 @@ class RefusedWithdrawalTests(WithdrawalTestCase):
 
                 self.assertRegex(body["error"].lower(), r"started|ended")
                 self.assertEqual(self.status_of(event_key, "farah"), "registered")
-        self.assertEqual(self.promotion_notifications()[0], [])
+        self.assertEqual(self.notifications(), [])
 
     # TC-68-10 · AC7 — boundary: allowed one minute before the start, refused at the start.
     def test_withdrawal_boundary_is_the_start_time(self):
@@ -454,67 +432,20 @@ class RegisterAgainTests(WithdrawalTestCase):
         self.assertEqual(self.status_of("E5", "farah"), "withdrawn")
 
 
-# ---------- AC10: the waiting list ----------
+# ---------- AC10: no waiting list ----------
 
 
-class WaitingListTests(WithdrawalTestCase):
-    # TC-68-14 · AC10 (A9/Q5) — the attendee who has waited longest gets the place.
-    def test_first_waitlisted_attendee_gets_the_freed_place(self):
-        response = self.withdraw("E7", "farah")
+class NoWaitingListTests(WithdrawalTestCase):
+    # TC-68-14 · AC10 (A9, changed by SCRUM-45 on 18 Oct 2026) — there is no waiting
+    # list: the freed place is simply open, and nobody is promoted, notified or emailed.
+    def test_withdrawing_promotes_and_notifies_nobody(self):
+        body = self.assert_withdrawn(self.withdraw("E6", "farah"))
 
-        body = self.assert_withdrawn(response)
-        self.assertEqual(self.statuses("E7"), {
-            "farah": "withdrawn", "jon": "registered", "ivy": "registered", "kim": "waitlisted"})
-        self.assertEqual(body["event"]["registered_count"], 2)
-        self.assertEqual(body["event"]["slots_remaining"], 0)
-        recipients, rows = self.promotion_notifications()
-        self.assertEqual(recipients, ["ivy"])
-        self.assertIn("Waitlist Night", rows[0].message)
-        self.assertEqual(rows[0].event_id, self.events["E7"].id)
-        self.email.assert_called_once()
-        self.assertEqual(self.email.call_args.args[0], self.users["ivy"].email)
-        # Nothing about the person who was promoted goes to the person withdrawing.
-        text = response.get_data(as_text=True)
-        self.assertNotIn(self.users["ivy"].email, text)
-        self.assertNotIn(self.users["kim"].email, text)
-
-    # TC-68-14 · AC10 (A9/Q5) — the order is how long they waited, not the row number.
-    def test_waiting_list_order_is_by_time_waiting(self):
-        kim, ivy = self.reg("E7", "kim"), self.reg("E7", "ivy")
-        kim.registered_at = datetime(2026, 10, 1, 6, 0)  # joined first, though her row is newer
-        ivy.registered_at = datetime(2026, 10, 1, 9, 0)
-        self.db.session.commit()
-        self.assertGreater(kim.id, ivy.id)
-
-        self.assert_withdrawn(self.withdraw("E7", "farah"))
-
-        self.assertEqual(self.statuses("E7")["kim"], "registered")
-        self.assertEqual(self.statuses("E7")["ivy"], "waitlisted")
-
-    # TC-68-14 · AC10 (A9/Q5) — leaving the waiting list promotes nobody.
-    def test_leaving_the_waiting_list_promotes_nobody(self):
-        self.assert_withdrawn(self.withdraw("E7", "ivy"))
-
-        self.assertEqual(self.statuses("E7"), {
-            "farah": "registered", "jon": "registered", "ivy": "withdrawn", "kim": "waitlisted"})
-        self.assertEqual(self.promotion_notifications()[0], [])
+        self.assertEqual(self.statuses("E6"), {"farah": "withdrawn", "jon": "registered"})
+        self.assertEqual(body["event"]["registered_count"], 1)
+        self.assertEqual(body["event"]["slots_remaining"], 1)
+        self.assertEqual(self.notifications(), [])
         self.email.assert_not_called()
-
-    # TC-68-14 · AC10 (A9/Q5) — an event with nobody waiting just gets its place back.
-    def test_nobody_waiting_means_nobody_is_promoted(self):
-        self.assert_withdrawn(self.withdraw("E6", "farah"))
-
-        self.assertEqual(self.promotion_notifications()[0], [])
-        self.assertEqual(self.registered_count("E6"), 1)
-
-    # TC-68-14 · AC10 (A9/Q5) — a broken email queue must not undo the withdrawal or promotion.
-    def test_email_queue_failure_is_not_fatal(self):
-        self.email.side_effect = ConnectionError("broker down")
-
-        self.assert_withdrawn(self.withdraw("E7", "farah"))
-
-        self.assertEqual(self.statuses("E7")["ivy"], "registered")
-        self.assertEqual(self.promotion_notifications()[0], ["ivy"])
 
 
 # ---------- AC11: saving fails ----------
@@ -537,15 +468,14 @@ class SaveFailureTests(WithdrawalTestCase):
         self.assert_withdrawn(self.withdraw("E1", "farah"))
         self.assertEqual(self.registered_count("E1"), 1)
 
-    # TC-68-15 · AC11 — a failed save promotes nobody and sends nothing.
-    def test_failed_save_promotes_nobody(self):
+    # TC-68-15 · AC11 — a failed save changes nothing and sends nothing.
+    def test_failed_save_sends_nothing(self):
         with mock.patch.object(self.db.session, "commit",
                                side_effect=SQLAlchemyError("simulated outage")):
-            self.assert_error(self.withdraw("E7", "farah"), 503)
+            self.assert_error(self.withdraw("E6", "farah"), 503)
 
-        self.assertEqual(self.statuses("E7"), {
-            "farah": "registered", "jon": "registered", "ivy": "waitlisted", "kim": "waitlisted"})
-        self.assertEqual(self.promotion_notifications()[0], [])
+        self.assertEqual(self.statuses("E6"), {"farah": "registered", "jon": "registered"})
+        self.assertEqual(self.notifications(), [])
         self.email.assert_not_called()
 
     # TC-68-15 · AC11 — a failed load is a failure, not an empty list.

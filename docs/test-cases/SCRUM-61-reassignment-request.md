@@ -60,7 +60,7 @@ These are the team's current reading of the story. Each one is tied to an open q
 
 ## Seed data (RR-SEED)
 
-"Now" is fixed at **13 Oct 2026 12:00** Singapore time. Users come from `backend/tests/seed_data.py`. Every event is organised by dana and coordinated by alice, and is `confirmed` and runs 20 Nov 2026 10:00 – 12:00 unless the table says otherwise.
+"Now" is fixed at **13 Oct 2026 12:00** Singapore time. Users come from `backend/tests/seed_data.py`. Every event is organised by dana and coordinated by alice, and is `approved` and runs 20 Nov 2026 10:00 – 12:00 unless the table says otherwise.
 
 | Ref | Title | Differs from the defaults | Requests already made |
 |-----|-------|---------------------------|-----------------------|
@@ -70,7 +70,7 @@ These are the team's current reading of the story. Each one is tied to an open q
 
 The requester is alice and the selected coordinator is ben unless a case says otherwise. chloe is a coordinator who is not assigned to the events, and farah is an attendee. The reason is "Overseas on 20/11/2026" unless a case says otherwise.
 
-The sheet says "approved" for E-101; the repo's published status is `confirmed`, so E1 is `confirmed`. The sheet's browser steps become API calls and component tests.
+The sheet says "approved" for E-101, and since SCRUM-45 was reopened (18 Oct 2026) `approved` is also the published status, so E1 is `approved`. The sheet's browser steps become API calls and component tests.
 
 ---
 

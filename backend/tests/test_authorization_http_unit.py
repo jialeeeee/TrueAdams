@@ -189,7 +189,7 @@ class AuthorizationHttpUnitTests(unittest.TestCase):
     def test_planning_cannot_smuggle_identity_or_noneditable_fields(self):
         before = dict(self.event.__dict__)
         for field in ("organiser_id", "coordinator_id", "status", "decided_by_id", "registration_capacity",
-                      "registration_opens_at", "registration_closes_at", "waitlist_enabled"):
+                      "registration_opens_at", "registration_closes_at"):
             with self.subTest(field=field):
                 response = self.client.patch("/api/events/7", json={field: 4}, headers=self.headers())
                 self.assert_refused_unchanged(response, before, 422)

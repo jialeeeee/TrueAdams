@@ -61,7 +61,9 @@ MAX_REASON_LENGTH = 500
 # Every RR-SEED event is organised by dana and coordinated by alice (the main
 # coordinator). ben and chloe are the other coordinators; farah is an attendee.
 EVENT_DEFAULTS = {
-    "status": "confirmed",
+    # Published, so other coordinators can open the event page (SCRUM-74); since SCRUM-45
+    # was reopened on 18 Oct 2026 that status is "approved".
+    "status": "approved",
     "start_time": datetime(2026, 11, 20, 10, 0),
     "end_time": datetime(2026, 11, 20, 12, 0),
 }
@@ -99,9 +101,9 @@ class ReassignmentTestCase(AppTestCase):
     # ---------- Arranging ----------
 
     def ad_hoc_event(self, ends_at):
-        """A confirmed event coordinated by alice that ends at `ends_at`."""
+        """An approved event coordinated by alice that ends at `ends_at`."""
         return self.make_event(
-            organiser=self.users["dana"], status="confirmed",
+            organiser=self.users["dana"], status="approved",
             start_time=ends_at - timedelta(hours=2), duration=timedelta(hours=2),
             coordinator_id=self.users["alice"].id,
         )
