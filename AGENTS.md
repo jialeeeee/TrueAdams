@@ -31,8 +31,12 @@ npm test                                      # Vitest, run once
 docker compose up --build                     # backend (gunicorn) + worker + Redis
 ```
 
-- CI ([.github/workflows/tests.yml](.github/workflows/tests.yml)) runs **only the backend tests**, on Python 3.12, on pushes and PRs to `main`. Frontend tests are not in CI: run `npm test` yourself before pushing frontend changes.
-- There is no local database. Both the app and the tests use the team's Supabase Postgres; the backend tests need `TEST_DATABASE_URL` in `backend/.env` and fail at start-up without it.
+- CI ([.github/workflows/tests.yml](.github/workflows/tests.yml)) runs **only the backend tests**, on Python 3.12, on pushes and PRs to `main`, in two jobs:
+  - `unittest` runs the whole suite against a throwaway PostgreSQL 17 inside the runner, built from the models by [backend/ci/build_test_database.py](backend/ci/build_test_database.py). It takes about a minute; against Supabase in Tokyo the same suite took 30–60.
+  - `supabase-schema` runs `tests.test_app_factory` against Supabase, so a model that Supabase doesn't match (for example, a `db/*.sql` script that hasn't been run) still fails CI.
+
+  Frontend tests are not in CI: run `npm test` yourself before pushing frontend changes.
+- Locally, both the app and the tests use the team's Supabase Postgres; the backend tests need `TEST_DATABASE_URL` in `backend/.env` and fail at start-up without it. A full run against Supabase takes about 30 minutes. For a quick run, build a local PostgreSQL with `ci/build_test_database.py` (it refuses any host but localhost) and point `TEST_DATABASE_URL` at its `connectsphere_test` role, as CI does.
 - `SQLAlchemy` is pinned to 2.0.x on purpose (2.1 switches `postgresql://` to psycopg 3; we use psycopg2). Do not upgrade it casually.
 
 ## Architecture: where code goes
@@ -87,12 +91,12 @@ Check in this order and return the first failure: **401** (no valid user) → **
 
 ## Schema changes
 
-There is no migration tool and no `db.create_all()`. The live and test databases are the same Supabase project.
+There is no migration tool and no `db.create_all()` against Supabase. The live database and local test runs use the same Supabase project; CI's throwaway database is built from the models by `ci/build_test_database.py`.
 
 1. Change the model in `models.py`.
 2. Add `backend/db/<story_or_topic>.sql`: wrapped in `begin; … commit;`, idempotent (`if not exists` / `add column if not exists`), with a header comment naming the story, the model it must match, and whether `test_role.sql` must be re-run. New tables `enable row level security`.
 3. For a new table, add it to **both** lists in [backend/db/test_role.sql](backend/db/test_role.sql) (the `grant` and the policy loop).
-4. **Tell the user** the script must be run in the Supabase SQL editor as the project owner (then `test_role.sql` for new tables) before merging. Agents cannot run it. Until it is run, `test_database_tables_match_the_models` fails for everyone, including CI.
+4. **Tell the user** the script must be run in the Supabase SQL editor as the project owner (then `test_role.sql` for new tables) before merging. Agents cannot run it. Until it is run, `test_database_tables_match_the_models` fails for everyone, including CI's `supabase-schema` job.
 5. Never edit a script that has already been run on Supabase; add a new one. Never drop or rename a column another story reads without agreeing it with the team.
 
 ## Testing
@@ -137,7 +141,7 @@ Follow the existing documents: user story and links at the top, **Acceptance cri
 ## Never
 
 - Commit secrets or real connection strings, or point tests at `DATABASE_URL`.
-- Use `db.create_all()`, drop tables, or run DDL from app or test code.
+- Use `db.create_all()`, drop tables, or run DDL from app or test code. (`ci/build_test_database.py` is the one exception: it builds CI's throwaway database and refuses any host but localhost.)
 - Assume a table is empty in a test, or leave test rows committed outside the rolled-back transaction.
 - Trust the JWT's role claim instead of the stored `User.role`.
 - Report a database failure as an empty result, "not recorded" or "available".
