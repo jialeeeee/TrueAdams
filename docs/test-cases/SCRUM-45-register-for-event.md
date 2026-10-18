@@ -2,7 +2,7 @@
 
 **User story:** As an Attendee, I want to register for an event so that I can secure my place.
 
-**Created:** 9 Oct 2026 · **Reopened:** 18 Oct 2026 (an event must be **Approved**, and the waiting list is **removed**; see *What changed on reopening*) · **Status of all cases:** Automated cases pass (18 Oct 2026, local PostgreSQL 17 with db/remove_waitlist.sql applied + Vitest); TC-45-22 is checked manually. · **Automated tests:** `backend/tests/test_event_registration.py`, `frontend/src/pages/EventRegistrationPage.test.jsx` · **Endpoint:** `POST /api/registrations/` · **Related:** SCRUM-29 (`registration_required`), SCRUM-52/53 (which event fields can be edited directly), SCRUM-68 (withdrawal, which promoted from the waiting list), SCRUM-74 (event details, which publishes the same status)
+**Created:** 9 Oct 2026 · **Reopened:** 18 Oct 2026 (an event must be **Approved**, and the waiting list is **removed**; see *What changed on reopening*) · **Status of all cases:** Automated cases pass (18 Oct 2026, local PostgreSQL 17 with db/remove_waitlist.sql applied + Vitest); TC-45-22 is checked manually. · **Automated tests:** `backend/tests/test_event_registration.py`, `backend/tests/test_registration_settings.py`, `frontend/src/pages/EventRegistrationPage.test.jsx`, `frontend/src/pages/RegistrationSettingsPage.test.jsx`, `frontend/src/pages/EventPlanningPage.test.jsx` · **Endpoints:** `POST /api/registrations/`, `GET`/`PUT /api/events/<id>/registration-settings` · **Related:** SCRUM-29 (`registration_required`), SCRUM-52/53 (which event fields can be edited directly), SCRUM-68 (withdrawal, which promoted from the waiting list), SCRUM-74 (event details, which publishes the same status)
 
 ## Acceptance criteria
 
@@ -14,6 +14,7 @@
 | AC4 | If the event is full, registration is blocked with the message "This event is full". |
 | AC5 | If registration is closed or disabled, it is blocked with a message that says which. |
 | AC6 | If saving fails, no registration is created and an error is shown. |
+| AC7 | The event's coordinator sets the number of places and the registration period for an approved event that needs registration. *(Added 19 Oct 2026 after PR review: nothing set these, so registration could never open. Team decision; to confirm with the customer.)* |
 
 ## What changed on reopening (18 Oct 2026)
 
@@ -39,6 +40,10 @@ These are the team's current reading of the story. Each one is tied to an open q
 - **A10 — Order of checks:** not logged in (401) → not an attendee (403) → invalid body (400) → unknown event (404) → existing active registration (200) → not approved → disabled → before the period → after the period → full (409). The role check comes before the event lookup, so other users cannot probe which event IDs exist. A full event that is also closed, disabled or not approved says which, not "full".
 - **A11 — Saving fails:** HTTP 503 with `retryable: true`, saying the registration was not saved and to try again. No row is created, and a retry works once the database is back.
 - **A12 — No email:** the confirmation is the response message. No notification or email is sent in this story. *(Q8)*
+- **A13 — Who sets up registration (AC7):** only the event's current coordinator (`coordinator` role and `Event.coordinator_id`, read from the database on every request), from a "Set up registration" link on the planning page. Everyone else, including other coordinators, Leads, the organiser and admins, gets HTTP 403 with no settings. *(Q4)*
+- **A14 — The values (AC7):** all three are required together: `capacity`, a whole number from 1 to the largest the database holds and, when the event has a venue with a recorded capacity, no more than that; `opens_at` and `closes_at`, as `YYYY-MM-DDTHH:MM` in Singapore time, with opening before closing and closing no later than the event's start. A missing or invalid value is HTTP 400 naming the field; nothing else may be sent.
+- **A15 — Changing them (AC7):** the coordinator can change the settings at any time while the event is approved, without a change request, but never to fewer places than people already registered (HTTP 409 `below_registered`). The event row is locked while it is checked, as registering does. *(Q9)*
+- **A16 — Which events (AC7):** only an `approved` event (HTTP 409 `not_approved` otherwise) whose organiser said registration is needed (`registration_required` true; HTTP 409 `registration_not_needed` otherwise, since changing that is a change request). The settings view says why they can't be changed.
 
 ## Endpoint under test
 
@@ -49,6 +54,9 @@ These are the team's current reading of the story. Each one is tied to an open q
   - **400**, **401**, **403**, **404** `{"error": str}`.
   - **503** `{"error": str, "retryable": true}`.
 - A registration is `{"id", "event_id", "status", "registered_at"}`. `status` is `registered`, and `registered_at` is naive UTC.
+- `GET /api/events/<id>/registration-settings` → **200** `{"event_id", "capacity", "opens_at", "closes_at", "registered_count", "venue_capacity", "can_edit", "message"}`; `message` says why the settings can't be changed when `can_edit` is false.
+- `PUT /api/events/<id>/registration-settings` with `{"capacity", "opens_at", "closes_at"}` → **200** `{"message", <the GET fields>}`; **400** `{"error", "field"}`; **409** `{"error", "reason"}` (`not_approved`, `registration_not_needed`, `below_registered`); **503** `{"error", "retryable": true}`.
+- Both: **401** without a valid session, **404** for an unknown event, **403** for anyone but the event's coordinator.
 
 ## What the implementation needs
 
@@ -234,6 +242,77 @@ The registering attendee is `farah` unless a case says otherwise.
   - A failed save shows the server's message and leaves the button enabled to retry. A network failure shows a fallback message.
 - **Automated:** `EventRegistrationPage.test.jsx`
 
+## AC7 — The coordinator sets up registration
+
+Seed data (RS-SEED): `backend/tests/seed_data.py` users and Leads. Every event is organised by dana, coordinated by alice and starts 12 Dec 2026 17:00. R1 Harbour Lights Festival (approved, registration needed, nothing set); R2 Winter Networking Night (approved, needed, 30 places, open 1 Oct 09:00 – 30 Nov 00:00, at a venue holding 40, two attendees registered and one withdrawn); R3 Product Launch (submitted); R4 Rooftop Cinema (approved, registration not needed); R5 Alumni Mixer (cancelled).
+
+**TC-45-24 · The coordinator sets up registration, and attendees can then register**
+- **Traces to:** AC7, AC1 · **Type:** Happy path (end to end)
+- **Steps:** As alice, set R1 to 50 places, open 2026-11-01 09:00 to 2026-12-01 00:00. Then, on 15 Nov, farah registers for R1.
+- **Expected result:** HTTP 200 naming the event; the values are saved and returned. farah's registration gives HTTP 201.
+- **Automated:** `test_coordinator_sets_up_registration_and_attendees_can_register`
+
+**TC-45-25 · The coordinator sees the current settings**
+- **Traces to:** AC7 · **Type:** Happy path
+- **Expected result:** R1 shows nothing set, 0 registered, no venue capacity. R2 shows 30 places, its period, 2 registered (the withdrawn one does not count) and a venue capacity of 40. Both can be edited.
+- **Automated:** `test_coordinator_sees_the_current_settings`
+
+**TC-45-26 · The settings can be changed later**
+- **Traces to:** AC7 · **Type:** Happy path · **Depends on:** Q9
+- **Steps:** Change R2 to 35 places, open 15 Oct 09:00 to 12 Dec 17:00 (the event's start).
+- **Expected result:** HTTP 200; saved.
+- **Automated:** `test_settings_can_be_changed_later`
+
+**TC-45-27 · Each value must be present and valid**
+- **Traces to:** AC7 · **Type:** Negative (validation)
+- **Test data:** capacity 0, -1, `"10"`, `true`, 1.5, null or too large; times null, empty, `"soon"`, `"2026-02-30T10:00"`, a date only, a number or `"2026-12-01T25:00"`; each value missing; an extra field; a body that is not JSON.
+- **Expected result:** HTTP 400 naming the field each time. Nothing changes.
+- **Automated:** `test_values_must_be_present_and_valid`
+
+**TC-45-28 · Registration opens before it closes, and closes no later than the event starts**
+- **Traces to:** AC7 · **Type:** Boundary
+- **Expected result:** Opening equal to or after closing, or closing one minute after the start, is HTTP 400 on `closes_at`; nothing changes. Closing exactly at the start is accepted.
+- **Automated:** `test_period_rules`
+
+**TC-45-29 · No more places than the venue holds**
+- **Traces to:** AC7 · **Type:** Boundary
+- **Expected result:** 41 places at R2 (venue holds 40) is HTTP 400 on `capacity`, naming 40; nothing changes. 40 is accepted.
+- **Automated:** `test_no_more_places_than_the_venue_holds`
+
+**TC-45-30 · No fewer places than people already registered**
+- **Traces to:** AC7 · **Type:** Boundary
+- **Expected result:** 1 place at R2 (2 registered) is HTTP 409 `below_registered`, naming 2; nothing changes. 2 is accepted.
+- **Automated:** `test_no_fewer_places_than_already_registered`
+
+**TC-45-31 · Only an approved event that needs registration**
+- **Traces to:** AC7 · **Type:** Negative (business rule)
+- **Expected result:** R3 (submitted) and R5 (cancelled) give HTTP 409 `not_approved`; R4 gives `registration_not_needed`. Nothing changes, and each settings view has `can_edit: false` and a message.
+- **Automated:** `test_only_approved_events_that_need_registration`
+
+**TC-45-32 · Only the event's coordinator**
+- **Traces to:** AC7 · **Type:** Negative (authorisation)
+- **Steps:** View and save R2 as ben (another coordinator), lena (a Lead), dana (the organiser), admin, farah, gus and hana.
+- **Expected result:** HTTP 403 each time, with no settings. Nothing changes.
+- **Automated:** `test_only_the_events_coordinator`
+
+**TC-45-33 · A valid session, an existing event and the current role are required**
+- **Traces to:** AC7 · **Type:** Negative (authorisation)
+- **Expected result:** No token, an expired token or a deleted user's token is HTTP 401; an unknown event is 404; alice after her role changes to organiser is 403. Nothing changes.
+- **Automated:** `test_session_event_and_current_role_are_required`
+
+**TC-45-34 · Saving fails**
+- **Traces to:** AC7 · **Type:** Negative (failure)
+- **Expected result:** HTTP 503 with `retryable: true`, saying the settings were not saved. Nothing changes; a retry works.
+- **Automated:** `test_failed_save_changes_nothing_and_retry_works`
+
+**TC-45-35 · Frontend: setting up registration**
+- **Traces to:** AC7 · **Type:** Frontend
+- **Expected result:**
+  - The planning page links an approved event that needs registration to "Set up registration" (`/events/<id>/registration-settings`); there is no link otherwise.
+  - The settings page shows the current values, "Registered so far" and the venue's capacity. Saving sends `{capacity, opens_at, closes_at}` and shows the confirmation. A refusal shows the server's message and keeps what was entered.
+  - When the settings can't be changed, the reason is shown with no form. A 403 shows its message with no form or Retry; a failed load offers Retry.
+- **Automated:** `RegistrationSettingsPage.test.jsx`, `EventPlanningPage.test.jsx`
+
 ---
 
 ## Traceability matrix
@@ -246,15 +325,16 @@ The registering attendee is `farah` unless a case says otherwise.
 | AC4 | 06, 17, 18, 19, 20, 22, 23 |
 | AC5 | 03, 04, 05, 07, 18, 20, 23 |
 | AC6 | 21, 23 |
+| AC7 | 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35 |
 
 | Type | Test cases |
 |------|-----------|
-| Happy path | 01, 11 |
-| Negative | 02, 03, 05, 07, 08, 10, 12, 16, 17, 18, 19, 20, 21 |
-| Boundary | 04, 06, 09, 14, 15 |
+| Happy path | 01, 11, 24, 25, 26 |
+| Negative | 02, 03, 05, 07, 08, 10, 12, 16, 17, 18, 19, 20, 21, 27, 31, 32, 33, 34 |
+| Boundary | 04, 06, 09, 14, 15, 28, 29, 30 |
 | Cross-cutting (authorisation) | 08, 09, 10 |
 | Concurrency (manual) | 22 |
-| Frontend | 23 |
+| Frontend | 23, 35 |
 | Retired | 13 |
 
 ## Open questions for the customer
@@ -264,9 +344,9 @@ The registering attendee is `farah` unless a case says otherwise.
 | Q1 | Can only attendees register, or also organisers, coordinators and staff (e.g. for someone else's event)? Can an attendee register someone else? Assumed: attendees only, for themselves. | A1, TC-45-08, 09 |
 | Q2 | ~~What is a "Confirmed" event?~~ **Answered on reopening (18 Oct 2026):** registration needs Approved. | A2, TC-45-02 |
 | Q3 | Is "registration enabled" the organiser's "Attendee registration needed" answer (assumed), or a separate switch the coordinator controls? | A3, TC-45-03 |
-| Q4 | Who sets the registration period, and is it required? Should registration close automatically when the event starts? Assumed: two recorded times; missing means closed. | A4, TC-45-04, 05 |
+| Q4 | Who sets the registration period and the number of places? **Team decision (19 Oct 2026), to confirm with the customer:** the event's coordinator, during planning (AC7). Still open: should registration close automatically when the event starts? Assumed: it must close no later than the start. | A4, A13, TC-45-04, 05, 24 |
 | Q5 | Where does the number of places come from: a separate capacity (assumed), the expected attendance, or the venue's capacity? What happens if it isn't set? | A5, TC-45-06, 07 |
 | Q6 | ~~Does the waiting list have a limit?~~ **Answered on reopening:** there is no waiting list. Should attendees who were on one be told it was removed? Assumed not; their entries are cancelled. | A6 |
 | Q7 | Can an attendee who withdrew or was cancelled register again? Assumed yes. | A7, TC-45-15 |
 | Q8 | Should a confirmation email or in-app notification be sent? Assumed not in this story. | A12 |
-| Q9 | Once an event is approved, can its capacity and registration period be changed directly, or only through a change request (SCRUM-52)? | Implementation |
+| Q9 | Once an event is approved, can its capacity and registration period be changed directly, or only through a change request (SCRUM-52)? **Team decision (19 Oct 2026):** the coordinator changes them directly, never below the number already registered. | A15, TC-45-26, 30 |
