@@ -3,7 +3,7 @@ import { useParams } from "react-router-dom";
 import apiClient from "../api/client.js";
 
 // Registration statuses as shown to attendees.
-const STATUS_LABELS = { registered: "Registered", waitlisted: "Waitlisted" };
+const STATUS_LABELS = { registered: "Registered" };
 const NOT_SAVED = "Your registration was not saved. Check your connection and try again.";
 
 function explain(failure) {

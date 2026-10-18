@@ -90,7 +90,6 @@ class Event(db.Model):
     registration_opens_at = db.Column(db.DateTime)
     registration_closes_at = db.Column(db.DateTime)
     registration_capacity = db.Column(db.Integer)
-    waitlist_enabled = db.Column(db.Boolean)
 
 
 class VenueBooking(db.Model):
@@ -162,13 +161,13 @@ class Registration(db.Model):
 
     __tablename__ = "registrations"
     __table_args__ = (
-        # At most one active (registered or waitlisted) registration per attendee per event.
+        # At most one active (registered) registration per attendee per event.
         db.Index(
             "registrations_one_active_per_attendee",
             "event_id",
             "attendee_id",
             unique=True,
-            postgresql_where=db.text("status in ('registered', 'waitlisted')"),
+            postgresql_where=db.text("status = 'registered'"),
         ),
     )
 
@@ -176,8 +175,8 @@ class Registration(db.Model):
     event_id = db.Column(db.Integer, db.ForeignKey("events.id"), nullable=False)
     attendee_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
     registered_at = db.Column(db.DateTime, default=datetime.utcnow)
-    # "registered", "waitlisted", "withdrawn" (the attendee left, SCRUM-68) or
-    # "cancelled". Only registered ones take a place; registered and waitlisted are active.
+    # "registered", "withdrawn" (the attendee left, SCRUM-68) or "cancelled". Only
+    # registered ones take a place and are active (no waiting list since 18 Oct 2026).
     status = db.Column(db.String(20), nullable=False, default="registered")
 
 

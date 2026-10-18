@@ -71,7 +71,7 @@ export default function EventDetailsPage() {
   return (
     <section>
       <h1>{event.title}</h1>
-      {event.status !== "confirmed" && <p>{`Status: ${statusLabel(event.status)}`}</p>}
+      {event.status !== "approved" && <p>{`Status: ${statusLabel(event.status)}`}</p>}
       <p>{`Description: ${provided(event.description)}`}</p>
       <p>{`Starts: ${when(event.start_time)}`}</p>
       <p>{`Ends: ${when(event.end_time)}`}</p>

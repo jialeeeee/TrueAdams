@@ -100,7 +100,7 @@ _LOCAL_DATETIME = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$")
 
 # SCRUM-74. Only published events are visible to everyone; "confirmed" is the status
 # SCRUM-45 uses for events that take registrations (open question Q1).
-PUBLISHED_STATUSES = {"confirmed"}
+PUBLISHED_STATUSES = {"approved"}
 # Event IDs live in a 32-bit column; a larger ID cannot exist, and asking the database
 # for one raises an error instead of finding nothing.
 DB_INTEGER_MAX = 2_147_483_647
@@ -1770,7 +1770,7 @@ def get_event(event_id: int):
         mine = Registration.query.filter(
             Registration.event_id == event.id,
             Registration.attendee_id == user.id,
-            Registration.status.in_(("registered", "waitlisted")),
+            Registration.status == "registered",
         ).first()
         venue = db.session.get(Venue, event.venue_id) if event.venue_id else None
         can_register, blocked_reason = _register_decision(
