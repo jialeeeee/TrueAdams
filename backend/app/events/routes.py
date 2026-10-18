@@ -17,7 +17,7 @@ from ..models import (
     User,
     Venue,
 )
-from ..registrations.routes import singapore_now
+from ..registrations.routes import REGISTERED, REGISTRABLE_STATUS, singapore_now
 from .permissions import (
     COORDINATOR_ROLE,
     can_view_clarifications,
@@ -98,9 +98,9 @@ REQUIRED_FOR_SUBMISSION = [
 TITLE_MAX_LENGTH = 255
 _LOCAL_DATETIME = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$")
 
-# SCRUM-74. Only published events are visible to everyone; "confirmed" is the status
-# SCRUM-45 uses for events that take registrations (open question Q1).
-PUBLISHED_STATUSES = {"approved"}
+# SCRUM-74. Only published events are visible to everyone: exactly the events that take
+# registrations (SCRUM-45, reopened 18 Oct 2026), so attendees can find each one.
+PUBLISHED_STATUSES = {REGISTRABLE_STATUS}
 # Event IDs live in a 32-bit column; a larger ID cannot exist, and asking the database
 # for one raises an error instead of finding nothing.
 DB_INTEGER_MAX = 2_147_483_647
@@ -1689,7 +1689,7 @@ def _registered_counts(event_ids):
         return {}
     rows = (
         db.session.query(Registration.event_id, func.count(Registration.id))
-        .filter(Registration.event_id.in_(event_ids), Registration.status == "registered")
+        .filter(Registration.event_id.in_(event_ids), Registration.status == REGISTERED)
         .group_by(Registration.event_id)
         .all()
     )
@@ -1770,7 +1770,7 @@ def get_event(event_id: int):
         mine = Registration.query.filter(
             Registration.event_id == event.id,
             Registration.attendee_id == user.id,
-            Registration.status == "registered",
+            Registration.status == REGISTERED,
         ).first()
         venue = db.session.get(Venue, event.venue_id) if event.venue_id else None
         can_register, blocked_reason = _register_decision(

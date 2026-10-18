@@ -12,7 +12,10 @@ from ..models import Event, Registration, User
 registrations_bp = Blueprint("registrations", __name__)
 
 ATTENDEE_ROLE = "attendee"
+# Only approved events take registrations (SCRUM-45 AC1, reopened 18 Oct 2026). SCRUM-74
+# publishes the same status, so attendees can find every event they can register for.
 REGISTRABLE_STATUS = "approved"
+# The only active status: there is no waiting list since 18 Oct 2026 (A6, A7).
 REGISTERED = "registered"
 # The attendee left (SCRUM-68). Not active, so they may register again (A8).
 WITHDRAWN = "withdrawn"
@@ -22,7 +25,8 @@ DB_INTEGER_MAX = 2_147_483_647
 ACTIVE_STATUSES = (REGISTERED,)
 STATUS_LABELS = {REGISTERED: "Registered"}
 
-# Why a registration is blocked: the `reason` sent with HTTP 409, and its message.
+# Why a registration is blocked: the `reason` sent with HTTP 409, and its message, shown
+# to attendees verbatim. AC4 fixes the "full" wording; closed and disabled say which (AC5).
 BLOCKED_MESSAGES = {
     "not_approved": "This event is not open for registration.",
     "disabled": "Registration has not been enabled for this event.",
@@ -80,7 +84,7 @@ def _format_time(value):
 def _blocked(event, now):
     """Why registration is not open, as (reason, message), or None if it is open.
 
-    Places are checked separately.
+    Places are checked afterwards, so a full event that is also closed says why (A10).
     """
     if event.status != REGISTRABLE_STATUS:
         return "not_approved", BLOCKED_MESSAGES["not_approved"]

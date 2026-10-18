@@ -1,9 +1,8 @@
 import { useState } from "react";
 import { useParams } from "react-router-dom";
 import apiClient from "../api/client.js";
+import statusLabel from "../utils/statusLabel.js";
 
-// Registration statuses as shown to attendees.
-const STATUS_LABELS = { registered: "Registered" };
 const NOT_SAVED = "Your registration was not saved. Check your connection and try again.";
 
 function explain(failure) {
@@ -38,7 +37,7 @@ export default function EventRegistrationPage() {
       {outcome ? (
         <>
           <p role="status">{outcome.message}</p>
-          <p>{`Status: ${STATUS_LABELS[outcome.status] ?? outcome.status}`}</p>
+          <p>{`Status: ${statusLabel(outcome.status)}`}</p>
         </>
       ) : (
         <button type="button" onClick={register} disabled={sending}>
