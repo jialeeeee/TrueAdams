@@ -1,13 +1,48 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import apiClient from "../api/client.js";
+import canRetry from "../utils/canRetry.js";
+import explain from "../utils/explain.js";
+
+// The event's coordinator sets the number of places and the registration period
+// (SCRUM-45 AC7), via GET/PUT /api/events/<id>/registration-settings.
+const NOT_LOADED =
+  "The registration settings could not be loaded. Check your connection and try again.";
+const NOT_SAVED =
+  "The registration settings were not saved. Check your connection and try again.";
+
+// Times are Singapore time without a time zone, sent and shown as recorded.
+const asInput = (value) => (value ? value.slice(0, 16) : "");
+
+function formFrom(settings) {
+  return {
+    capacity: settings.capacity === null ? "" : String(settings.capacity),
+    opens_at: asInput(settings.opens_at),
+    closes_at: asInput(settings.closes_at),
+  };
+}
+
+function SettingsForm({ form, onChange, onSubmit }) {
+  const field = (name) => (e) => onChange({ ...form, [name]: e.target.value });
+  return (
+    <form onSubmit={onSubmit}>
+      <label htmlFor="capacity">Number of places</label>
+      <input id="capacity" type="number" min="1" value={form.capacity} onChange={field("capacity")} />
+      <label htmlFor="opens_at">Registration opens</label>
+      <input id="opens_at" type="datetime-local" value={form.opens_at} onChange={field("opens_at")} />
+      <label htmlFor="closes_at">Registration closes</label>
+      <input id="closes_at" type="datetime-local" value={form.closes_at} onChange={field("closes_at")} />
+      <button type="submit">Save registration settings</button>
+    </form>
+  );
+}
 
 export default function RegistrationSettingsPage() {
   const { eventId } = useParams();
   const [settings, setSettings] = useState(null);
   const [loadError, setLoadError] = useState(null);
-  const [form, setForm] = useState({ capacity: "", opens_at: "", closes_at: "" });
-  const [error, setError] = useState("");
+  const [form, setForm] = useState(null);
+  const [saveError, setSaveError] = useState("");
   const [confirmation, setConfirmation] = useState("");
 
   const load = useCallback(async () => {
@@ -15,19 +50,9 @@ export default function RegistrationSettingsPage() {
     try {
       const response = await apiClient.get(`/events/${eventId}/registration-settings`);
       setSettings(response.data);
-      setForm({
-        capacity: response.data.capacity === null ? "" : String(response.data.capacity),
-        opens_at: response.data.opens_at ? response.data.opens_at.slice(0, 16) : "",
-        closes_at: response.data.closes_at ? response.data.closes_at.slice(0, 16) : "",
-      });
+      setForm(formFrom(response.data));
     } catch (failure) {
-      const message = failure.response?.data?.error;
-      setLoadError({
-        message: typeof message === "string" && message.trim()
-          ? message
-          : "The registration settings could not be loaded. Check your connection and try again.",
-        retryable: !failure.response || failure.response.data?.retryable === true,
-      });
+      setLoadError({ message: explain(failure, NOT_LOADED), retryable: canRetry(failure) });
     }
   }, [eventId]);
 
@@ -37,7 +62,7 @@ export default function RegistrationSettingsPage() {
 
   async function save(e) {
     e.preventDefault();
-    setError("");
+    setSaveError("");
     setConfirmation("");
     try {
       const response = await apiClient.put(`/events/${eventId}/registration-settings`, {
@@ -48,10 +73,8 @@ export default function RegistrationSettingsPage() {
       setSettings(response.data);
       setConfirmation(response.data.message);
     } catch (failure) {
-      const message = failure.response?.data?.error;
-      setError(typeof message === "string" && message.trim()
-        ? message
-        : "The registration settings were not saved. Check your connection and try again.");
+      // What was entered stays, so it can be corrected and saved again.
+      setSaveError(explain(failure, NOT_SAVED));
     }
   }
 
@@ -70,24 +93,14 @@ export default function RegistrationSettingsPage() {
       {settings && (
         <>
           <p>{`Registered so far: ${settings.registered_count}`}</p>
-          {settings.venue_capacity !== null && <p>{`The venue holds ${settings.venue_capacity} people.`}</p>}
-          {confirmation && <p role="status">{confirmation}</p>}
-          {error && <p role="alert">{error}</p>}
-          {!settings.can_edit && <p>{settings.message}</p>}
-          {settings.can_edit && (
-            <form onSubmit={save}>
-              <label htmlFor="capacity">Number of places</label>
-              <input id="capacity" type="number" min="1" value={form.capacity}
-                onChange={(e) => setForm({ ...form, capacity: e.target.value })} />
-              <label htmlFor="opens_at">Registration opens</label>
-              <input id="opens_at" type="datetime-local" value={form.opens_at}
-                onChange={(e) => setForm({ ...form, opens_at: e.target.value })} />
-              <label htmlFor="closes_at">Registration closes</label>
-              <input id="closes_at" type="datetime-local" value={form.closes_at}
-                onChange={(e) => setForm({ ...form, closes_at: e.target.value })} />
-              <button type="submit">Save registration settings</button>
-            </form>
+          {settings.venue_capacity !== null && (
+            <p>{`The venue holds ${settings.venue_capacity} people.`}</p>
           )}
+          {confirmation && <p role="status">{confirmation}</p>}
+          {saveError && <p role="alert">{saveError}</p>}
+          {settings.can_edit
+            ? <SettingsForm form={form} onChange={setForm} onSubmit={save} />
+            : <p>{settings.message}</p>}
         </>
       )}
     </section>
