@@ -10,7 +10,7 @@ Endpoints (JWT required, else 401)
     GET /api/events/
         200 {"events": [item], "message": str | null}
         item = {"id", "title", "start_time", "end_time", "registration_state"}
-        The public catalogue: only published ("confirmed") events, soonest first, for
+        The public catalogue: only published ("approved") events, soonest first, for
         every role. message is set only when the list is empty.
     GET /api/events/<id>
         200 {"event": {
@@ -21,13 +21,14 @@ Endpoints (JWT required, else 401)
                                   "opens_at" | null, "closes_at" | null,
                                   "capacity" | null, "registered_count",
                                   "slots_remaining" | null},
-                 "my_registration": {"id", "status"} | null,   registered or waitlisted only
+                 "my_registration": {"id", "status"} | null,   registered only
                  "can_register": bool,
                  "register_blocked_reason": null | "already_registered" | "closed" | "full"
                                             | "not_attendee",
                  "can_request_reassignment": bool}}      (SCRUM-61)
         404 {"error": "Event not found."}   unknown, malformed or not visible to the caller
-    A published event is visible to every signed-in user. Any other status is visible
+    A published event (since SCRUM-45 was reopened on 18 Oct 2026, the status that takes
+    registrations: "approved") is visible to every signed-in user. Any other status is visible
     only to its organiser, its assigned coordinator and admins; everyone else gets
     exactly the 404 an unknown ID gets, so the two cannot be told apart.
 
@@ -60,7 +61,7 @@ EXTRA_ATTENDEES = [
 
 # Every DT-SEED event has these unless its row says otherwise.
 EVENT_DEFAULTS = {
-    "status": "confirmed",
+    "status": "approved",
     "description": "Open house for O-Level chemistry",
     "start_time": datetime(2026, 11, 20, 10, 0),
     "end_time": datetime(2026, 11, 20, 12, 0),
@@ -68,7 +69,6 @@ EVENT_DEFAULTS = {
     "registration_opens_at": OPENS,
     "registration_closes_at": CLOSES,
     "registration_capacity": 5,
-    "waitlist_enabled": False,
 }
 
 # DT-SEED. Every event is organised by dana and coordinated by alice.
@@ -85,6 +85,8 @@ EVENTS = {
     "E8": {"title": "Full House", "registration_capacity": 2},
     "E9": {"title": "No Details Yet", "description": None},
     "E10": {"title": "Blank Details", "description": "   "},
+    # No story sets "confirmed"; it no longer publishes an event (SCRUM-45, 18 Oct 2026).
+    "E11": {"title": "Confirmed Expo", "status": "confirmed"},
 }
 
 # (event, attendee, status).
@@ -93,13 +95,14 @@ REGISTRATIONS = [
     ("E1", "jon", "registered"),
     ("E1", "kim", "withdrawn"),
     ("E2", "jon", "registered"),
-    ("E2", "kim", "waitlisted"),
+    ("E2", "kim", "cancelled"),
     ("E7", "jon", "registered"),
     ("E8", "jon", "registered"),
     ("E8", "kim", "registered"),
 ]
 
-NOT_PUBLISHED = {"E3": "draft", "E4": "submitted", "E5": "under_review", "E6": "rejected"}
+NOT_PUBLISHED = {"E3": "draft", "E4": "submitted", "E5": "under_review", "E6": "rejected",
+                 "E11": "confirmed"}
 NOT_FOUND = {"error": "Event not found."}
 
 
@@ -229,7 +232,7 @@ class FieldTests(DetailsTestCase):
             "id": self.events["E1"].id,
             "title": "Chem Open House",
             "description": "Open house for O-Level chemistry",
-            "status": "confirmed",
+            "status": "approved",
             "start_time": "2026-11-20T10:00:00",
             "end_time": "2026-11-20T12:00:00",
             "venue": {"name": "Seminar Room 2", "location": "SMU Library, 70 Stamford Rd"},
@@ -352,7 +355,7 @@ class RegistrationStateTests(DetailsTestCase):
         self.assertEqual(event["registration"]["registered_count"], 2)
         self.assertIs(event["can_register"], False)
 
-    # TC-74-07 · AC5 — only registered attendees take places, never waiting-list or withdrawn ones.
+    # TC-74-07 · AC5 — only registered attendees take places, never cancelled or withdrawn ones.
     def test_only_registered_attendees_take_places(self):
         self.assertEqual(self.event_of("E2", "farah")["registration"]["registered_count"], 1)
         self.assertEqual(self.event_of("E1", "farah")["registration"]["registered_count"], 2)
@@ -410,11 +413,12 @@ class MyRegistrationTests(DetailsTestCase):
         self.assertEqual(event["my_registration"],
                          {"id": self.registrations[("E1", "ivy")].id, "status": "registered"})
 
-    # TC-74-09 · AC6 — a waiting-list place shows as waitlisted.
-    def test_waitlisted_attendee_sees_waitlisted(self):
+    # TC-74-09 · AC6 — a cancelled registration is not "your registration" (there is no
+    # waiting list since SCRUM-45 was reopened on 18 Oct 2026).
+    def test_cancelled_registration_is_not_shown(self):
         event = self.event_of("E2", "kim")
 
-        self.assertEqual(event["my_registration"]["status"], "waitlisted")
+        self.assertIsNone(event["my_registration"])
 
     # TC-74-10 · AC6 — an unregistered attendee sees nothing, and nobody else's details.
     def test_unregistered_attendee_sees_no_registration(self):

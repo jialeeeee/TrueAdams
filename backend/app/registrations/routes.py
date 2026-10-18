@@ -1,37 +1,37 @@
 from datetime import datetime
 
-from flask import Blueprint, current_app, jsonify, request
+from flask import Blueprint, jsonify, request
 from flask_jwt_extended import get_jwt_identity, jwt_required
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
-from .. import tasks
 from ..extensions import db
 # Imported by name so tests can patch registrations.routes.singapore_now.
 from ..local_time import singapore_now
-from ..models import Event, Notification, Registration, User
+from ..models import Event, Registration, User
 
 registrations_bp = Blueprint("registrations", __name__)
 
 ATTENDEE_ROLE = "attendee"
-# Only confirmed events take registrations (SCRUM-45 assumption A2, open question Q2).
-CONFIRMED_STATUS = "confirmed"
+# Only approved events take registrations (SCRUM-45 AC1, reopened 18 Oct 2026). SCRUM-74
+# publishes the same status, so attendees can find every event they can register for.
+REGISTRABLE_STATUS = "approved"
+# The only active status: there is no waiting list since 18 Oct 2026 (A6, A7).
 REGISTERED = "registered"
-WAITLISTED = "waitlisted"
 # The attendee left (SCRUM-68). Not active, so they may register again (A8).
 WITHDRAWN = "withdrawn"
-PROMOTION_NOTIFICATION = "registration_promoted"
 # The largest ID the database column holds; a bigger one cannot exist.
 DB_INTEGER_MAX = 2_147_483_647
 # A cancelled registration is not active, so the attendee may register again (A7).
-ACTIVE_STATUSES = (REGISTERED, WAITLISTED)
-STATUS_LABELS = {REGISTERED: "Registered", WAITLISTED: "Waitlisted"}
+ACTIVE_STATUSES = (REGISTERED,)
+STATUS_LABELS = {REGISTERED: "Registered"}
 
-# Why a registration is blocked: the `reason` sent with HTTP 409, and its message.
+# Why a registration is blocked: the `reason` sent with HTTP 409, and its message, shown
+# to attendees verbatim. AC4 fixes the "full" wording; closed and disabled say which (AC5).
 BLOCKED_MESSAGES = {
-    "not_confirmed": "This event is not open for registration.",
+    "not_approved": "This event is not open for registration.",
     "disabled": "Registration has not been enabled for this event.",
     "closed": "Registration for this event is closed.",
-    "full": "This event is full and has no waiting list.",
+    "full": "This event is full.",
 }
 
 
@@ -84,10 +84,10 @@ def _format_time(value):
 def _blocked(event, now):
     """Why registration is not open, as (reason, message), or None if it is open.
 
-    Places are checked separately, because a full event may still have a waiting list.
+    Places are checked afterwards, so a full event that is also closed says why (A10).
     """
-    if event.status != CONFIRMED_STATUS:
-        return "not_confirmed", BLOCKED_MESSAGES["not_confirmed"]
+    if event.status != REGISTRABLE_STATUS:
+        return "not_approved", BLOCKED_MESSAGES["not_approved"]
     if event.registration_required is not True or event.registration_capacity is None:
         return "disabled", BLOCKED_MESSAGES["disabled"]
     opens, closes = event.registration_opens_at, event.registration_closes_at
@@ -112,9 +112,8 @@ def _payload(registration):
 
 def _already_registered(event, registration):
     label = STATUS_LABELS[registration.status]
-    where = "on the waiting list for" if registration.status == WAITLISTED else "registered for"
     return jsonify({
-        "message": f"You're already {where} {event.title}. Your status is {label}.",
+        "message": f"You're already registered for {event.title}. Your status is {label}.",
         "registration": _payload(registration),
         "already_registered": True,
     })
@@ -231,14 +230,10 @@ def register_for_event():
             raise _Rejected(message, 409, reason=reason)
 
         taken = Registration.query.filter_by(event_id=event.id, status=REGISTERED).count()
-        if taken < event.registration_capacity:
-            status = REGISTERED
-        elif event.waitlist_enabled:
-            status = WAITLISTED
-        else:
+        if taken >= event.registration_capacity:
             raise _Rejected(BLOCKED_MESSAGES["full"], 409, reason="full")
 
-        registration = Registration(event_id=event.id, attendee_id=user.id, status=status)
+        registration = Registration(event_id=event.id, attendee_id=user.id, status=REGISTERED)
         db.session.add(registration)
         try:
             db.session.commit()
@@ -259,66 +254,13 @@ def register_for_event():
             "Your registration was not saved. Please try again.", 503, retryable=True
         )
 
-    if status == WAITLISTED:
-        message = (
-            f"{event.title} is full, so you've been added to the waiting list. "
-            "Your status is Waitlisted."
-        )
-    else:
-        message = f"You're registered for {event.title}."
-    return jsonify({"message": message, "registration": payload}), 201
-
-
-def _queue_promotion_email(to_address, title, event_id):
-    """Queue the promoted attendee's email; False if the queue could not be reached.
-
-    The promotion and in-app notification are already saved by then, so a broker outage
-    must not undo them. It takes plain values, not models.
-    """
-    try:
-        tasks.send_notification_email.delay(
-            to_address,
-            f"You're now registered: {title}",
-            f"A place opened up, so you're now registered for {title}.\n\n"
-            "Sign in to ConnectSphere to see your registrations.",
-        )
-    except Exception:
-        current_app.logger.exception("Could not queue promotion email for event %s", event_id)
-        return False
-    return True
-
-
-def _promote_longest_waiting(event):
-    """Give a freed place to whoever has waited longest. Returns that attendee, or None.
-
-    Whoever joined the waiting list first (then the lowest ID) goes first (A9, Q5).
-    """
-    taken = Registration.query.filter_by(event_id=event.id, status=REGISTERED).count()
-    if event.registration_capacity is None or taken >= event.registration_capacity:
-        return None
-    next_in_line = (
-        Registration.query.filter_by(event_id=event.id, status=WAITLISTED)
-        .order_by(Registration.registered_at, Registration.id)
-        .first()
-    )
-    if next_in_line is None:
-        return None
-    next_in_line.status = REGISTERED
-    db.session.add(
-        Notification(
-            recipient_id=next_in_line.attendee_id,
-            kind=PROMOTION_NOTIFICATION,
-            message=f"A place opened up, so you're now registered for {event.title}.",
-            event_id=event.id,
-        )
-    )
-    return db.session.get(User, next_in_line.attendee_id)
+    return jsonify({"message": f"You're registered for {event.title}.",
+                    "registration": payload}), 201
 
 
 @registrations_bp.post("/<int:registration_id>/withdraw")
 @jwt_required()
 def withdraw_registration(registration_id: int):
-    promoted_email = None
     try:
         user = _require_attendee()
         registration = (
@@ -331,7 +273,7 @@ def withdraw_registration(registration_id: int):
         if registration.attendee_id != user.id:
             raise _Rejected("You can only withdraw your own registration.", 403)
 
-        # Locked until the request ends, so two withdrawals can't promote the same person,
+        # Locked until the request ends, as registering is, so places are counted correctly,
         # then read again in case the registration changed while we waited.
         event = (
             Event.query.filter_by(id=registration.event_id)
@@ -347,11 +289,7 @@ def withdraw_registration(registration_id: int):
             reason, message = blocked
             raise _Rejected(message, 409, reason=reason)
 
-        frees_a_place = registration.status == REGISTERED
         registration.status = WITHDRAWN
-        db.session.flush()
-        # Only a registered place frees room; leaving the waiting list does not.
-        promoted = _promote_longest_waiting(event) if frees_a_place else None
         db.session.flush()
         taken = Registration.query.filter_by(event_id=event.id, status=REGISTERED).count()
         capacity = event.registration_capacity
@@ -364,8 +302,6 @@ def withdraw_registration(registration_id: int):
                 "slots_remaining": None if capacity is None else max(capacity - taken, 0),
             },
         }
-        title, event_id = event.title, event.id
-        promoted_email = promoted.email if promoted else None
         db.session.commit()
     except _Rejected as rejected:
         return _error(rejected.message, rejected.status_code, **rejected.extra)
@@ -375,6 +311,4 @@ def withdraw_registration(registration_id: int):
             "Your withdrawal was not saved. Please try again.", 503, retryable=True
         )
 
-    if promoted_email:
-        _queue_promotion_email(promoted_email, title, event_id)
     return jsonify(payload)

@@ -16,7 +16,7 @@ vi.mock("../api/client.js", () => ({ default: { get: vi.fn(), post: vi.fn() } })
 function item(id, title, status, canWithdraw, start = "2026-11-20T10:00:00") {
   return {
     id,
-    event: { id: id + 100, title, start_time: start, end_time: start.replace("10:00", "12:00"), status: "confirmed" },
+    event: { id: id + 100, title, start_time: start, end_time: start.replace("10:00", "12:00"), status: "approved" },
     status,
     registered_at: "2026-10-01T08:00:00",
     can_withdraw: canWithdraw,
@@ -25,7 +25,8 @@ function item(id, title, status, canWithdraw, start = "2026-11-20T10:00:00") {
 
 const CHEM = item(31, "Chem Open House", "registered", true);
 const WORKSHOP = item(32, "Ongoing Workshop", "registered", false, "2026-10-13T09:00:00");
-const NIGHT = item(33, "Waitlist Night", "waitlisted", true, "2026-12-01T10:00:00");
+// No waiting list since SCRUM-45 was reopened (18 Oct 2026): every active one is registered.
+const NIGHT = item(33, "Night Market", "registered", true, "2026-12-01T10:00:00");
 const ROBOTICS = item(34, "Robotics Day", "withdrawn", false, "2026-12-05T10:00:00");
 
 function list(active, history = [], message = null) {
@@ -83,8 +84,7 @@ describe("SCRUM-68 my registrations", () => {
     expect(apiClient.get).toHaveBeenCalledWith("/registrations/");
     expect(screen.getByText("Chem Open House")).toBeTruthy();
     expect(screen.getByText("Starts: 20/11/2026 10:00 SGT")).toBeTruthy();
-    expect(screen.getByText("Status: Registered")).toBeTruthy();
-    expect(screen.getByText("Status: Waitlisted")).toBeTruthy();
+    expect(screen.getAllByText("Status: Registered")).toHaveLength(2);
   });
 
   it("offers Withdraw only where the server says withdrawing is possible", async () => {
@@ -170,7 +170,7 @@ describe("SCRUM-68 withdrawing", () => {
     expect(within(history).getByText("Chem Open House")).toBeTruthy();
     expect(within(history).getByText("Status: Withdrawn")).toBeTruthy();
     // The other registration is untouched.
-    expect(withdrawButton("Waitlist Night")).toBeTruthy();
+    expect(withdrawButton("Night Market")).toBeTruthy();
   });
 
   it("sends one request when Confirm is clicked twice", async () => {

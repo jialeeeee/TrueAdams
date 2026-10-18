@@ -5,7 +5,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import apiClient from "../api/client.js";
 import EventRegistrationPage from "./EventRegistrationPage.jsx";
 
-// Frontend case TC-45-23 in docs/test-cases/SCRUM-45-register-for-event.md.
+// Frontend case TC-45-23 in docs/test-cases/SCRUM-45-register-for-event.md (reopened
+// 18 Oct 2026: no waiting list, and a full event says "This event is full.").
 // The API itself is covered by backend/tests/test_event_registration.py;
 // these check what the attendee sees. Responses mirror that API's contract.
 
@@ -62,19 +63,6 @@ describe("SCRUM-45 register for an event", () => {
     expect(screen.queryByRole("button", { name: /^register/i })).toBeNull();
   });
 
-  it("shows Waitlisted when the event is full and has a waiting list", async () => {
-    apiClient.post.mockResolvedValue(registered(
-      "waitlisted",
-      "Winter Networking Night is full, so you've been added to the waiting list. Your status is Waitlisted.",
-    ));
-    const user = renderPage();
-
-    await user.click(registerButton());
-
-    expect((await screen.findByRole("status")).textContent).toContain("added to the waiting list");
-    expect(screen.getByText("Status: Waitlisted")).toBeTruthy();
-  });
-
   it("shows the existing status when already registered", async () => {
     apiClient.post.mockResolvedValue(registered(
       "registered",
@@ -90,10 +78,11 @@ describe("SCRUM-45 register for an event", () => {
     expect(screen.queryByRole("button", { name: /^register/i })).toBeNull();
   });
 
+  // Must match BLOCKED_MESSAGES in backend/app/registrations/routes.py.
   it.each([
-    ["closed", "Registration for this event closed on 1 Dec 2026."],
-    ["full", "This event is full and has no waiting list."],
-    ["disabled", "This event is not taking registrations."],
+    ["closed", "Registration for this event is closed."],
+    ["full", "This event is full."],
+    ["disabled", "Registration has not been enabled for this event."],
   ])("explains why registration is blocked (%s)", async (reason, error) => {
     apiClient.post.mockRejectedValue(httpFailure(409, { error, reason }));
     const user = renderPage();

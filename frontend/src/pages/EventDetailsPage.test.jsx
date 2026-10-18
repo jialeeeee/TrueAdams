@@ -17,7 +17,7 @@ const EVENT = {
   id: 7,
   title: "Chem Open House",
   description: "Open house for O-Level chemistry",
-  status: "confirmed",
+  status: "approved",
   start_time: "2026-11-20T10:00:00",
   end_time: "2026-11-20T12:00:00",
   venue: { name: "Seminar Room 2", location: "SMU Library, 70 Stamford Rd" },
@@ -158,17 +158,6 @@ describe("SCRUM-74 event details", () => {
 
     expect(await screen.findByText("Your registration: Registered")).toBeTruthy();
     expect(screen.queryByRole("link", { name: "Register" })).toBeNull();
-  });
-
-  it("shows a waiting-list place as Waitlisted", async () => {
-    apiClient.get.mockResolvedValue(withEvent({
-      my_registration: { id: 31, status: "waitlisted" },
-      can_register: false,
-      register_blocked_reason: "already_registered",
-    }));
-    renderPage();
-
-    expect(await screen.findByText("Your registration: Waitlisted")).toBeTruthy();
   });
 
   it("shows no registration status to someone who is not registered", async () => {

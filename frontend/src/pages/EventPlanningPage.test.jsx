@@ -183,3 +183,25 @@ describe("SCRUM-39 request a venue from the planning view", () => {
     },
   );
 });
+
+// SCRUM-45 AC7 (TC-45-35): the event's coordinator sets up registration from here.
+describe("SCRUM-45 set up registration from the planning view", () => {
+  it("links an approved event that needs registration to its settings", async () => {
+    apiClient.get.mockResolvedValue({ data: { ...FESTIVAL, status: "approved" } });
+    renderPage();
+
+    const link = await screen.findByRole("link", { name: "Set up registration" });
+    expect(link.getAttribute("href")).toBe("/events/1/registration-settings");
+  });
+
+  it.each([
+    ["a submitted event", { status: "submitted" }],
+    ["an event that needs no registration", { status: "approved", registration_required: false }],
+  ])("offers no registration set-up for %s", async (_, changes) => {
+    apiClient.get.mockResolvedValue({ data: { ...FESTIVAL, ...changes } });
+    renderPage();
+
+    await screen.findByRole("heading", { name: "Harbour Lights Festival" });
+    expect(screen.queryByRole("link", { name: "Set up registration" })).toBeNull();
+  });
+});

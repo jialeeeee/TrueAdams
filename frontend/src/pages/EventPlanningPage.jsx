@@ -103,6 +103,9 @@ export default function EventPlanningPage() {
       {event.status === "approved" && (
         <Link to={`/events/${event.id}/venue-request`}>Request a venue</Link>
       )}
+      {event.status === "approved" && event.registration_required === true && (
+        <Link to={`/events/${event.id}/registration-settings`}>Set up registration</Link>
+      )}
 
       <dl>
         {FIELDS.map(([field, label]) => (

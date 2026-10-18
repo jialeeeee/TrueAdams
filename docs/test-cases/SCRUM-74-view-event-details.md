@@ -4,6 +4,8 @@
 
 **Created:** 13 Oct 2026 · **Status of all cases:** Implemented 13 Oct 2026. Every automated test passes (backend and frontend), run against a scratch PostgreSQL 16 database and a scratch frontend project, not the Supabase database. Manual cases have not been run in a browser. · **Automated tests:** `backend/tests/test_event_details.py`, `frontend/src/pages/EventDetailsPage.test.jsx`, `frontend/src/pages/EventsPage.test.jsx` · **Endpoints:** `GET /api/events/` (replaces the stub) and `GET /api/events/<id>` · **Related:** SCRUM-45 (registering; owns the registration period, capacity and `Registration`), SCRUM-68 (withdrawing), SCRUM-61 (the page carries "Request reassignment")
 
+**Changed by SCRUM-45's reopening (18 Oct 2026):** an event is published when it is `approved`, the status that now takes registrations (answering Q1), and there is no waiting list. TC-74-02, 04, 07 and 09 are updated; seed E11 (`confirmed`) checks that `confirmed` no longer publishes an event.
+
 **Source:** the team's "Sprint 2 test cases" sheet (IS212-US74-TC1 to TC17). Case `TC-74-nn` automates sheet case `IS212-US74-TCn`. Sheet users map to the seed data below: attendee_eve is farah (not registered), attendee_dan is ivy (registered) and coord_alice is alice; the sheet's events E-301 to E-309 are E1 to E10 here.
 
 ## Acceptance criteria
@@ -27,12 +29,12 @@
 
 These are the team's current reading of the story. Each one is tied to an open question below. If the customer answers differently, update the affected test cases before implementation.
 
-- **A1 — Published:** an event is published when its status is `confirmed`, the status SCRUM-45 uses for events that take registrations. `draft`, `submitted` (pending), `under_review` and `rejected` are not published. `approved` and `cancelled` are deliberately not covered by any test: the sheet calls an approved event visible, but the repo treats `confirmed` as the public status. *(Q1)*
+- **A1 — Published (changed 18 Oct 2026):** an event is published when its status is `approved`, the status SCRUM-45 uses for events that take registrations; both read one shared rule. `draft`, `submitted` (pending), `under_review`, `rejected` and `confirmed` (which no story sets) are not published. `cancelled` is not covered by any test. *(Q1)*
 - **A2 — Who sees an unpublished event:** its organiser, its assigned coordinator and admins. Everyone else, including other organisers, other coordinators and staff, gets the same HTTP 404 and body (`{"error": "Event not found."}`) that an unknown ID gets, so the two cannot be told apart and nothing about the event leaks. *(Q2)*
 - **A3 — The list:** `GET /api/events/` is the public catalogue: only published events, soonest first, for every role, each with `registration_state`. Creators find their drafts through My drafts and My event requests, not here. `message` is set only when the list is empty. *(Q2)*
 - **A4 — Registration state:** `closed` if registration is not set up (not required, or no capacity, or no period) or now is outside the period (open from the opening time up to, not including, the closing time, as SCRUM-45 does); otherwise `full` when no places remain; otherwise `open`. Closed wins over full. The state is computed here from the same fields, with "now" from `app.events.routes.singapore_now()`.
-- **A5 — Places:** `registered_count` counts only `registered` registrations (not waiting-list, withdrawn or cancelled ones). `slots_remaining` is capacity minus that, never below zero, and null with capacity when capacity is not recorded.
-- **A6 — My registration:** the caller's own `registered` or `waitlisted` registration as `{"id", "status"}`, otherwise null. Withdrawn and cancelled ones are not shown. Other attendees' details are never returned.
+- **A5 — Places:** `registered_count` counts only `registered` registrations (not withdrawn or cancelled ones). `slots_remaining` is capacity minus that, never below zero, and null with capacity when capacity is not recorded.
+- **A6 — My registration:** the caller's own `registered` registration as `{"id", "status"}`, otherwise null. Withdrawn and cancelled ones are not shown. Other attendees' details are never returned.
 - **A7 — Register button:** `can_register` is true only for an attendee when the state is `open` and they have no active registration. Otherwise `register_blocked_reason` is `not_attendee`, `already_registered`, `closed` or `full`, checked in that order (so an attendee already registered for a full event sees their status, and a closed event is reported as closed rather than full). A full event with a waiting list does not offer Register on this page; joining the list is a later improvement. *(Q3)*
 - **A8 — Not provided:** the API returns null for a missing or blank description and for a missing venue or venue location (the repo's "NULL means not recorded" rule); the page turns null into "Not provided".
 - **A9 — Times:** returned as naive Singapore time in ISO 8601 (`2026-11-20T10:00:00`), unchanged, in both the list and the detail. The page shows `dd/mm/yyyy HH:MM SGT` by reformatting the text, never through the browser's time zone, so 23:30 stays on the same day. The sheet asks for this format; `AGENTS.md` suggests showing the raw time, so this is a small shared helper. *(Q4)*
@@ -51,7 +53,7 @@ These are the team's current reading of the story. Each one is tied to an open q
 
 ## What the implementation needs
 
-- In `app/events/routes.py`: replace the `list_events` stub, add `GET /<int:event_id>` (the route already exists for `PATCH`), a `PUBLISHED_STATUSES = {"confirmed"}` constant with a comment, and `singapore_now` imported from `app.registrations.routes`. No schema change.
+- In `app/events/routes.py`: replace the `list_events` stub, add `GET /<int:event_id>` (the route already exists for `PATCH`), a `PUBLISHED_STATUSES` constant (since 18 Oct 2026, SCRUM-45's registrable status, `approved`) with a comment, and `singapore_now` imported from `app.registrations.routes`. No schema change.
 - `frontend/src/pages/EventDetailsPage.jsx` (route `/events/:eventId`), a new `EventsPage.jsx` that lists links to it, and a small helper in `frontend/src/utils/` that reformats a Singapore-time string to `dd/mm/yyyy HH:MM SGT`.
 - `test_routes.py`: `GET /api/events/` leaves `COLLECTION_ENDPOINTS` (it now needs a login and returns an object), and `GET /api/events/1` joins `ALL_ROUTES`.
 
@@ -59,12 +61,12 @@ These are the team's current reading of the story. Each one is tied to an open q
 
 "Now" is fixed at **5 Nov 2026 12:00** Singapore time. Users come from `backend/tests/seed_data.py`, plus extra attendees `ivy`, `jon` and `kim`. Every event is organised by dana and coordinated by alice.
 
-Unless the table says otherwise, an event is `confirmed`, has the description "Open house for O-Level chemistry", runs 20 Nov 2026 10:00 – 12:00, has no venue, takes registrations from 1 Nov 2026 00:00 to 15 Nov 2026 00:00, has 5 places and no waiting list.
+Unless the table says otherwise, an event is `approved`, has the description "Open house for O-Level chemistry", runs 20 Nov 2026 10:00 – 12:00, has no venue, takes registrations from 1 Nov 2026 00:00 to 15 Nov 2026 00:00, has 5 places and no waiting list.
 
 | Ref | Title | Differs from the defaults | Registrations already made |
 |-----|-------|---------------------------|----------------------------|
 | E1 | Chem Open House | venue "Seminar Room 2", location "SMU Library, 70 Stamford Rd" | ivy, jon registered; kim withdrawn |
-| E2 | Closed Fair | period 1 Sep – 30 Sep 2026 (over) | jon registered; kim waitlisted |
+| E2 | Closed Fair | period 1 Sep – 30 Sep 2026 (over) | jon registered; kim cancelled |
 | E3 | Draft Workshop | status `draft` | none |
 | E4 | Pending Talk | status `submitted` | none |
 | E5 | Review Panel | status `under_review` | none |
@@ -73,6 +75,7 @@ Unless the table says otherwise, an event is `confirmed`, has the description "O
 | E8 | Full House | 2 places | jon, kim registered (full) |
 | E9 | No Details Yet | no description | none |
 | E10 | Blank Details | description is only spaces | none |
+| E11 | Confirmed Expo | status `confirmed` (not published since 18 Oct 2026) | — |
 
 The signed-in user is farah (an attendee who is not registered anywhere) unless a case says otherwise. The sheet uses capacity 30; the seed uses smaller numbers so the cases stay fast.
 
@@ -91,7 +94,7 @@ The signed-in user is farah (an attendee who is not registered anywhere) unless 
 **TC-74-02 · Every required field is shown** *(sheet TC2)*
 - **Traces to:** AC2 · **Type:** Happy path
 - **Steps:** As farah, open E1.
-- **Expected result:** Exactly the contract in "Endpoints under test": title, description, `confirmed`, `2026-11-20T10:00:00` to `2026-11-20T12:00:00`, venue name and location, the period `2026-11-01T00:00:00` to `2026-11-15T00:00:00`, capacity 5, 2 registered, 3 slots remaining, state `open`, no registration of her own, `can_register: true` and `can_request_reassignment: false`. The page shows each as a labelled line ("Starts: 20/11/2026 10:00 SGT", "Capacity: 5", "Slots remaining: 3", "Registration: Open").
+- **Expected result:** Exactly the contract in "Endpoints under test": title, description, `approved`, `2026-11-20T10:00:00` to `2026-11-20T12:00:00`, venue name and location, the period `2026-11-01T00:00:00` to `2026-11-15T00:00:00`, capacity 5, 2 registered, 3 slots remaining, state `open`, no registration of her own, `can_register: true` and `can_request_reassignment: false`. The page shows each as a labelled line ("Starts: 20/11/2026 10:00 SGT", "Capacity: 5", "Slots remaining: 3", "Registration: Open").
 - **Automated:** `FieldTests.test_all_required_fields_are_shown`; frontend: "shows every required field".
 
 ## AC3, AC4 — Who may see which event
@@ -104,8 +107,8 @@ The signed-in user is farah (an attendee who is not registered anywhere) unless 
 
 **TC-74-04 · Pending, under-review and rejected events are hidden too** *(sheet TC4)*
 - **Traces to:** AC3 · **Type:** Negative (authorisation) · **Depends on:** Q1
-- **Steps:** As farah, open E4 (submitted), E5 (under review) and E6 (rejected). As farah, dana, alice and admin, read the list.
-- **Expected result:** HTTP 404 for all three, and none is in the list for any of the four users.
+- **Steps:** As farah, open E4 (submitted), E5 (under review), E6 (rejected) and E11 (confirmed). As farah, dana, alice and admin, read the list.
+- **Expected result:** HTTP 404 for all four, and none is in the list for any of the four users.
 - **Automated:** `VisibilityTests.test_attendee_cannot_see_pending_or_rejected_events`, `test_list_shows_published_events_only`.
 
 **TC-74-05 · The creator and approvers see their own unpublished events** *(sheet TC5)*
@@ -124,8 +127,8 @@ The signed-in user is farah (an attendee who is not registered anywhere) unless 
 
 **TC-74-07 · No places left is Full** *(sheet TC7)*
 - **Traces to:** AC5 · **Type:** Boundary
-- **Steps:** As farah, open E8 (2 places, 2 registered). Open E2, where jon is registered and kim is waitlisted, and E1, where kim is withdrawn.
-- **Expected result:** E8: state `full`, 0 slots remaining, `can_register: false`. Only registered attendees count: E2 has 1 registered (the waiting-list place does not count) and E1 has 2 (the withdrawn one does not).
+- **Steps:** As farah, open E8 (2 places, 2 registered). Open E2, where jon is registered and kim's registration is cancelled, and E1, where kim is withdrawn.
+- **Expected result:** E8: state `full`, 0 slots remaining, `can_register: false`. Only registered attendees count: E2 has 1 registered (the cancelled one does not count) and E1 has 2 (the withdrawn one does not).
 - **Automated:** `RegistrationStateTests.test_no_places_left_is_full`, `test_only_registered_attendees_take_places`.
 
 **TC-74-08 · Closed outside the period, or when registration is not set up** *(sheet TC8)*
@@ -139,8 +142,8 @@ The signed-in user is farah (an attendee who is not registered anywhere) unless 
 **TC-74-09 · A registered attendee sees their status** *(sheet TC9)*
 - **Traces to:** AC6 · **Type:** Happy path
 - **Steps:** As ivy, open E1. As kim, open E2.
-- **Expected result:** Ivy: `my_registration` is `{"id": <her registration>, "status": "registered"}`. Kim, on the waiting list: status `waitlisted`. The page shows "Your registration: Registered" or "Your registration: Waitlisted".
-- **Automated:** `MyRegistrationTests.test_registered_attendee_sees_their_status`, `test_waitlisted_attendee_sees_waitlisted`; frontend: "shows the attendee's own registration status", "shows a waiting-list place as Waitlisted".
+- **Expected result:** Ivy: `my_registration` is `{"id": <her registration>, "status": "registered"}`. Kim, whose registration is cancelled: `my_registration` is null. The page shows "Your registration: Registered".
+- **Automated:** `MyRegistrationTests.test_registered_attendee_sees_their_status`, `test_cancelled_registration_is_not_shown`; frontend: "shows the attendee's own registration status".
 
 **TC-74-10 · An unregistered attendee sees no registration status** *(sheet TC10)*
 - **Traces to:** AC6 · **Type:** Negative
@@ -240,8 +243,8 @@ The event page shows "Request reassignment" (a link to `/events/<id>/reassign`) 
 
 | # | Question | Affects |
 |---|----------|---------|
-| Q1 | Which statuses are public? The sheet says approved/published; the registration story treats only `confirmed` as open. Should `approved` events be visible to attendees, and should a `cancelled` event stay visible to people who registered for it? Assumed: only `confirmed`. | A1, TC-74-03, 04 |
+| Q1 | Which statuses are public? **Partly answered 18 Oct 2026 (SCRUM-45 reopened):** `approved` events are public, since they take registrations. Still open: should a `cancelled` event stay visible to people who registered for it? Assumed not. | A1, TC-74-03, 04 |
 | Q2 | Who counts as an "approver" who may see an unpublished event, and should creators see their drafts in the main event list? Assumed: the organiser, the assigned coordinator and admins; the list is public only. | A2, A3, TC-74-05 |
-| Q3 | When an event is full but has a waiting list, should the page offer "Join the waiting list"? Assumed: not in this story. | A7, TC-74-15 |
+| Q3 | ~~Should a full event offer "Join the waiting list"?~~ **Answered 18 Oct 2026:** there is no waiting list. | A7, TC-74-15 |
 | Q4 | Is dd/mm/yyyy plus "SGT" the format everywhere, or only on this page? The rest of the app shows `yyyy-mm-dd hh:mm`. | A9, TC-74-16 |
 | Q5 | Where should signed-out users land after sign-in: the page they asked for, or the home page? Assumed: the sign-in page only. | A12, TC-74-17 |

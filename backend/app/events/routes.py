@@ -17,7 +17,7 @@ from ..models import (
     User,
     Venue,
 )
-from ..registrations.routes import singapore_now
+from ..registrations.routes import REGISTERED, REGISTRABLE_STATUS, singapore_now
 from .permissions import (
     COORDINATOR_ROLE,
     can_view_clarifications,
@@ -98,9 +98,9 @@ REQUIRED_FOR_SUBMISSION = [
 TITLE_MAX_LENGTH = 255
 _LOCAL_DATETIME = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$")
 
-# SCRUM-74. Only published events are visible to everyone; "confirmed" is the status
-# SCRUM-45 uses for events that take registrations (open question Q1).
-PUBLISHED_STATUSES = {"confirmed"}
+# SCRUM-74. Only published events are visible to everyone: exactly the events that take
+# registrations (SCRUM-45, reopened 18 Oct 2026), so attendees can find each one.
+PUBLISHED_STATUSES = {REGISTRABLE_STATUS}
 # Event IDs live in a 32-bit column; a larger ID cannot exist, and asking the database
 # for one raises an error instead of finding nothing.
 DB_INTEGER_MAX = 2_147_483_647
@@ -1680,6 +1680,154 @@ def list_queue():
     return jsonify({"events": events, "message": None if events else QUEUE_EMPTY})
 
 
+# ---------- The coordinator sets up registration (SCRUM-45 AC7) ----------
+
+# The only fields the settings take, all required together (A14).
+SETTINGS_FIELDS = ("capacity", "opens_at", "closes_at")
+SETTINGS_COORDINATOR_ONLY = "Only the event's coordinator can set up registration."
+
+
+def _settings_event(event_id, lock=False):
+    """The event, for its current coordinator only; checked 401, 404, 403 (A13).
+
+    With `lock`, the row is re-read and locked, as registering does, so the number
+    registered can't change while a new capacity is checked (A15).
+    """
+    user = _current_user()
+    if user is None:
+        raise _Rejected("Your session is no longer valid. Please log in again.", 401)
+    event = (db.session.get(Event, event_id, with_for_update=lock, populate_existing=lock)
+             if event_id <= DB_INTEGER_MAX else None)
+    if event is None:
+        raise _Rejected(EVENT_NOT_FOUND, 404)
+    if not _is_current_coordinator(user, event):
+        raise _Rejected(SETTINGS_COORDINATOR_ONLY, 403)
+    return event
+
+
+def _settings_blocked(event):
+    """Why the settings can't be changed now, as (reason, message), or None (A16)."""
+    if event.status != REGISTRABLE_STATUS:
+        return "not_approved", (
+            "Registration can only be set up for an approved event. "
+            f"This event is {event.status}.")
+    if event.registration_required is not True:
+        return "registration_not_needed", (
+            "The organiser said this event doesn't need attendee registration. "
+            "Change that through a change request first.")
+    return None
+
+
+def _local_time(value):
+    """A "YYYY-MM-DDTHH:MM" Singapore time as a datetime, or None if it isn't one."""
+    if not isinstance(value, str) or not _LOCAL_DATETIME.match(value):
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:  # e.g. 30 February
+        return None
+
+
+def _parse_settings(body, event, venue):
+    """(capacity, opens_at, closes_at) from the body, or a 400 naming the field (A14)."""
+    if not isinstance(body, dict):
+        raise _Rejected("Enter the number of places and the registration period.", 400)
+    for key in body:
+        if key not in SETTINGS_FIELDS:
+            raise _Rejected(f"{key} can't be set here.", 400, field=key)
+    capacity = body.get("capacity")
+    if (not isinstance(capacity, int) or isinstance(capacity, bool)
+            or not 1 <= capacity <= DB_INTEGER_MAX):
+        raise _Rejected("Enter the number of places as a whole number of at least 1.",
+                        400, field="capacity")
+    opens, closes = _local_time(body.get("opens_at")), _local_time(body.get("closes_at"))
+    if opens is None:
+        raise _Rejected("Enter when registration opens (YYYY-MM-DDTHH:MM).",
+                        400, field="opens_at")
+    if closes is None:
+        raise _Rejected("Enter when registration closes (YYYY-MM-DDTHH:MM).",
+                        400, field="closes_at")
+    if opens >= closes:
+        raise _Rejected("Registration must open before it closes.", 400, field="closes_at")
+    if event.start_time is not None and closes > event.start_time:
+        raise _Rejected("Registration must close no later than the event starts "
+                        f"({event.start_time:%Y-%m-%d %H:%M}).", 400, field="closes_at")
+    if venue is not None and venue.capacity is not None and capacity > venue.capacity:
+        raise _Rejected(f"The venue holds {venue.capacity} people, so there can be at most "
+                        f"{venue.capacity} places.", 400, field="capacity")
+    return capacity, opens, closes
+
+
+def _settings_payload(event, venue, registered):
+    blocked = _settings_blocked(event)
+    return {
+        "event_id": event.id,
+        "capacity": event.registration_capacity,
+        "opens_at": _isoformat(event.registration_opens_at),
+        "closes_at": _isoformat(event.registration_closes_at),
+        "registered_count": registered,
+        "venue_capacity": venue.capacity if venue else None,
+        "can_edit": blocked is None,
+        "message": blocked[1] if blocked else None,
+    }
+
+
+def _event_venue(event):
+    return db.session.get(Venue, event.venue_id) if event.venue_id else None
+
+
+@events_bp.get("/<int:event_id>/registration-settings")
+@jwt_required()
+def get_registration_settings(event_id: int):
+    """The event's places and registration period, for its coordinator (AC7)."""
+    try:
+        event = _settings_event(event_id)
+        registered = _registered_counts([event.id]).get(event.id, 0)
+        payload = _settings_payload(event, _event_venue(event), registered)
+    except _Rejected as rejected:
+        return _error(rejected.message, rejected.status_code, **rejected.extra)
+    except SQLAlchemyError:
+        db.session.rollback()
+        return _error("The registration settings could not be loaded. Please try again.",
+                      503, retryable=True)
+    return jsonify(payload)
+
+
+@events_bp.put("/<int:event_id>/registration-settings")
+@jwt_required()
+def save_registration_settings(event_id: int):
+    """Set the event's places and registration period (AC7): checked 401, 404, 403, then
+    the values (400), then whether they can be changed now (409), as AGENTS.md orders."""
+    try:
+        event = _settings_event(event_id, lock=True)
+        venue = _event_venue(event)
+        capacity, opens, closes = _parse_settings(request.get_json(silent=True), event, venue)
+        blocked = _settings_blocked(event)
+        if blocked:
+            raise _Rejected(blocked[1], 409, reason=blocked[0])
+        registered = _registered_counts([event.id]).get(event.id, 0)
+        if capacity < registered:
+            raise _Rejected(f"{registered} people are already registered, so there must be "
+                            f"at least {registered} places.", 409, reason="below_registered")
+
+        event.registration_capacity = capacity
+        event.registration_opens_at = opens
+        event.registration_closes_at = closes
+        payload = _settings_payload(event, venue, registered)
+        payload["message"] = (
+            f"Registration for {event.title} is set up: {capacity} places, open from "
+            f"{opens:%Y-%m-%d %H:%M} to {closes:%Y-%m-%d %H:%M}."
+        )
+        db.session.commit()
+    except _Rejected as rejected:
+        return _error(rejected.message, rejected.status_code, **rejected.extra)
+    except SQLAlchemyError:
+        db.session.rollback()
+        return _error("The registration settings were not saved. Please try again.",
+                      503, retryable=True)
+    return jsonify(payload)
+
+
 # ---------- View event details (SCRUM-74) ----------
 
 
@@ -1689,7 +1837,7 @@ def _registered_counts(event_ids):
         return {}
     rows = (
         db.session.query(Registration.event_id, func.count(Registration.id))
-        .filter(Registration.event_id.in_(event_ids), Registration.status == "registered")
+        .filter(Registration.event_id.in_(event_ids), Registration.status == REGISTERED)
         .group_by(Registration.event_id)
         .all()
     )
@@ -1770,7 +1918,7 @@ def get_event(event_id: int):
         mine = Registration.query.filter(
             Registration.event_id == event.id,
             Registration.attendee_id == user.id,
-            Registration.status.in_(("registered", "waitlisted")),
+            Registration.status == REGISTERED,
         ).first()
         venue = db.session.get(Venue, event.venue_id) if event.venue_id else None
         can_register, blocked_reason = _register_decision(
