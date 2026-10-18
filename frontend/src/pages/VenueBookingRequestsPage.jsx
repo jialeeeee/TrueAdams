@@ -7,8 +7,10 @@ import statusLabel from "../utils/statusLabel.js";
 // SCRUM-39: Venue Staff's list of pending venue requests (GET /api/venues/bookings).
 // SCRUM-40: each can be approved (POST /api/venues/bookings/<id>/approve).
 // SCRUM-41: each shows its conflicts before anyone approves it.
+// SCRUM-87: each can be placed on a tentative hold (POST /api/venues/bookings/<id>/hold).
 const NOT_LOADED = "Venue requests could not be loaded. Check your connection and try again.";
 const NOT_APPROVED = "The approval was not saved. Check your connection and try again.";
+const NOT_HELD = "The hold was not placed. Check your connection and try again.";
 
 // Booking times are Singapore time without a time zone: show them as recorded.
 const asText = (value) => value.slice(0, 16).replace("T", " ");
@@ -23,6 +25,9 @@ function conflictText(conflict) {
     return conflict.event
       ? `Confirmed booking for ${conflict.event.title}, ${period}`
       : `Confirmed booking, ${period}`;
+  }
+  if (conflict.type === "hold") {
+    return `Tentative hold for ${conflict.event.title} until ${asText(conflict.expires_at)}, ${period}`;
   }
   return `This event's confirmed booking at ${conflict.venue.name}, ${period}`;
 }
@@ -42,6 +47,8 @@ export default function VenueBookingRequestsPage() {
   const [loadError, setLoadError] = useState("");
   const [confirmation, setConfirmation] = useState("");
   const [actionError, setActionError] = useState(null);
+  // The hold expiry entered for each request, by booking ID (SCRUM-87).
+  const [expiries, setExpiries] = useState({});
 
   const load = useCallback(async () => {
     setLoadError("");
@@ -53,26 +60,37 @@ export default function VenueBookingRequestsPage() {
     }
   }, []);
 
-  const approve = async (booking) => {
+  // Approving (SCRUM-40) or holding (SCRUM-87) a request: on success the request leaves
+  // the list, which is reloaded so the rest show any new clash (SCRUM-41 A6). On failure
+  // it stays listed and pending, with what was entered, so it can be tried again.
+  const decide = async (booking, send, fallback) => {
     setConfirmation("");
     setActionError(null);
     try {
-      const response = await apiClient.post(`/venues/bookings/${booking.id}/approve`);
+      const response = await send();
       setConfirmation(response.data.message);
       setResult((current) => ({
         ...current,
         bookings: current.bookings.filter((b) => b.id !== booking.id),
       }));
-      // SCRUM-41: reloaded so the remaining requests show any clash with this booking (A6).
       load();
     } catch (failure) {
-      // The request stays listed and pending, so it can be approved later (AC5, AC6).
       setActionError({
-        message: explain(failure, NOT_APPROVED),
+        message: explain(failure, fallback),
         conflicts: failure.response?.data?.conflicts ?? [],
       });
     }
   };
+
+  const approve = (booking) =>
+    decide(booking, () => apiClient.post(`/venues/bookings/${booking.id}/approve`), NOT_APPROVED);
+
+  const placeHold = (booking) =>
+    decide(
+      booking,
+      () => apiClient.post(`/venues/bookings/${booking.id}/hold`, { expires_at: expiries[booking.id] }),
+      NOT_HELD,
+    );
 
   useEffect(() => {
     load();
@@ -127,6 +145,21 @@ export default function VenueBookingRequestsPage() {
                 onClick={() => approve(booking)}
               >
                 Approve
+              </button>
+              <label htmlFor={`hold-expiry-${booking.id}`}>Hold expires</label>
+              <input
+                id={`hold-expiry-${booking.id}`}
+                type="datetime-local"
+                aria-label={`Hold expiry for ${booking.event.title}`}
+                value={expiries[booking.id] ?? ""}
+                onChange={(e) => setExpiries((current) => ({ ...current, [booking.id]: e.target.value }))}
+              />
+              <button
+                type="button"
+                aria-label={`Place tentative hold for ${booking.event.title}`}
+                onClick={() => placeHold(booking)}
+              >
+                Place tentative hold
               </button>
             </li>
           ))}

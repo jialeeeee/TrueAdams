@@ -324,3 +324,44 @@ describe("SCRUM-64 availability rules", () => {
     ]);
   });
 });
+
+// SCRUM-87: an unexpired tentative hold shows as Tentative. Frontend case TC-87-38 in
+// docs/test-cases/SCRUM-87-tentative-venue-hold.md; the API contract mirrors
+// backend/tests/test_venue_holds.py.
+describe("SCRUM-87 tentative holds on the calendar", () => {
+  // TC-87-38 · AC4
+  it("shows a tentative hold", async () => {
+    const date = "2027-03-12";
+    vi.mocked(apiClient.get).mockResolvedValueOnce({
+      data: {
+        venue_id: 1, from: date, to: date,
+        periods: [
+          { type: "hold", id: 31, start: "2027-03-12T18:00:00", end: "2027-03-12T20:00:00", reason: null, expires_at: "2027-03-01T17:00:00" },
+        ],
+        days: [{
+          date,
+          slots: [
+            taken("00:00", "08:00", ["outside_operating_hours"], date),
+            slot("08:00", "18:00", "available", { date }),
+            slot("18:00", "20:00", "tentative", { causes: ["hold"], date }),
+            slot("20:00", "23:00", "available", { date }),
+            taken("23:00", "24:00", ["outside_operating_hours"], date),
+          ],
+        }],
+        message: null,
+      },
+    });
+    const user = await renderPage();
+
+    await view(user, { from: date });
+
+    const periods = within(await screen.findByRole("list", { name: /bookings and unavailable/i }));
+    expect(periods.getAllByRole("listitem").map((li) => li.textContent)).toEqual([
+      "Tentative hold: Fri 12 Mar 2027, 18:00 to Fri 12 Mar 2027, 20:00 (expires Mon 1 Mar 2027, 17:00)",
+    ]);
+    const day = within(screen.getByRole("region", { name: "Fri 12 Mar 2027" }));
+    expect(day.getAllByRole("listitem").map((li) => li.textContent)).toContain(
+      "18:00–20:00 Tentative — on hold",
+    );
+  });
+});

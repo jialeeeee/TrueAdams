@@ -18,6 +18,7 @@ import ReassignCoordinatorPage from "./pages/ReassignCoordinatorPage.jsx";
 import ReassignmentRequestPage from "./pages/ReassignmentRequestPage.jsx";
 import ReviewRequestPage from "./pages/ReviewRequestPage.jsx";
 import ReviewRequestsPage from "./pages/ReviewRequestsPage.jsx";
+import TentativeHoldsPage from "./pages/TentativeHoldsPage.jsx";
 import UnassignedQueuePage from "./pages/UnassignedQueuePage.jsx";
 import VenueAvailabilityPage from "./pages/VenueAvailabilityPage.jsx";
 import VenueBookingRequestPage from "./pages/VenueBookingRequestPage.jsx";
@@ -41,6 +42,7 @@ export default function App() {
         <Link to="/venues/availability">Venue availability</Link>
         <Link to="/venues/search">Venue search</Link>
         <Link to="/venues/bookings">Venue booking requests</Link>
+        <Link to="/venues/holds">Tentative holds</Link>
         <Link to="/resources">Resources</Link>
         <Link to="/my-registrations">My registrations</Link>
         <Link to="/login">Login</Link>
@@ -69,6 +71,7 @@ export default function App() {
         <Route path="/venues/availability" element={<VenueAvailabilityPage />} />
         <Route path="/venues/search" element={<VenueSearchPage />} />
         <Route path="/venues/bookings" element={<VenueBookingRequestsPage />} />
+        <Route path="/venues/holds" element={<TentativeHoldsPage />} />
         <Route path="/resources" element={<ResourcesPage />} />
         <Route path="/my-registrations" element={<MyRegistrationsPage />} />
         <Route path="/registrations" element={<Navigate to="/my-registrations" replace />} />

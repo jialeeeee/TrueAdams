@@ -12,13 +12,16 @@ const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "
 const STATUS_LABELS = {
   available: "Available",
   unavailable: "Unavailable",
+  tentative: "Tentative",
   hours_not_recorded: "Operating hours not recorded — confirm with venue staff",
 };
 
 // SCRUM-64: why a slot is unavailable, in the order the server lists them.
+// SCRUM-87: an unexpired tentative hold makes its time tentative.
 const CAUSE_LABELS = {
   booking: "confirmed booking",
   block: "recorded block",
+  hold: "on hold",
   outside_operating_hours: "outside operating hours",
 };
 
@@ -28,7 +31,7 @@ function slotLabel(slot) {
   return `${label} — ${slot.causes.map((cause) => CAUSE_LABELS[cause]).join(", ")}`;
 }
 
-const PERIOD_LABELS = { booking: "Confirmed booking", block: "Recorded block" };
+const PERIOD_LABELS = { booking: "Confirmed booking", block: "Recorded block", hold: "Tentative hold" };
 
 // Times are Singapore time with no time zone, so read them as written rather
 // than letting the browser convert them.
@@ -161,6 +164,7 @@ export default function VenueAvailabilityPage() {
                   {PERIOD_LABELS[period.type]}: {formatDateTime(period.start)} to{" "}
                   {formatDateTime(period.end)}
                   {period.reason ? ` (${period.reason})` : ""}
+                  {period.expires_at ? ` (expires ${formatDateTime(period.expires_at)})` : ""}
                 </li>
               ))}
             </ul>

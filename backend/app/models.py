@@ -134,6 +134,11 @@ class VenueBooking(db.Model):
     # SCRUM-40: when (naive UTC) and by which Venue Staff member it was approved.
     decided_at = db.Column(db.DateTime)
     decided_by_id = db.Column(db.Integer, db.ForeignKey("users.id"))
+    # SCRUM-87: a tentative hold: when (naive UTC) and by which Venue Staff member it
+    # was placed, and when it expires (Singapore time, set by Venue Staff).
+    held_at = db.Column(db.DateTime)
+    held_by_id = db.Column(db.Integer, db.ForeignKey("users.id"))
+    hold_expires_at = db.Column(db.DateTime)
 
 
 class VenueBlock(db.Model):
