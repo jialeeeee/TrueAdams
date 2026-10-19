@@ -38,4 +38,13 @@ describe("shared API client authentication", () => {
     const headers = await outgoingHeaders(client);
     expect(headers.has("Authorization")).toBe(false);
   });
+
+  // SCRUM-75 TC-75-06: the existing interceptor must not retain a signed-out token.
+  it("stops authenticating subsequent requests after the session token is removed", async () => {
+    sessionStorage.setItem("access_token", "signed-in-token");
+    const client = await initializeClient();
+    expect((await outgoingHeaders(client)).get("Authorization")).toBe("Bearer signed-in-token");
+    sessionStorage.removeItem("access_token");
+    expect((await outgoingHeaders(client)).has("Authorization")).toBe(false);
+  });
 });
