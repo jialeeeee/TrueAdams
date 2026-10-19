@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -212,6 +212,108 @@ describe("SCRUM-61 entry point on the event page", () => {
 
     await screen.findByRole("heading", { level: 1, name: "Chem Open House" });
     expect(screen.queryByRole("link", { name: /request reassignment/i })).toBeNull();
+  });
+});
+
+// SCRUM-33: the event's current coordinator, from GET /events/<id>/coordinator ->
+// { event_id, coordinator: { id, email } | null, assigned_at: naive UTC | null }.
+// Cases TC-001, TC-002, TC-030 and TC-031 of the SCRUM-33 test-case sheet; the API
+// is covered by backend/tests/test_event_coordinator.py.
+describe("SCRUM-33 the event's coordinator", () => {
+  const ALICE = { id: 2, email: "alice.coordinator@connectsphere.test" };
+  const ASSIGNED_AT = "2026-09-01T10:00:00.123456";
+  const NOT_LOADED = "The coordinator could not be loaded. Please try again.";
+  const localTime = (iso) => new Date(`${iso.slice(0, 23)}Z`).toLocaleString();
+
+  function assignment(coordinator = ALICE, assignedAt = ASSIGNED_AT) {
+    return { data: { event_id: 7, coordinator, assigned_at: assignedAt } };
+  }
+
+  // The event loads; each later coordinator request gets the next reply in turn.
+  function serve(...coordinatorReplies) {
+    apiClient.get.mockImplementation(async (url) => {
+      if (url === "/events/7") return withEvent();
+      const reply = coordinatorReplies.length > 1 ? coordinatorReplies.shift() : coordinatorReplies[0];
+      if (reply instanceof Error) throw reply;
+      return reply;
+    });
+  }
+
+  const section = () => screen.queryByRole("region", { name: "Coordinator" });
+
+  it("shows the event's coordinator and when they were assigned", async () => {
+    serve(assignment());
+    renderPage();
+
+    const coordinator = within(await screen.findByRole("region", { name: "Coordinator" }));
+    expect(apiClient.get).toHaveBeenCalledWith("/events/7/coordinator");
+    expect(coordinator.getByText(`Coordinator: ${ALICE.email}`)).toBeTruthy();
+    // Assignment times are saved in UTC, so they are shown in the viewer's local time.
+    expect(coordinator.getByText(`Assigned: ${localTime(ASSIGNED_AT)}`)).toBeTruthy();
+  });
+
+  it("says when no coordinator has been assigned yet", async () => {
+    serve(assignment(null, null));
+    renderPage();
+
+    const coordinator = within(await screen.findByRole("region", { name: "Coordinator" }));
+    expect(coordinator.getByText("No coordinator has been assigned yet.")).toBeTruthy();
+    expect(coordinator.queryByText(/^Assigned:/)).toBeNull();
+  });
+
+  it("shows Not recorded when the assignment time is missing", async () => {
+    serve(assignment(ALICE, null));
+    renderPage();
+
+    const coordinator = within(await screen.findByRole("region", { name: "Coordinator" }));
+    expect(coordinator.getByText(`Coordinator: ${ALICE.email}`)).toBeTruthy();
+    expect(coordinator.getByText("Assigned: Not recorded")).toBeTruthy();
+  });
+
+  it("shows nothing about the coordinator to someone not allowed to see it", async () => {
+    serve(httpFailure(403, { error: "You are not allowed to view this event's coordinator." }));
+    renderPage();
+
+    await screen.findByRole("heading", { level: 1, name: "Chem Open House" });
+    await waitFor(() => expect(apiClient.get).toHaveBeenCalledWith("/events/7/coordinator"));
+    expect(section()).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByText(/coordinator/i)).toBeNull();
+    expect(screen.getByText("Starts: 20/11/2026 10:00 SGT")).toBeTruthy();
+  });
+
+  it("tells the user when the coordinator cannot be loaded, keeps the event, and reloads just that part", async () => {
+    serve(httpFailure(503, { error: NOT_LOADED, retryable: true }), assignment());
+    const user = renderPage();
+
+    const coordinator = within(await screen.findByRole("region", { name: "Coordinator" }));
+    expect((await coordinator.findByRole("alert")).textContent).toContain(NOT_LOADED);
+    expect(coordinator.queryByText(/^Coordinator:/)).toBeNull();
+    expect(screen.getByText("Starts: 20/11/2026 10:00 SGT")).toBeTruthy();
+
+    await user.click(coordinator.getByRole("button", { name: "Reload coordinator" }));
+    expect(await coordinator.findByText(`Coordinator: ${ALICE.email}`)).toBeTruthy();
+    expect(coordinator.queryByRole("alert")).toBeNull();
+    expect(apiClient.get.mock.calls.filter(([url]) => url === "/events/7")).toHaveLength(1);
+  });
+
+  it("shows a fallback message when the server cannot be reached", async () => {
+    serve(new Error("Network Error"));
+    renderPage();
+
+    const coordinator = within(await screen.findByRole("region", { name: "Coordinator" }));
+    expect((await coordinator.findByRole("alert")).textContent).toContain(
+      "The coordinator could not be loaded. Check your connection and try again.",
+    );
+  });
+
+  it("does not ask for the coordinator when the event cannot be shown", async () => {
+    apiClient.get.mockRejectedValue(httpFailure(404, { error: "Event not found." }));
+    renderPage();
+
+    await screen.findByRole("alert");
+    expect(apiClient.get).not.toHaveBeenCalledWith("/events/7/coordinator");
+    expect(section()).toBeNull();
   });
 });
 
