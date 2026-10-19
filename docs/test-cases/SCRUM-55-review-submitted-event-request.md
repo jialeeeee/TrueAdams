@@ -4,9 +4,11 @@
 
 **Created:** 14 Oct 2026 · **RED verification completed:** 14 Oct 2026, with explicit user authorization. **Observed baseline:** 3 passed, 9 expected RED failures across 12 SCRUM-55 test instances. See section D for isolation, exact commands, timings and results.
 
-**Current status — GREEN verified, 14 Oct 2026:** all 12 original selected SCRUM-55 instances pass across the targeted runs in section G. Sections A–F retain the historical audit and RED verification; section G records the authorized implementation, fixture maintenance, selector correction and regression limits.
+**Historical status — GREEN verified, 14 Oct 2026:** all 12 original selected SCRUM-55 instances pass across the targeted runs in section G. Sections A–F retain the historical audit and RED verification; section G records the authorized implementation, fixture maintenance, selector correction and regression limits.
 
 **Focused post-GREEN review completed, 14 Oct 2026:** 31 selected instances passed (9 backend, 22 frontend); no production defect or production change during this review. Section H records the exact selection, added regression assertions and remaining verification limits.
+
+**Static documentation review, 19 Oct 2026 (baseline `9d188f9`):** no tests executed. The criteria and TC-55-01–15 remain applicable. Sections A–F (including A3/A5's proposed/unimplemented wording) describe the pre-GREEN audit; G/H record the later implementation and historical runs. SCRUM-81 subsequently replaced SCRUM-28's automatic assignment with a Lead queue; the current handoff and workbook conversion check are recorded in section I. None of the 14 Oct pass records is a claim about execution on today's build.
 
 **Story:** SCRUM-55, addressing SCRUM-31a (no Jira URL supplied).
 **Related:** [SCRUM-31](SCRUM-31-event-clarification.md), [SCRUM-32](SCRUM-32-approve-reject-event-request.md), [SCRUM-34](SCRUM-34-view-event-planning-info.md), [SCRUM-62](SCRUM-62-managed-events-list.md).
@@ -14,15 +16,19 @@
 
 ## Acceptance criteria
 
-| ID | Criterion |
-|---|---|
-| AC1 | Coordinator sees requests submitted for review; drafts are excluded. |
-| AC2 | Each row shows event name, organiser, proposed date, submission date/time and status. |
-| AC3 | No eligible requests produces an empty-state message. |
-| AC4 | Opening the selected request shows its name, purpose, description, proposed date/start/end, expected attendance, venue/accessibility/equipment requirements and registration requirements. |
-| AC5 | Existing clarification messages for that request are visible. |
-| AC6 | Only Event Coordinators can access this view. |
-| AC7 | List/detail load failures have explanatory feedback and a working retry. |
+**Requirements source:** authoritative Jira wording supplied by the user in the final reconciliation request, 19 Oct 2026 (no Jira URL supplied). AC wording below is exact; later Coordinator Lead rules are documented separately. No tests were executed during this reconciliation.
+
+| ID | Official Jira acceptance criterion | Test cases |
+|---|---|---|
+| AC1 | The coordinator can view a list of event requests that have been submitted for review; draft requests are not shown. | TC-55-01, 06 |
+| AC2 | Each request in the list shows the event name, organiser, proposed date, submission date and time, and status. | TC-55-01, 06, 11 |
+| AC3 | If there are no submitted requests, an empty-state message is shown. | TC-55-02, 07 |
+| AC4 | The coordinator can open a request and see all its submitted details: event name, purpose and description; proposed date and start/end times; expected attendance; venue, accessibility, equipment and registration requirements. | TC-55-06, 09, 10; 13/14 support selection/input retention |
+| AC5 | The coordinator can see any clarification messages already sent on that request. | TC-55-05, 10, 13, 14; limitations below |
+| AC6 | Only Event Coordinators can access this view. | TC-55-01, 03, 11, 15; existing detail-authorisation references in B |
+| AC7 | If a request fails to load, a message explains why and offers a way to retry. | TC-55-04, 08, 12, 13; existing detail-load Retry case in B/H |
+
+**AC5 evidence boundary (19 Oct reconciliation):** TC-55-05 asserts the selected event's message text and excludes another event's text. TC-55-10 asserts visible existing-message text for two selected requests and removes the previous thread; it mocks **one message per event**. TC-55-13/14 cover history retry and stale-response isolation. Existing `test_event_clarifications.py:SendQuestionTests.test_questions_are_listed_for_the_coordinator_and_the_organiser` sends two questions and asserts both ordered messages through the real API test fixture. These assertions cover separate layers: they do not establish that the review page renders every message in a history containing multiple messages, or a live flow from sending through persisted history to the review page. AC5 therefore has meaningful automated coverage with these limits, not a claim of complete end-to-end verification. Implementation is `list_clarifications` plus `ReviewRequestPage.jsx:ClarificationHistory`; route/component existence alone is not the evidence.
 
 ## Working assumptions and boundaries
 
@@ -65,7 +71,7 @@ Implementation findings below come from source inspection. Only the SCRUM-55 tes
 | AC6 | Partial overall; existing detail guard implemented | Login issues a string user-id JWT. `api/client.js` adds the session token. `_current_user` reloads `User`; `_assigned_request` checks user, event, then `is_current_coordinator`. `permissions.py` requires both stored coordinator role and matching coordinator_id. App routes/nav are not role-gated; data protection is enforced by the API. | The new queue endpoint needs its own JWT/current-role guard. Existing review/history permissions should be reused, not redesigned; no new frontend token-role trust. |
 | AC7 | Partial | `review_request` catches SQLAlchemyError, rolls back and returns 503/retryable. `ReviewRequestPage.load` uses server/fallback text and its Retry button reloads details. Managed-list and standalone clarification pages have similar recovery flows. | Equivalent feedback/recovery for the missing review list. No additional duplicate detail retry test is necessary. |
 
-SCRUM-28's submission path validates the draft, assigns the lowest-id current coordinator, and records `submitted_at` and `submitted` together. Its existing unit test directly opens `/review` as the chosen coordinator and rejects organiser/admin/another coordinator. Reuse that submission and assignment behavior without changes.
+At the 14 Oct audit, SCRUM-28 automatically selected the lowest-ID current coordinator. **Superseded by SCRUM-81 on 17 Oct:** current submission validates the draft and records `submitted_at` and `submitted` without assigning a coordinator. The event waits in the Lead's queue; SCRUM-81 assigns it separately. Only then can its current coordinator review it. See [SCRUM-28 TC-28-09/10 and historical evidence](SCRUM-28-submit-event-request.md), [queue AC6/A9](SCRUM-81-unassigned-queue.md) and [initial assignment](SCRUM-81-lead-assigns-coordinator.md). SCRUM-55 continues to exclude unassigned requests.
 
 ## B. Test coverage matrix / traceability matrix
 
@@ -78,7 +84,7 @@ Paths below are relative to `backend/tests/` or `frontend/src/pages/`. Existing 
 | AC3 | `test_managed_events.py:EmptyStateTests.test_coordinator_with_no_events_gets_an_empty_state_message`; managed-page empty test. | TC-55-02, 07 cover no eligible requests while assigned draft/approved/rejected/cancelled rows remain. | Backend unit for eligibility-derived emptiness; component for the user-visible message. |
 | AC4 | `test_event_decisions.py:WhoAndWhenTests.test_coordinator_opens_the_full_request_to_review_it` asserts every request field and selected id; `ReviewRequestPage.test.jsx:shows the request's details and status` asserts only status/purpose/venue. Planning tests cover another screen. | TC-55-06 opens selected row; TC-55-09 checks all review fields, dates and null/false display. | Frontend component only; no duplicate backend full-detail test. |
 | AC5 | `test_event_clarifications.py:SendQuestionTests.test_questions_are_listed_for_the_coordinator_and_the_organiser`, `test_unrelated_users_cannot_view_the_questions`; `ClarificationPage.test.jsx:loads the event and its earlier questions`; SCRUM-27 history-access tests. | TC-55-05 uses two events' populated histories; TC-55-10 displays history while reviewing and changes selection without retaining the other thread. | Backend unit for filtering; component for review-history visibility. Existing read-only API is reused. |
-| AC6 | `test_authorization_unit.py:EventPermissionTests.test_assigned_identity_alone_does_not_grant_coordinator_privileges`; `test_authorization_http_unit.py:test_old_coordinator_loses_reads_and_writes_new_coordinator_gains_them` and `test_unrelated_organiser_and_attendee_direct_reads_are_denied` exercise `/review`. `test_event_submission.py:SubmissionUnitTests.test_submission_assigns_reviewer_and_preserves_access_boundaries` also checks chosen reviewer vs admin/owner/other coordinator. Existing `test_event_decisions.py` checks review sessions. | TC-55-03 protects the **new** list endpoint with missing/deleted sessions and each non-coordinator role using a reused token with a forged coordinator claim. TC-55-01 preserves assignment scope. | Backend unit only. Do not duplicate the existing detail-authorization matrix or implement a new permission model. |
+| AC6 | `test_authorization_unit.py:EventPermissionTests.test_assigned_identity_alone_does_not_grant_coordinator_privileges`; `test_authorization_http_unit.py:AuthorizationHttpUnitTests.test_old_coordinator_loses_reads_and_writes_new_coordinator_gains_them` and `AuthorizationHttpUnitTests.test_unrelated_organiser_and_attendee_direct_reads_are_denied` exercise `/review`. Current `test_event_submission.py:SubmissionUnitTests.test_submission_leaves_the_request_unassigned_and_preserves_access_boundaries` checks that owner/admin/available coordinators cannot review an unassigned submission (SCRUM-81 update; no automatic reviewer). Existing `test_event_decisions.py` checks review sessions. | TC-55-03 protects the **new** list endpoint with missing/deleted sessions and each non-coordinator role using a reused token with a forged coordinator claim. TC-55-01 preserves assignment scope. | Backend unit only. Do not duplicate the existing detail-authorization matrix or implement a new permission model. |
 | AC7 | `ReviewRequestPage.test.jsx:shows a retryable error when the request cannot be loaded` verifies error, Retry, and successful recovery. Managed and clarification pages have their own retry tests; `EventPlanningPage.test.jsx` also covers planning retries. | TC-55-04 backend outage/recovery; TC-55-08 list server/network failure and successful button retry. | Backend unit + frontend component for the missing list; reuse existing detail-retry coverage. |
 
 No new integration tests are necessary. Mock-backed cases cannot prove PostgreSQL query execution, RLS, joins, or transaction durability; those claims are outside this audit's evidence. Existing persisted tests remain untouched and unexecuted.
@@ -226,7 +232,7 @@ The observed failures accurately identify the missing review queue endpoint/page
 3. Add a read-only clarification-history load/display to `ReviewRequestPage.jsx` using the existing history endpoint. Scope state to eventId and clear/replace prior history when selection changes; handle load failures without claiming an empty history. Reuse the local error/retry pattern without adding sending/reply actions. Keep existing decision functionality unchanged.
 4. Once GREEN is authorized, adjust only the affected review test mock fixtures to return the proper history response for the additional GET, instead of returning `{request: ...}` for every URL. The existing test helper currently uses one response shape; this is a mock-contract maintenance dependency of inline history, not missing production capability. Do not weaken those existing assertions.
 
-**Reuse:** `_current_user`, `COORDINATOR_ROLE`, `_is_current_coordinator`, `_error`, `_isoformat`, `_user_summary`, existing Event/User/EventClarification models, `_request_payload`, `/review`, `/clarifications`, apiClient, statusLabel and formatSavedAt. Initial assignment/submission already works through SCRUM-28. Full detail rendering and detail retry need no rewrite.
+**Reuse (historical plan):** `_current_user`, `COORDINATOR_ROLE`, `_is_current_coordinator`, `_error`, `_isoformat`, `_user_summary`, existing Event/User/EventClarification models, `_request_payload`, `/review`, `/clarifications`, apiClient, statusLabel and formatSavedAt. Submission remains SCRUM-28; initial assignment now belongs to SCRUM-81's Lead workflow. Full detail rendering and detail retry need no rewrite.
 
 **Defer:** approval/rejection changes, assignment/reassignment, clarification creation/replies, notifications, dashboards, sorting/filtering controls, search, pagination, registration management, new statuses, dependencies and architecture/schema changes. No new table or migration is justified by these ACs.
 
@@ -446,3 +452,25 @@ All original 12 SCRUM-55 instances were included and remain GREEN. AC1–AC7 rem
 - Larger queues with many distinct organisers could benefit from a future batch lookup; no performance test or optimization was added here.
 
 No production changes, dependencies, schema/environment changes, unrelated story implementation, full-suite discovery, integration runs, external service connections or application servers were introduced by this review. No tests were removed or weakened. No commits, pushes or PRs were performed. Stop after this focused regression report.
+
+## I. Static documentation refresh and Excel conversion — 19 Oct 2026
+
+Read `SCRUM-55-test-cases.xlsx`, sheet **SCRUM-55 Tests**, A1:F25. The original Git blob is `55bb68832729534e2a19008cdc338e7fbdb88c59`, recoverable in baseline `9d188f9` at `docs/test-cases/SCRUM-55-test-cases.xlsx`. Its **24 data rows** group repeated role/status/value variants under the existing **15 case IDs**. Every scenario and expected result is already represented in sections C/H; no new case or format rewrite was necessary.
+
+| Workbook rows | Existing Markdown cases | Meaningful variants preserved |
+|---|---|---|
+| 2–3 | TC-55-01, 02 | Assigned submitted/under_review summaries and eligible-empty state. |
+| 4–10 | TC-55-03 | Missing token, missing/deleted user, and stored admin/organiser/venue_staff/tech_staff/attendee despite coordinator token claim. |
+| 11–14 | TC-55-04–07 | Query failure/recovery, cross-event history isolation, visible summaries/selected review, empty display. |
+| 15–16 | TC-55-08 | Server and network retry variants. |
+| 17–18 | TC-55-09 | Recorded accessibility/registration Yes and missing accessibility/registration No. |
+| 19–23 | TC-55-10–14 | Selection/history replacement, real ORM predicate compilation/null timestamp, organiser-read failure, independent history retry retaining typed reason, late response isolation. |
+| 24–25 | TC-55-15 | Direct URL navigation with 401 and 403, no private data/write. |
+
+All 24 workbook rows say **Pass**. The workbook provides no independent execution date, build, command or additional notes. Preserve those statuses as an **undated historical snapshot**, consistent with the detailed 14 Oct evidence in G/H; do not count the rows as 24 independently executed test methods or a fresh run. G/H retain the fuller exact commands, counts, failed selector/recheck history and limitations. The workbook has no unique missing scenario or execution note, so it can be removed after this comparison.
+
+**Current implementation references:** [events/routes.py](../../backend/app/events/routes.py) `list_review_requests`, `_review_summary_payload`, `review_request`, `_assigned_request`, `list_clarifications`; [permissions.py](../../backend/app/events/permissions.py) `is_current_coordinator` (imported as `_is_current_coordinator` in routes), `can_view_clarifications`; [ReviewRequestsPage.jsx](../../frontend/src/pages/ReviewRequestsPage.jsx), [ReviewRequestPage.jsx](../../frontend/src/pages/ReviewRequestPage.jsx) (`ClarificationHistory`) and [App.jsx](../../frontend/src/App.jsx). API routes are `GET /api/events/review-requests`, `GET /api/events/<id>/review`, `GET /api/events/<id>/clarifications`; page routes are `/events/review-requests` and `/events/:eventId/review`.
+
+**Later permissions:** [SCRUM-82](SCRUM-82-lead-reassigns-coordinator.md) makes reassignment Lead-only. Event review remains scoped to the current stored coordinator role and assignment; a Lead does not thereby become a reviewer. The existing TC-55-03 stored-role loop does not explicitly enumerate `coordinator_lead`: current code rejects it, but that specific role is not a dedicated subcase in this SCRUM-55 unit method. Supplemental Lead-workflow tests are a separate story, not an invented SCRUM-55 pass.
+
+**Verification and limits:** existing AC1–7 and IDs preserved; automated references checked statically against the current definitions/titles, with the renamed SCRUM-28 reference corrected. No production/test implementation changed, no test execution or external service connection. Live PostgreSQL/RLS and login-to-review browser limitations in H still apply. [Week 2](../../Slides%20+%20Docs/Week2-UserStories.pdf) printed slide 67 (PDF page 60) supplies the traceability chain; [Week 4](../../Slides%20+%20Docs/Week4-TestCases_SoftwareArchitecture.pdf) pages 21–24 supports explicit conditions/actions/results and separate specifications/executions, and page 23 describes its template as one useful representation. This refresh preserves the established Markdown structure and historical evidence.
