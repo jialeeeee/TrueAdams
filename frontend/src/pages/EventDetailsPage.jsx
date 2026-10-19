@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import apiClient from "../api/client.js";
 import explain from "../utils/explain.js";
+import formatSavedAt from "../utils/formatSavedAt.js";
 import singaporeTime from "../utils/singaporeTime.js";
 import statusLabel from "../utils/statusLabel.js";
 
@@ -18,6 +19,62 @@ function provided(value) {
 
 function when(value) {
   return value ? singaporeTime(value) : NOT_PROVIDED;
+}
+
+// SCRUM-33: the event's current coordinator. Only some users may see it (admins,
+// coordinators, venue and tech staff, and the event's organiser; can_view_coordinator
+// in backend/app/events/permissions.py), so a refusal hides the section instead of
+// showing an error.
+const COORDINATOR_NOT_LOADED =
+  "The coordinator could not be loaded. Check your connection and try again.";
+const COORDINATOR_HIDDEN_STATUSES = [401, 403, 404];
+
+function EventCoordinator({ eventId }) {
+  const [assignment, setAssignment] = useState(null);
+  const [error, setError] = useState("");
+  const [hidden, setHidden] = useState(false);
+
+  // The error stays until a reload succeeds, so the section never blinks out mid-reload.
+  const load = useCallback(async () => {
+    try {
+      const response = await apiClient.get(`/events/${eventId}/coordinator`);
+      setAssignment(response.data);
+      setError("");
+    } catch (failure) {
+      if (COORDINATOR_HIDDEN_STATUSES.includes(failure.response?.status)) {
+        setHidden(true);
+        return;
+      }
+      setError(explain(failure, COORDINATOR_NOT_LOADED));
+    }
+  }, [eventId]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  if (hidden || (!assignment && !error)) return null;
+
+  const coordinator = assignment?.coordinator;
+  return (
+    <section aria-labelledby="event-coordinator">
+      <h2 id="event-coordinator">Coordinator</h2>
+      {error ? (
+        <>
+          <p role="alert">{error}</p>
+          <button type="button" onClick={load}>Reload coordinator</button>
+        </>
+      ) : coordinator ? (
+        <>
+          <p>{`Coordinator: ${coordinator.email}`}</p>
+          {/* Assignment times are saved in UTC, unlike the event's own times. */}
+          <p>{`Assigned: ${assignment.assigned_at ? formatSavedAt(assignment.assigned_at) : "Not recorded"}`}</p>
+        </>
+      ) : (
+        <p>No coordinator has been assigned yet.</p>
+      )}
+    </section>
+  );
 }
 
 export default function EventDetailsPage() {
@@ -92,6 +149,7 @@ export default function EventDetailsPage() {
       {event.can_request_reassignment && (
         <Link to={`/events/${event.id}/reassign`}>Request reassignment</Link>
       )}
+      <EventCoordinator eventId={event.id} />
     </section>
   );
 }
