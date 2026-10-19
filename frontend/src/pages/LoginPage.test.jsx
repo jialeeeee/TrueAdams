@@ -1,3 +1,5 @@
+// SCRUM-27 reused/extended for SCRUM-75-test-cases.md; backend/tests/test_auth.py
+// and test_auth_unit.py cover the matching HTTP contract.
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
@@ -9,7 +11,7 @@ vi.mock("../api/client.js", () => ({ default: { post: vi.fn() } }));
 
 const EMAIL = "signin@test.invalid";
 const PASSWORD = "Test-signin-password!";
-const INVALID = "Invalid email or password.";
+const INVALID = "Email or password is incorrect"; // Must match backend/app/auth/routes.py.
 const REQUIRED = "Email and password are required.";
 const UNAVAILABLE = "Sign-in is temporarily unavailable. Please try again.";
 
@@ -25,12 +27,17 @@ function Location() {
 }
 
 function renderLogin() {
+  const loginAttempt = { current: 0 };
   render(
     <MemoryRouter initialEntries={["/login"]} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
       <Location />
       <Routes>
-        <Route path="/login" element={<LoginPage />} />
+        <Route path="/login" element={<LoginPage loginAttempt={loginAttempt} />} />
         <Route path="/" element={<h1>Events</h1>} />
+        <Route path="/events/mine" element={<h1>My event requests</h1>} />
+        <Route path="/events/managed" element={<h1>My managed events</h1>} />
+        <Route path="/events/supervised" element={<h1>Events I assigned</h1>} />
+        <Route path="/venues/bookings" element={<h1>Venue booking requests</h1>} />
       </Routes>
     </MemoryRouter>,
   );
@@ -70,6 +77,23 @@ describe("SCRUM-27 sign-in", () => {
     expect(screen.getByTestId("location").textContent).toBe("/");
   });
 
+  // TC-75-01: existing role pages; remaining roles share the Events catalogue (Q1).
+  it.each([
+    ["organiser", "/events/mine"],
+    ["coordinator", "/events/managed"],
+    ["coordinator_lead", "/events/supervised"],
+    ["venue_staff", "/venues/bookings"],
+    ["attendee", "/"],
+    ["tech_staff", "/"],
+    ["safety_officer", "/"],
+    ["admin", "/"],
+  ])("takes %s to its existing home page", async (role, path) => {
+    apiClient.post.mockResolvedValue({ data: { access_token: "issued-token", role } });
+    await submit(renderLogin());
+    await waitFor(() => expect(screen.getByTestId("location").textContent).toBe(path));
+    expect(sessionStorage.getItem("access_token")).toBe("issued-token");
+  });
+
   it("displays the backend 401 explanation without authenticating or navigating", async () => {
     apiClient.post.mockRejectedValue(httpFailure(401, INVALID));
     await submit(renderLogin());
@@ -77,16 +101,10 @@ describe("SCRUM-27 sign-in", () => {
     expectNoSessionOrNavigation();
   });
 
-  it.each(["email", "password"])("gives visible feedback for an empty %s", async (field) => {
-    // Either native form validation or a displayed application/API error is
-    // acceptable. No particular validation component or hook is prescribed.
-    apiClient.post.mockRejectedValue(httpFailure(400, REQUIRED));
-    await submit(renderLogin(), { [field]: "" });
-    await waitFor(() => {
-      const inputs = [screen.getByPlaceholderText("Email"), screen.getByPlaceholderText("Password")];
-      const nativeFeedback = inputs.some((input) => !input.validity.valid && Boolean(input.validationMessage));
-      expect(nativeFeedback || Boolean(screen.queryByText(/required|enter.*email|enter.*password/i))).toBe(true);
-    });
+  it.each(["email", "password", "email and password"])("gives visible feedback for an empty %s", async (field) => {
+    await submit(renderLogin(), field === "email and password" ? { email: "", password: "" } : { [field]: "" });
+    expect(screen.getByRole("alert").textContent).toBe(`Please enter ${field}.`);
+    expect(apiClient.post).not.toHaveBeenCalled();
     expectNoSessionOrNavigation();
   });
 
@@ -137,7 +155,7 @@ describe("SCRUM-27 sign-in", () => {
     sessionStorage.setItem("access_token", "existing-token");
     apiClient.post.mockRejectedValue(failure());
     await submit(renderLogin());
-    expect(await screen.findByText(/invalid email or password|required|try again|retry/i)).toBeTruthy();
+    expect(await screen.findByText(/email or password is incorrect|required|try again|retry/i)).toBeTruthy();
     expect(sessionStorage.getItem("access_token")).toBe("existing-token");
     expect(screen.getByTestId("location").textContent).toBe("/login");
   });

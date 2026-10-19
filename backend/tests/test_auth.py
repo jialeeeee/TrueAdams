@@ -1,4 +1,4 @@
-"""SCRUM-27: first RED increment for Flask credential-based login.
+"""SCRUM-27 credential login, extended for SCRUM-75 (TC-75-01..05).
 
 Login returns 200 with access_token; invalid credentials return 401 with the
 same public error; missing/empty credentials return 400; lookup outages return
@@ -34,6 +34,7 @@ class AuthTests(AppTestCase):
     def assert_login_error(self, response, status):
         self.assertEqual(response.status_code, status)
         body = response.get_json()
+        self.assertFalse(response.headers.getlist("Set-Cookie"))
         self.assertIsInstance(body, dict)
         self.assertIsInstance(body.get("error"), str)
         self.assertTrue(body["error"].strip())
@@ -57,6 +58,7 @@ class AuthTests(AppTestCase):
         claims = decode_token(token)
         self.assertEqual(claims["sub"], str(user_id))
         self.assertEqual(claims["type"], "access")
+        self.assertEqual(body["role"], "coordinator")
         for payload in (body, claims):
             serialized = json.dumps(payload)
             self.assertNotIn(self.PASSWORD, serialized)
@@ -83,6 +85,7 @@ class AuthTests(AppTestCase):
         for label, email, password in cases:
             with self.subTest(case=label):
                 body = self.assert_login_error(self.login(email, password), 401)
+                self.assertEqual(body["error"], "Email or password is incorrect")
                 self.assertNotIn(email, body["error"])
                 errors.append(body["error"])
         if len(errors) == len(cases):
@@ -95,11 +98,16 @@ class AuthTests(AppTestCase):
             ("missing password", {"email": email}),
             ("empty email", {"email": "", "password": self.PASSWORD}),
             ("empty password", {"email": email, "password": ""}),
+            ("both empty", {"email": "", "password": ""}),
         )
         for label, payload in cases:
             with self.subTest(case=label):
                 response = self.client.post("/api/auth/login", json=payload)
-                self.assert_login_error(response, 400)
+                body = self.assert_login_error(response, 400)
+                missing = [field for field in ("email", "password") if not payload.get(field)]
+                self.assertEqual(body["missing"], missing)
+                for field in missing:
+                    self.assertIn(field, body["error"].lower())
 
     def test_authentication_service_failure_is_retryable(self):
         user = self.make_login_user()

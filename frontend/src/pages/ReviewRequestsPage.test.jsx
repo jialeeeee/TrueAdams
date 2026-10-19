@@ -23,6 +23,9 @@ const UNDER_REVIEW = { ...SUMMARY, id: 11, title: "Access plan under review", st
 const LIST = { requests: [SUMMARY, UNDER_REVIEW], message: null };
 
 function renderPage() {
+  // SCRUM-75: pass the shared sign-in guard so these SCRUM-55 cases still
+  // exercise the API's success, stale-token/role refusal and retry behavior.
+  sessionStorage.setItem("access_token", "review-test-token");
   render(
     <MemoryRouter initialEntries={["/events/review-requests"]} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
       <App />
