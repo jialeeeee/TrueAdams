@@ -1,0 +1,20 @@
+baseline: all backend tests pass
+B1 | Let any coordinator record, not only the event's | AC1 | CAUGHT | test_tc_42_04_only_the_events_coordinator_can_record_edit_or_remove
+B2 | Record requirements for cancelled and rejected events | AC1 | CAUGHT | test_tc_42_07_cancelled_and_rejected_events_cannot_be_changed
+B3 | Accept a blank equipment type | AC2 | CAUGHT | test_tc_42_09_equipment_type_is_required_and_at_most_100_characters, test_tc_42_12_every_problem_is_named_and_the_corrected_entry_saves
+B4 | Accept a quantity of 0 or above the maximum | AC2 | CAUGHT | test_tc_42_10_quantity_must_be_a_whole_number_from_1_to_1000, test_tc_42_12_every_problem_is_named_and_the_corrected_entry_saves
+B5 | Allow the same requirement to be recorded twice | AC2 | CAUGHT | test_tc_42_13_the_same_requirement_cannot_be_recorded_twice
+B6 | Name only the first invalid field | AC2 | CAUGHT | test_tc_42_12_every_problem_is_named_and_the_corrected_entry_saves
+B7 | Show other events' requirements with this event's | AC3 | CAUGHT | test_tc_42_16_saved_requirements_are_shown_against_the_event
+B8 | Leave out the organiser's equipment note | AC3 | CAUGHT | test_tc_42_16_saved_requirements_are_shown_against_the_event
+B9 | Technical Support Staff can't view requirements | AC4 | CAUGHT | test_tc_42_18_cancelled_events_can_be_viewed_but_not_changed, test_tc_42_19_technical_support_can_view_any_events_requirements
+B10 | Anyone can update an arrangement | AC4 | CAUGHT | test_tc_42_23_only_technical_support_update_and_others_cannot_view
+B11 | An arrangement update isn't saved | AC4 | CAUGHT | test_tc_42_06_editing_the_details_sends_it_back_to_requested, test_tc_42_20_technical_support_see_which_events_need_equipment, test_tc_42_21_technical_support_update_the_arrangement, test_tc_42_26_unavailable_stays_recorded_and_is_not_fulfilled
+B12 | Editing the details keeps the old arrangement status | AC4 (A8) | CAUGHT | test_tc_42_06_editing_the_details_sends_it_back_to_requested
+B13 | Technical Support can mark a requirement reserved | AC4, AC6 | CAUGHT | test_tc_42_20_technical_support_see_which_events_need_equipment, test_tc_42_22_only_valid_arrangement_statuses_are_accepted
+B14 | Recording reduces the equipment's available quantity | AC5 | CAUGHT | test_tc_42_24_recording_does_not_reserve_or_reduce_availability
+B15 | A recorded requirement is shown as reserved | AC5, AC6 | CAUGHT | test_tc_42_01_records_type_quantity_and_technical_requirements, test_tc_42_02_technical_requirements_are_optional, test_tc_42_04_only_the_events_coordinator_can_record_edit_or_remove, test_tc_42_08_signed_out_unknown_event_and_other_events_requirement, test_tc_42_13_the_same_requirement_cannot_be_recorded_twice, test_tc_42_14_an_invalid_edit_leaves_the_requirement_unchanged, test_tc_42_16_saved_requirements_are_shown_against_the_event, test_tc_42_20_technical_support_see_which_events_need_equipment, test_tc_42_22_only_valid_arrangement_statuses_are_accepted, test_tc_42_23_only_technical_support_update_and_others_cannot_view, test_tc_42_24_recording_does_not_reserve_or_reduce_availability, test_tc_42_25_a_requirement_with_no_suitable_equipment_can_be_recorded, test_tc_42_28_a_failed_arrangement_update_changes_nothing
+B16 | Marking a requirement unavailable removes it | AC6 | CAUGHT | test_tc_42_26_unavailable_stays_recorded_and_is_not_fulfilled
+B17 | A failed save is not rolled back | AC7 | CAUGHT | test_tc_42_27_a_failed_save_keeps_existing_requirements
+B18 | A failed load is shown as an empty list | AC7 | CAUGHT | test_tc_42_29_a_failed_load_is_a_failure_not_an_empty_list
+after restore: all pass

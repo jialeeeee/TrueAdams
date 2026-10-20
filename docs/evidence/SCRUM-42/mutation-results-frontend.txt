@@ -1,0 +1,13 @@
+baseline: all frontend tests pass
+F1 | The planning page has no Equipment requirements link | AC1 | CAUGHT | links to the equipment requirements
+F2 | Cancelled and rejected events still show the record form | AC1 | CAUGHT | lets Technical Support Staff update the arrangement status, shows a cancelled event's requirements read-only
+F3 | Invalid fields are not named next to the field | AC2 | CAUGHT | shows each invalid field and keeps what was entered
+F4 | What was entered is cleared when a save fails | AC2, AC7 | CAUGHT | keeps the entry when saving fails so it can be saved again, shows each invalid field and keeps what was entered
+F5 | The quantity is sent as text | AC1 | CAUGHT | edits a requirement, records a requirement and shows the confirmation
+F6 | The recorded requirements are not listed | AC3 | CAUGHT | cancels an edit without saving, edits a requirement, keeps the entry when saving fails so it can be saved again, lets Technical Support Staff update the arrangement status, records a requirement and shows the confirmation, removes a requirement, shows a cancelled event's requirements read-only, shows the event, the organiser's note and the recorded requirements, shows why an arrangement update failed
+F7 | The confirmation is not shown | AC3, AC5 | CAUGHT | edits a requirement, keeps the entry when saving fails so it can be saved again, lets Technical Support Staff update the arrangement status, records a requirement and shows the confirmation, removes a requirement
+F8 | Technical Support Staff get no status controls | AC4 | CAUGHT | lets Technical Support Staff update the arrangement status, shows why an arrangement update failed
+F9 | Technical Support are offered a Reserved status | AC4, AC6 | CAUGHT | lets Technical Support Staff update the arrangement status
+F10 | Equipment requests link to the planning page instead | AC4 | CAUGHT | lists each event with its coordinator and arrangement progress, linking to its requirements
+F11 | A failed load offers no Retry | AC7 | CAUGHT | offers Retry after a load failure
+after restore: all pass
