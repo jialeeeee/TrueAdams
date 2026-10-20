@@ -205,3 +205,14 @@ describe("SCRUM-45 set up registration from the planning view", () => {
     expect(screen.queryByRole("link", { name: "Set up registration" })).toBeNull();
   });
 });
+
+// SCRUM-38: the venue suitability check is reached from the planning view.
+describe("SCRUM-38 check venue suitability from the planning view", () => {
+  it("links the event to its venue suitability check", async () => {
+    apiClient.get.mockResolvedValue({ data: FESTIVAL });
+    renderPage();
+
+    const link = await screen.findByRole("link", { name: "Check venue suitability" });
+    expect(link.getAttribute("href")).toBe("/events/1/venue-suitability");
+  });
+});
