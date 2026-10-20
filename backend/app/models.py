@@ -230,3 +230,19 @@ class ReassignmentRequest(db.Model):
     status = db.Column(db.String(20), nullable=False, default="pending")
     # Naive UTC, like the other audit timestamps.
     requested_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+
+class VenueChange(db.Model):
+    """SCRUM-63: one add or edit of a venue, with who made it and when."""
+
+    __tablename__ = "venue_changes"
+
+    id = db.Column(db.Integer, primary_key=True)
+    venue_id = db.Column(db.Integer, db.ForeignKey("venues.id"), nullable=False)
+    # "added" or "edited".
+    action = db.Column(db.String(10), nullable=False)
+    changed_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    # Naive UTC, like the other audit timestamps.
+    changed_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    # {"<field>": {"from": ..., "to": ...}} for every field the change touched.
+    changes = db.Column(JSONB, nullable=False)
