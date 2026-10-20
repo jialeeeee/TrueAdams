@@ -1,5 +1,6 @@
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { StrictMode } from "react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import apiClient from "../api/client.js";
@@ -127,5 +128,34 @@ describe("SCRUM-81 the Lead's unassigned queue", () => {
       "The queue could not be loaded. Check your connection and try again.",
     );
     expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
+  });
+
+  // SCRUM-80 TC-80-06: main.jsx uses StrictMode, which can overlap initial loads.
+  it.each([
+    [503, LOAD_FAILED, true],
+    [403, "Only Event Coordinator Leads can view the queue.", false],
+  ])("removes previously loaded events when an overlapping load fails with %s", async (status, message, retryable) => {
+    let rejectLoad;
+    apiClient.get
+      .mockResolvedValueOnce(loaded())
+      .mockReturnValueOnce(new Promise((resolve, reject) => { rejectLoad = reject; }));
+    render(
+      <StrictMode>
+        <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+          <UnassignedQueuePage />
+        </MemoryRouter>
+      </StrictMode>,
+    );
+
+    await screen.findByRole("link", { name: "Alumni Mixer" });
+    expect(apiClient.get).toHaveBeenCalledTimes(2);
+    await act(async () => {
+      rejectLoad(failed(status, { error: message, retryable }));
+    });
+
+    expect(screen.getByRole("alert").textContent).toContain(message);
+    expect(screen.queryByRole("list")).toBeNull();
+    expect(screen.queryByText(`Organiser: ${EVAN.email}`)).toBeNull();
+    expect(Boolean(screen.queryByRole("button", { name: "Retry" }))).toBe(retryable);
   });
 });

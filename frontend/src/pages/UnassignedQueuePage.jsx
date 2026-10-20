@@ -33,6 +33,7 @@ export default function UnassignedQueuePage() {
       const response = await apiClient.get("/events/queue");
       setResult(response.data);
     } catch (failure) {
+      setResult(null);
       setLoadError({ message: explain(failure, NOT_LOADED), retryable: canRetry(failure) });
     }
   }, []);
