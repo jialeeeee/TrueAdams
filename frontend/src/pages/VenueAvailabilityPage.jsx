@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import apiClient from "../api/client.js";
+import occupiedParts from "../utils/occupiedParts.js";
 
 // SCRUM-36: view a venue's availability for a date or date range.
 // SCRUM-64: time outside operating hours is unavailable, and each unavailable slot says why.
@@ -164,6 +165,7 @@ export default function VenueAvailabilityPage() {
                   {PERIOD_LABELS[period.type]}: {formatDateTime(period.start)} to{" "}
                   {formatDateTime(period.end)}
                   {period.reason ? ` (${period.reason})` : ""}
+                  {occupiedParts(period) ? ` (${occupiedParts(period)})` : ""}
                   {period.expires_at ? ` (expires ${formatDateTime(period.expires_at)})` : ""}
                 </li>
               ))}

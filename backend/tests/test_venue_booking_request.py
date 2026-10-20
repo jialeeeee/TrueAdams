@@ -268,6 +268,11 @@ class RequestContentTests(BookingRequestTestCase):
                       "location": "Level 3, Marina Tower, 10 Bayfront Ave"},
             "start_time": "2027-03-12T16:00:00",
             "end_time": "2027-03-12T22:30:00",
+            # SCRUM-84: no setup or turnaround was asked for.
+            "setup_minutes": 0,
+            "turnaround_minutes": 0,
+            "occupied_start": "2027-03-12T16:00:00",
+            "occupied_end": "2027-03-12T22:30:00",
             "venue_requirements": REQUIREMENTS,
             "requested_by": {"id": alice.id, "email": alice.email},
             "requested_at": saved.created_at.isoformat(),
@@ -435,7 +440,9 @@ class NotConfirmedTests(BookingRequestTestCase):
         self.db.session.expire_all()
         self.assertIsNone(self.db.session.get(Event, self.events["E1"].id).venue_id)
 
-    # TC-39-22 · AC5 (Q4, Q7) — accepted even where the venue looks unavailable or unsuitable.
+    # TC-39-22 · AC5 (Q4, Q7) — accepted where the venue looks unsuitable or not bookable.
+    # SCRUM-84 changed this: a request that clashes with a confirmed booking, block or hold
+    # is now refused up front (IS212-US84-TC6, TC8); see test_venue_setup_turnaround.py.
     def test_request_is_accepted_where_the_venue_looks_unavailable(self):
         self.seed_booking(None, "fully_recorded", "confirmed",
                           datetime(2027, 3, 12, 18, 0), datetime(2027, 3, 12, 20, 0))
@@ -446,7 +453,9 @@ class NotConfirmedTests(BookingRequestTestCase):
         self.db.session.commit()
 
         clashing = self.submit()
-        self.assertEqual(clashing.status_code, 201, clashing.get_json())
+        self.assertEqual(clashing.status_code, 409, clashing.get_json())
+        self.assertEqual(clashing.get_json()["reason"], "conflict")
+        self.assert_nothing_saved()
 
         for venue in ("recorded_as_none", "unavailable"):  # too small; not bookable
             with self.subTest(venue=venue):
