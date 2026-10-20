@@ -216,3 +216,14 @@ describe("SCRUM-38 check venue suitability from the planning view", () => {
     expect(link.getAttribute("href")).toBe("/events/1/venue-suitability");
   });
 });
+
+// SCRUM-42 (TC-42-39): the coordinator records equipment requirements from the planning view.
+describe("SCRUM-42 record equipment requirements from the planning view", () => {
+  it("links to the equipment requirements", async () => {
+    apiClient.get.mockResolvedValue({ data: FESTIVAL });
+    renderPage();
+
+    const link = await screen.findByRole("link", { name: "Equipment requirements" });
+    expect(link.getAttribute("href")).toBe("/events/1/equipment");
+  });
+});
