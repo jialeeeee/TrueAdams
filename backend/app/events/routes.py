@@ -9,6 +9,7 @@ from sqlalchemy.exc import DBAPIError, IntegrityError, SQLAlchemyError
 from .. import tasks
 from ..extensions import db
 from ..models import (
+    EquipmentRequirement,
     Event,
     EventClarification,
     Notification,
@@ -18,14 +19,16 @@ from ..models import (
     Venue,
 )
 from ..registrations.routes import REGISTERED, REGISTRABLE_STATUS, singapore_now
-from . import suitability
+from . import equipment, suitability
 from .permissions import (
     COORDINATOR_ROLE,
     can_view_clarifications,
     can_view_coordinator,
+    can_view_equipment,
     is_coordinator_lead,
     is_current_coordinator as _is_current_coordinator,
     is_current_organiser,
+    is_tech_staff,
 )
 
 events_bp = Blueprint("events", __name__)
@@ -2208,3 +2211,315 @@ def venue_suitability(event_id: int):
                       retryable=True)
 
     return jsonify(payload)
+
+
+# ---------- Record equipment requirements (SCRUM-42) ----------
+
+# Events whose equipment requirements can be viewed but no longer changed (A4, open
+# question Q2).
+EQUIPMENT_CLOSED_STATUSES = {"cancelled", "rejected"}
+EQUIPMENT_VIEW_DENIED = "You are not allowed to view this event's equipment requirements."
+EQUIPMENT_COORDINATOR_ONLY = "Only the event's coordinator can record its equipment requirements."
+EQUIPMENT_TECH_ONLY = "Only Technical Support Staff can update equipment arrangements."
+EQUIPMENT_REQUESTS_TECH_ONLY = "Only Technical Support Staff can view equipment requests."
+REQUIREMENT_NOT_FOUND = "Equipment requirement not found."
+NO_EQUIPMENT_REQUIREMENTS = "No equipment requirements have been recorded for this event."
+NO_EQUIPMENT_REQUESTS = "No events have equipment requirements to arrange."
+EQUIPMENT_INVALID = "Some details are not valid. Please correct them and try again."
+# A failed save leaves every recorded requirement as it was, and says so (AC7).
+EQUIPMENT_NOT_SAVED = ("The equipment requirement was not saved, and the recorded "
+                       "requirements are unchanged. Please try again.")
+EQUIPMENT_NOT_REMOVED = ("The equipment requirement was not removed, and the recorded "
+                         "requirements are unchanged. Please try again.")
+ARRANGEMENT_NOT_SAVED = "The arrangement status was not saved. Please try again."
+
+
+def _equipment_event(event_id, allowed, denied):
+    """The caller and the event, checked in the order 401, 404, 403 (A11)."""
+    user = _current_user()
+    if user is None:
+        raise _Rejected("Your session is no longer valid. Please log in again.", 401)
+    event = db.session.get(Event, event_id) if event_id <= DB_INTEGER_MAX else None
+    if event is None:
+        raise _Rejected(EVENT_NOT_FOUND, 404)
+    if not allowed(user, event):
+        raise _Rejected(denied, 403)
+    return user, event
+
+
+def _event_requirement(event, requirement_id):
+    """The requirement, only if it belongs to this event. Checked after permission, so
+    people who may not see the event learn nothing about its requirements (A11)."""
+    requirement = (db.session.get(EquipmentRequirement, requirement_id)
+                   if requirement_id <= DB_INTEGER_MAX else None)
+    if requirement is None or requirement.event_id != event.id:
+        raise _Rejected(REQUIREMENT_NOT_FOUND, 404)
+    return requirement
+
+
+def _equipment_closed_notice(event):
+    return f"This event is {event.status}, so its equipment requirements can no longer be changed."
+
+
+def _require_equipment_open(event):
+    if event.status in EQUIPMENT_CLOSED_STATUSES:
+        raise _Rejected(_equipment_closed_notice(event), 409)
+
+
+def _equipment_body(what):
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        raise _Rejected(f"Send the {what} as a JSON object.", 400)
+    return body
+
+
+def _valid_requirement(event, body, requirement_id=None):
+    """The cleaned values, or a 422 naming every problem. The same type with the same
+    technical requirements can't be recorded twice for one event (A5)."""
+    values, problems = equipment.parse_requirement(body)
+    if not problems:
+        key = equipment.requirement_key(values["equipment_type"],
+                                        values["technical_requirements"])
+        others = EquipmentRequirement.query.filter(EquipmentRequirement.event_id == event.id)
+        if requirement_id is not None:
+            others = others.filter(EquipmentRequirement.id != requirement_id)
+        if any(equipment.requirement_key(o.equipment_type, o.technical_requirements) == key
+               for o in others):
+            problems["equipment_type"] = (
+                f"{values['equipment_type']} with these technical requirements is already "
+                "recorded for this event. Change its quantity instead.")
+    if problems:
+        raise _Rejected(EQUIPMENT_INVALID, 422, fields=problems)
+    return values
+
+
+def _requirement_payload(requirement, users):
+    updater = users.get(requirement.arrangement_updated_by_id)
+    return {
+        "id": requirement.id,
+        "equipment_type": requirement.equipment_type,
+        "quantity": requirement.quantity,
+        "technical_requirements": _recorded(requirement.technical_requirements),
+        "status": requirement.status,
+        "status_label": equipment.status_label(requirement.status),
+        "arrangement_note": _recorded(requirement.arrangement_note),
+        "recorded_at": _isoformat(requirement.recorded_at),
+        "last_saved_at": _isoformat(requirement.last_saved_at),
+        "arrangement_updated_at": _isoformat(requirement.arrangement_updated_at),
+        "arrangement_updated_by": _user_summary(updater) if updater else None,
+    }
+
+
+def _users_by_id(ids):
+    ids = {i for i in ids if i is not None}
+    return {u.id: u for u in User.query.filter(User.id.in_(ids)).all()} if ids else {}
+
+
+def _equipment_page(user, event):
+    """What the equipment page shows: the event, the organiser's note (A2) and the
+    recorded requirements in the order they were recorded."""
+    requirements = (EquipmentRequirement.query.filter_by(event_id=event.id)
+                    .order_by(EquipmentRequirement.id).all())
+    users = _users_by_id([event.coordinator_id]
+                         + [r.arrangement_updated_by_id for r in requirements])
+    coordinator = users.get(event.coordinator_id)
+    is_open = event.status not in EQUIPMENT_CLOSED_STATUSES
+    return {
+        "event": {
+            "id": event.id,
+            "title": event.title,
+            "status": event.status,
+            "start_time": _isoformat(event.start_time),
+            "end_time": _isoformat(event.end_time),
+            "coordinator": _user_summary(coordinator) if coordinator else None,
+        },
+        "organiser_note": _recorded(event.equipment_requirements),
+        "requirements": [_requirement_payload(r, users) for r in requirements],
+        "can_edit": is_open and _is_current_coordinator(user, event),
+        "can_update_arrangements": is_open and is_tech_staff(user),
+        "notice": None if is_open else _equipment_closed_notice(event),
+        "message": None if requirements else NO_EQUIPMENT_REQUIREMENTS,
+    }
+
+
+def _with_requirement(page, requirement_id):
+    requirement = next(r for r in page["requirements"] if r["id"] == requirement_id)
+    return {"requirement": requirement, **page}
+
+
+@events_bp.get("/<int:event_id>/equipment-requirements")
+@jwt_required()
+def get_equipment_requirements(event_id: int):
+    try:
+        user, event = _equipment_event(event_id, can_view_equipment, EQUIPMENT_VIEW_DENIED)
+        payload = _equipment_page(user, event)
+    except _Rejected as rejected:
+        return _error(rejected.message, rejected.status_code, **rejected.extra)
+    except SQLAlchemyError:
+        db.session.rollback()
+        return _error("The equipment requirements could not be loaded. Please try again.", 503,
+                      retryable=True)
+    return jsonify(payload)
+
+
+@events_bp.post("/<int:event_id>/equipment-requirements")
+@jwt_required()
+def record_equipment_requirement(event_id: int):
+    """Record one requirement. It reserves nothing and changes no availability (AC5)."""
+    try:
+        user, event = _equipment_event(event_id, _is_current_coordinator,
+                                       EQUIPMENT_COORDINATOR_ONLY)
+        _require_equipment_open(event)
+        values = _valid_requirement(event, _equipment_body("equipment requirement"))
+        requirement = EquipmentRequirement(event_id=event.id, recorded_by_id=user.id,
+                                           status=equipment.REQUESTED, **values)
+        db.session.add(requirement)
+        db.session.commit()
+        payload = _with_requirement(_equipment_page(user, event), requirement.id)
+    except _Rejected as rejected:
+        return _error(rejected.message, rejected.status_code, **rejected.extra)
+    except SQLAlchemyError:
+        db.session.rollback()
+        return _error(EQUIPMENT_NOT_SAVED, 503, retryable=True)
+
+    name = equipment.describe(values["quantity"], values["equipment_type"])
+    message = (f"Recorded {name} for {event.title}. "
+               "Recording a requirement does not reserve any equipment.")
+    return jsonify({"confirmation": message, **payload}), 201
+
+
+@events_bp.put("/<int:event_id>/equipment-requirements/<int:requirement_id>")
+@jwt_required()
+def edit_equipment_requirement(event_id: int, requirement_id: int):
+    try:
+        user, event = _equipment_event(event_id, _is_current_coordinator,
+                                       EQUIPMENT_COORDINATOR_ONLY)
+        requirement = _event_requirement(event, requirement_id)
+        _require_equipment_open(event)
+        values = _valid_requirement(event, _equipment_body("equipment requirement"),
+                                    requirement.id)
+        changed = any(getattr(requirement, name) != value for name, value in values.items())
+        # The arrangements were for the old details, so they start again (A8).
+        reset = changed and requirement.status != equipment.REQUESTED
+        if changed:
+            for name, value in values.items():
+                setattr(requirement, name, value)
+            requirement.status = equipment.REQUESTED
+            requirement.last_saved_at = datetime.utcnow()
+        db.session.commit()
+        payload = _with_requirement(_equipment_page(user, event), requirement.id)
+    except _Rejected as rejected:
+        return _error(rejected.message, rejected.status_code, **rejected.extra)
+    except SQLAlchemyError:
+        db.session.rollback()
+        return _error(EQUIPMENT_NOT_SAVED, 503, retryable=True)
+
+    name = equipment.describe(values["quantity"], values["equipment_type"])
+    if not changed:
+        message = f"No changes were made to {name}."
+    elif reset:
+        message = (f"Updated {name}. It is back to Requested, because the earlier "
+                   "arrangements were for the old details.")
+    else:
+        message = f"Updated {name}."
+    return jsonify({"confirmation": message, **payload})
+
+
+@events_bp.delete("/<int:event_id>/equipment-requirements/<int:requirement_id>")
+@jwt_required()
+def remove_equipment_requirement(event_id: int, requirement_id: int):
+    try:
+        user, event = _equipment_event(event_id, _is_current_coordinator,
+                                       EQUIPMENT_COORDINATOR_ONLY)
+        requirement = _event_requirement(event, requirement_id)
+        _require_equipment_open(event)
+        name = equipment.describe(requirement.quantity, requirement.equipment_type)
+        db.session.delete(requirement)
+        db.session.commit()
+        payload = _equipment_page(user, event)
+    except _Rejected as rejected:
+        return _error(rejected.message, rejected.status_code, **rejected.extra)
+    except SQLAlchemyError:
+        db.session.rollback()
+        return _error(EQUIPMENT_NOT_REMOVED, 503, retryable=True)
+
+    return jsonify({"confirmation": f"Removed {name}.", **payload})
+
+
+@events_bp.patch("/<int:event_id>/equipment-requirements/<int:requirement_id>/arrangement")
+@jwt_required()
+def update_equipment_arrangement(event_id: int, requirement_id: int):
+    """Technical Support Staff record how arranging a requirement is going (AC4). They
+    can't mark it reserved or fulfilled: that is SCRUM-44 (AC6)."""
+    try:
+        user, event = _equipment_event(event_id, is_tech_staff, EQUIPMENT_TECH_ONLY)
+        requirement = _event_requirement(event, requirement_id)
+        _require_equipment_open(event)
+        values, problems = equipment.parse_arrangement(_equipment_body("arrangement"))
+        if problems:
+            raise _Rejected(EQUIPMENT_INVALID, 422, fields=problems)
+        for name, value in values.items():
+            setattr(requirement, name, value)
+        requirement.arrangement_updated_by_id = user.id
+        requirement.arrangement_updated_at = datetime.utcnow()
+        db.session.commit()
+        payload = _with_requirement(_equipment_page(user, event), requirement.id)
+    except _Rejected as rejected:
+        return _error(rejected.message, rejected.status_code, **rejected.extra)
+    except SQLAlchemyError:
+        db.session.rollback()
+        return _error(ARRANGEMENT_NOT_SAVED, 503, retryable=True)
+
+    label = equipment.status_label(values["status"])
+    return jsonify({"confirmation": f"Arrangement status updated to {label}.", **payload})
+
+
+@events_bp.get("/equipment-requests")
+@jwt_required()
+def list_equipment_requests():
+    """Open events with recorded equipment requirements, soonest first, for Technical
+    Support Staff to arrange (AC4)."""
+    try:
+        user = _current_user()
+        if user is None:
+            return _error("Your session is no longer valid. Please log in again.", 401)
+        if not is_tech_staff(user):
+            return _error(EQUIPMENT_REQUESTS_TECH_ONLY, 403)
+
+        rows = (
+            db.session.query(EquipmentRequirement.event_id, EquipmentRequirement.status,
+                             func.count(EquipmentRequirement.id))
+            .join(Event, Event.id == EquipmentRequirement.event_id)
+            .filter(Event.status.notin_(EQUIPMENT_CLOSED_STATUSES))
+            .group_by(EquipmentRequirement.event_id, EquipmentRequirement.status)
+            .all()
+        )
+        counts = {}
+        for event_id, status, count in rows:
+            counts.setdefault(event_id, {})[status] = count
+        events = (
+            Event.query.filter(Event.id.in_(list(counts)))
+            .order_by(Event.start_time.asc().nulls_last(), Event.id)
+            .all()
+        ) if counts else []
+        coordinators = _users_by_id([event.coordinator_id for event in events])
+        items = []
+        for event in events:
+            coordinator = coordinators.get(event.coordinator_id)
+            items.append({
+                "id": event.id,
+                "title": event.title,
+                "status": event.status,
+                "start_time": _isoformat(event.start_time),
+                "end_time": _isoformat(event.end_time),
+                "coordinator": _user_summary(coordinator) if coordinator else None,
+                "requirement_count": sum(counts[event.id].values()),
+                "status_counts": {status: counts[event.id].get(status, 0)
+                                  for status in equipment.ARRANGEMENT_STATUSES},
+            })
+    except SQLAlchemyError:
+        db.session.rollback()
+        return _error("The equipment requests could not be loaded. Please try again.", 503,
+                      retryable=True)
+
+    return jsonify({"events": items, "message": None if items else NO_EQUIPMENT_REQUESTS})

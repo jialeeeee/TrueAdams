@@ -8,6 +8,7 @@ route guards and side-effect calls, NOT database durability or real row locks.
 The equivalent persisted workflows stay in tests/test_authorization.py.
 """
 
+import re
 import socket
 import unittest
 from datetime import datetime, timedelta
@@ -216,7 +217,8 @@ class AuthorizationHttpUnitTests(unittest.TestCase):
                     if not hasattr(self.app.view_functions[route.endpoint], "__wrapped__"):
                         continue
                     for method in route.methods - {"HEAD", "OPTIONS"}:
-                        path = route.rule.replace("<int:event_id>", "7")
+                        # Every ID in the path, e.g. SCRUM-42's <int:requirement_id> too.
+                        path = re.sub(r"<int:\w+>", "7", route.rule)
                         response = self.client.open(path, method=method, json={},
                             headers={"Authorization": f"Bearer {token}"})
                         self.assertIn(response.status_code, (401, 422), (method, path))

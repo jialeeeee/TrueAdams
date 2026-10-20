@@ -236,3 +236,34 @@ class ReassignmentRequest(db.Model):
     status = db.Column(db.String(20), nullable=False, default="pending")
     # Naive UTC, like the other audit timestamps.
     requested_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+
+class EquipmentRequirement(db.Model):
+    """One item of equipment an event needs, recorded by its coordinator (SCRUM-42).
+
+    Recording it reserves nothing and leaves equipment availability alone (AC5).
+    """
+
+    __tablename__ = "equipment_requirements"
+    __table_args__ = (
+        db.CheckConstraint("quantity > 0", name="equipment_requirements_quantity_positive"),
+        db.Index("equipment_requirements_event_id", "event_id"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    event_id = db.Column(db.Integer, db.ForeignKey("events.id"), nullable=False)
+    equipment_type = db.Column(db.String(100), nullable=False)
+    quantity = db.Column(db.Integer, nullable=False)
+    # NULL means none recorded.
+    technical_requirements = db.Column(db.Text)
+    # Set by Technical Support Staff as they arrange it: "requested", "being_arranged"
+    # or "unavailable" (SCRUM-42 A7). Never reserved or fulfilled: that is SCRUM-44.
+    status = db.Column(db.String(20), nullable=False, default="requested")
+    arrangement_note = db.Column(db.Text)
+    # Who recorded it, when, and when the coordinator last changed it (naive UTC).
+    recorded_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    recorded_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    last_saved_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    # Which Technical Support Staff member last updated the arrangement, and when (UTC).
+    arrangement_updated_by_id = db.Column(db.Integer, db.ForeignKey("users.id"))
+    arrangement_updated_at = db.Column(db.DateTime)
