@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import apiClient from "../api/client.js";
 import canRetry from "../utils/canRetry.js";
@@ -26,13 +26,18 @@ function WaitingEvent({ event }) {
 export default function UnassignedQueuePage() {
   const [result, setResult] = useState(null);
   const [loadError, setLoadError] = useState(null);
+  const loadAttempt = useRef(0);
 
   const load = useCallback(async () => {
+    const attempt = ++loadAttempt.current;
     setLoadError(null);
     try {
       const response = await apiClient.get("/events/queue");
+      if (attempt !== loadAttempt.current) return;
       setResult(response.data);
+      setLoadError(null);
     } catch (failure) {
+      if (attempt !== loadAttempt.current) return;
       setResult(null);
       setLoadError({ message: explain(failure, NOT_LOADED), retryable: canRetry(failure) });
     }
