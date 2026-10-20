@@ -91,6 +91,12 @@ class Event(db.Model):
     registration_closes_at = db.Column(db.DateTime)
     registration_capacity = db.Column(db.Integer)
 
+    # What the event needs of a venue (SCRUM-38), as lists of names. NULL means not
+    # recorded; an empty list means it needs none.
+    required_facilities = db.Column(JSONB(none_as_null=True))
+    required_accessibility_features = db.Column(JSONB(none_as_null=True))
+    required_layouts = db.Column(JSONB(none_as_null=True))
+
 
 class VenueBooking(db.Model):
     """A request to use a venue for a period. Only confirmed bookings block time."""
