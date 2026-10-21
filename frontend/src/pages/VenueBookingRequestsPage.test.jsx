@@ -329,3 +329,122 @@ describe("SCRUM-87 place a tentative hold", () => {
     expect(screen.queryByRole("status")).toBeNull();
   });
 });
+
+// SCRUM-69 RED: TC-69-24/25 (AC2/AC3/AC4/AC6). Contract and assumptions:
+// docs/test-cases/SCRUM-69-reject-venue-booking.md; backend counterpart:
+// backend/tests/test_venue_booking_rejection.py. AC1 reuses SCRUM-39 above.
+describe("SCRUM-69 reject a pending venue booking request", () => {
+  const REASON = "The required stage power cannot be provided for this arrangement.";
+  const OTHER = {
+    ...BOOKING, id: 12,
+    event: { id: 8, title: "Winter Networking Night", expected_attendance: 80 },
+  };
+  // Must match SCRUM-69 AC3 and backend test MAX_REASON_LENGTH (500 characters).
+  const MAX_REASON_LENGTH = 500;
+  const reasonField = (title = BOOKING.event.title) =>
+    screen.getByRole("textbox", { name: `Rejection reason for ${title}` });
+  const rejectButton = () =>
+    screen.getByRole("button", { name: `Reject booking for ${BOOKING.event.title}` });
+
+  function rejected(reason = REASON, emailQueued = true) {
+    return {
+      data: {
+        message: "The venue request for Harbour Lights Festival at Aurora Ballroom was rejected.",
+        booking: { ...BOOKING, status: "rejected", rejection_reason: reason,
+          decided_at: "2026-10-21T03:00:00", decided_by: { id: 9, email: "gus.venue@connectsphere.test" } },
+        notification: { in_app: true, email_queued: emailQueued },
+      },
+    };
+  }
+
+  function httpFailure(status, data) {
+    return Object.assign(new Error(`Request failed with status ${status}`), {
+      isAxiosError: true, response: { status, data },
+    });
+  }
+
+  async function renderList() {
+    apiClient.get.mockResolvedValue({ data: { bookings: [BOOKING, OTHER], message: null } });
+    const user = renderPage();
+    await screen.findByRole("listitem", { name: BOOKING.event.title });
+    return user;
+  }
+
+  it.each([true, false])("rejects the selected request with its reason (email queued: %s)", async (emailQueued) => {
+    const user = await renderList();
+    await user.type(reasonField(), REASON);
+    apiClient.post.mockResolvedValue(rejected(REASON, emailQueued));
+    apiClient.get.mockResolvedValue({ data: { bookings: [OTHER], message: null } });
+
+    await user.click(rejectButton());
+
+    expect(apiClient.post).toHaveBeenCalledTimes(1);
+    expect(apiClient.post).toHaveBeenCalledWith("/venues/bookings/11/reject", { reason: REASON });
+    expect((await screen.findByRole("status")).textContent).toContain("was rejected");
+    expect(screen.queryByRole("listitem", { name: BOOKING.event.title })).toBeNull();
+    expect(screen.getByRole("listitem", { name: OTHER.event.title })).toBeTruthy();
+    expect(apiClient.get).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(["", "   ", "\n\t"])("requires a nonblank rejection reason (%j)", async (reason) => {
+    const user = await renderList();
+    if (reason) await user.type(reasonField(), reason);
+
+    await user.click(rejectButton());
+
+    expect(apiClient.post).not.toHaveBeenCalled();
+    expect((await screen.findByRole("alert")).textContent).toMatch(/reason.*required|enter.*reason/i);
+    expect(screen.getByRole("listitem", { name: BOOKING.event.title })).toBeTruthy();
+  });
+
+  it("accepts exactly 500 characters without truncating the reason", async () => {
+    const user = await renderList();
+    const reason = "x".repeat(MAX_REASON_LENGTH);
+    await user.click(reasonField());
+    await user.paste(reason);
+    apiClient.post.mockResolvedValue(rejected(reason));
+    apiClient.get.mockResolvedValue({ data: { bookings: [OTHER], message: null } });
+
+    await user.click(rejectButton());
+
+    expect(apiClient.post).toHaveBeenCalledWith("/venues/bookings/11/reject", { reason });
+    expect(await screen.findByRole("status")).toBeTruthy();
+  });
+
+  it("refuses a 501-character reason before sending a rejection", async () => {
+    const user = await renderList();
+    await user.click(reasonField());
+    await user.paste("x".repeat(MAX_REASON_LENGTH + 1));
+
+    await user.click(rejectButton());
+
+    expect(apiClient.post).not.toHaveBeenCalled();
+    expect((await screen.findByRole("alert")).textContent).toContain("500");
+    expect(reasonField().value).toHaveLength(MAX_REASON_LENGTH + 1);
+  });
+
+  it.each([
+    ["validation", httpFailure(400, { error: "Enter a rejection reason.", field: "reason" }), "Enter a rejection reason."],
+    ["stale request", httpFailure(409, { error: "This request is confirmed, so it can no longer be rejected.", reason: "not_pending" }), "can no longer be rejected"],
+    ["save failure", httpFailure(503, { error: "The rejection was not saved. Please try again.", retryable: true }), "rejection was not saved"],
+    ["network", new Error("Network Error"), "try again"],
+  ])("keeps each request's reason after a rejection failure (%s)", async (_label, failure, message) => {
+    const user = await renderList();
+    await user.type(reasonField(), REASON);
+    await user.type(reasonField(OTHER.event.title), "Keep this other reason.");
+    apiClient.post.mockRejectedValueOnce(failure).mockResolvedValueOnce(rejected());
+
+    await user.click(rejectButton());
+
+    expect((await screen.findByRole("alert")).textContent.toLowerCase()).toContain(message.toLowerCase());
+    expect(reasonField().value).toBe(REASON);
+    expect(reasonField(OTHER.event.title).value).toBe("Keep this other reason.");
+    expect(screen.queryByRole("status")).toBeNull();
+    if (!failure.response || failure.response.data.retryable) {
+      apiClient.get.mockResolvedValue({ data: { bookings: [OTHER], message: null } });
+      await user.click(rejectButton());
+      expect(await screen.findByRole("status")).toBeTruthy();
+      expect(apiClient.post).toHaveBeenLastCalledWith("/venues/bookings/11/reject", { reason: REASON });
+    }
+  });
+});

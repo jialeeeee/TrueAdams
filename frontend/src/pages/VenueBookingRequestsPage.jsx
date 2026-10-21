@@ -12,6 +12,9 @@ import statusLabel from "../utils/statusLabel.js";
 const NOT_LOADED = "Venue requests could not be loaded. Check your connection and try again.";
 const NOT_APPROVED = "The approval was not saved. Check your connection and try again.";
 const NOT_HELD = "The hold was not placed. Check your connection and try again.";
+const NOT_REJECTED = "The rejection was not saved. Check your connection and try again.";
+// Must match MAX_REJECTION_REASON_LENGTH in backend/app/venues/routes.py (SCRUM-69 AC3).
+const MAX_REJECTION_REASON_LENGTH = 500;
 
 // Booking times are Singapore time without a time zone: show them as recorded.
 const asText = (value) => value.slice(0, 16).replace("T", " ");
@@ -60,6 +63,8 @@ export default function VenueBookingRequestsPage() {
   const [actionError, setActionError] = useState(null);
   // The hold expiry entered for each request, by booking ID (SCRUM-87).
   const [expiries, setExpiries] = useState({});
+  const [reasons, setReasons] = useState({});
+  const [rejecting, setRejecting] = useState(null);
 
   const load = useCallback(async () => {
     setLoadError("");
@@ -102,6 +107,25 @@ export default function VenueBookingRequestsPage() {
       () => apiClient.post(`/venues/bookings/${booking.id}/hold`, { expires_at: expiries[booking.id] }),
       NOT_HELD,
     );
+
+  const reject = async (booking) => {
+    const reason = (reasons[booking.id] ?? "").trim();
+    const problem = !reason ? "A rejection reason is required."
+      : [...reason].length > MAX_REJECTION_REASON_LENGTH
+        ? `The rejection reason must be ${MAX_REJECTION_REASON_LENGTH} characters or fewer.` : "";
+    if (problem) {
+      setConfirmation("");
+      setActionError({ message: problem, conflicts: [] });
+      return;
+    }
+    setRejecting(booking.id);
+    try {
+      await decide(booking, () => apiClient.post(`/venues/bookings/${booking.id}/reject`, { reason }),
+        NOT_REJECTED);
+    } finally {
+      setRejecting(null);
+    }
+  };
 
   useEffect(() => {
     load();
@@ -177,6 +201,22 @@ export default function VenueBookingRequestsPage() {
                 onClick={() => placeHold(booking)}
               >
                 Place tentative hold
+              </button>
+              <label htmlFor={`rejection-reason-${booking.id}`}>Rejection reason</label>
+              <textarea
+                id={`rejection-reason-${booking.id}`}
+                aria-label={`Rejection reason for ${booking.event.title}`}
+                value={reasons[booking.id] ?? ""}
+                onChange={(e) => setReasons((current) => ({ ...current, [booking.id]: e.target.value }))}
+                rows={3}
+              />
+              <button
+                type="button"
+                aria-label={`Reject booking for ${booking.event.title}`}
+                disabled={rejecting !== null}
+                onClick={() => reject(booking)}
+              >
+                Reject
               </button>
             </li>
           ))}
