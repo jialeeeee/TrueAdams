@@ -11,6 +11,8 @@
 | 3 | Test cases are correct and the code does what it says | ✅ Written test-first (red, then green); 29/29 deliberate breakages caught; behaviour confirmed in a real browser ([§3](#3-test-cases-are-correct-and-the-code-does-what-it-says)) |
 | 4 | Evidence of checks documented | ✅ This document, 8 screenshots, the scripts that produced them and the raw mutation results ([§4](#4-evidence-documented)) |
 
+**Updated 21 Oct 2026 after the review of PR #47:** three issues the reviewer found are fixed, with regression tests and a mutation re-check. See [§5](#5-changes-after-the-review-of-pr-47). Sections 1–4 record the checks as first made.
+
 ## What this story changed
 
 - **Database:** a new `equipment_requirements` table (`backend/db/equipment_requirements.sql`, run on Supabase on 21 Oct 2026 together with the updated `test_role.sql`). One row per item: type, quantity, technical requirements, arrangement status and note, and who recorded or updated it and when. The organiser's free-text `events.equipment_requirements` (SCRUM-29) is unchanged.
@@ -146,3 +148,46 @@ Run against the real app: the Vite dev server, the Flask API and the team's Supa
   - `e2e_check.mjs`: the end-to-end check.
 - **Raw mutation results:** `mutation-results-backend.txt`, `mutation-results-frontend.txt`.
 - **Test cases and traceability:** [docs/test-cases/SCRUM-42-equipment-requirements.md](../test-cases/SCRUM-42-equipment-requirements.md).
+
+## 5. Changes after the review of PR #47
+
+The reviewer found three issues. All three were confirmed against the code and fixed.
+
+| # | Review finding | What was wrong | Fix | Regression tests |
+|---|----------------|----------------|-----|------------------|
+| 1 | Post-commit failure handling (AC7) | Each write committed, then read the page back inside the same `try`. If that read failed, the reply was 503 "…was not saved, and the recorded requirements are unchanged", although the change *was* saved, so a retry could record it twice. | Everything a reply needs is worked out before the commit. After it, `_saved_reply` reads the page back; if that fails, the reply is still the usual success (`saved: true`, the confirmation, and `refresh_error` instead of the list). The page then loads the list again; if that also fails it shows the error with Retry and still says the change was saved. | TC-42-40 (backend: a real commit, then the read-back fails, for record, edit, arrange and remove); TC-42-42 (frontend) |
+| 2 | Stale frontend responses (AC3) | Moving from one event's page to another's kept the same page mounted with the old event's list, form and messages, and a late reply for the old event could replace the new one. | The page is rendered fresh for each event (keyed by event, as SCRUM-55's review page), so replies for a page you have left are ignored. Within one event, only the newest load or save may update the list. | TC-42-41 (frontend: the previous event's reply arriving last, a half-finished edit, a save finishing after moving on, an older load arriving after a newer save) |
+| 3 | Arrangement reset | Changing a requirement sent it back to Requested but kept Technical Support's old note and who updated it, so the old arrangement looked as if it applied to the new details. | The note and who updated it and when are cleared with the status, and the confirmation says so. Saving with nothing changed keeps everything. Working assumption A8 and TC-42-06 were updated; whether to keep history instead is open question Q7. | TC-42-06 (updated) |
+
+**The new tests fail on the code before the fix.**
+
+| Run against the code before the fix | Result |
+|---|---|
+| Backend: TC-42-06 and TC-42-40 | Both fail. All four actions answered 503 "not saved", and the old note was still there after the edit. |
+| Frontend: the 6 new page tests | All 6 fail. |
+
+**Tests after the fix:**
+
+| Suite | Result |
+|---|---|
+| Backend: `tests.test_equipment_requirements` and `tests.test_authorization_http_unit` | 45/45 pass, against Supabase |
+| Frontend: `EquipmentRequirementsPage.test.jsx` | 20/20 pass |
+| Frontend: whole suite | 32 files, 382/382 pass |
+
+**Mutation re-check.** [scripts/mutations_review.py](SCRUM-42/scripts/mutations_review.py) re-runs nine mutations: the five new ones, plus the four whose code the fixes changed, with their patterns updated in `mutations.py`. Raw output: [backend](SCRUM-42/mutation-results-review-backend.txt), [frontend](SCRUM-42/mutation-results-review-frontend.txt). **9/9 caught.**
+
+| ID | Deliberate bug | Should break | Caught? | Failing tests |
+|----|----------------|--------------|---------|---------------|
+| B12 | Editing the details keeps the old arrangement status | AC4 (A8) | ✅ | `test_tc_42_06_editing_the_details_sends_it_back_to_requested` |
+| B14 | Recording reduces the equipment's available quantity | AC5 | ✅ | `test_tc_42_24_recording_does_not_reserve_or_reduce_availability` |
+| B16 | Marking a requirement unavailable removes it | AC6 | ✅ | `test_tc_42_26_unavailable_stays_recorded_and_is_not_fulfilled` |
+| B17 | A failed save is not rolled back | AC7 | ✅ | `test_tc_42_27_a_failed_save_keeps_existing_requirements` |
+| B19 | A failure after saving is reported as a failed save | AC7 | ✅ | `test_tc_42_40_a_failure_after_saving_is_not_reported_as_a_failed_save` |
+| B20 | Editing keeps Technical Support's old note and who updated it | AC4 (A8) | ✅ | `test_tc_42_06_editing_the_details_sends_it_back_to_requested` |
+| F12 | Pages for different events share their state | AC3 | ✅ | starts the next event with an empty form, not the previous event's edit; ignores a save for the previous event that finishes after moving on |
+| F13 | An older load can replace a newer list | AC3 | ✅ | keeps the newest list when an older load arrives after a save |
+| F14 | A change saved without its list coming back is not reloaded | AC7 | ✅ | loads the list again when the change was saved but the list could not be sent back (+1) |
+
+Removing the per-event key (F12) is caught by two tests, but not by the one where the previous event's reply arrives last: the load counter also guards that case, so the two protections back each other up.
+
+**Not repeated:** the end-to-end check in §3c. The fixes only change what happens when a read fails after a save, or when the page moves between events; neither happens in the demo run. The review also applies to SCRUM-53's planning edit, which has the same read-after-commit pattern. That code was not changed here.

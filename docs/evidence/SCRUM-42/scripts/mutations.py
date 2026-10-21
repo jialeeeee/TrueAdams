@@ -69,41 +69,52 @@ MUTATIONS = [
     ("B12", "backend", "Editing the details keeps the old arrangement status", "AC4 (A8)",
      ROUTES,
      "            requirement.status = equipment.REQUESTED\n"
-     "            requirement.last_saved_at = datetime.utcnow()",
-     "            requirement.last_saved_at = datetime.utcnow()"),
+     "            requirement.arrangement_note = None",
+     "            requirement.arrangement_note = None"),
     ("B13", "backend", "Technical Support can mark a requirement reserved", "AC4, AC6",
      RULES, '    "unavailable": "Suitable equipment unavailable",\n}',
      '    "unavailable": "Suitable equipment unavailable",\n    "reserved": "Reserved",\n}'),
     ("B14", "backend", "Recording reduces the equipment's available quantity", "AC5",
-     ROUTES, "        db.session.add(requirement)\n        db.session.commit()",
+     ROUTES, "        db.session.add(requirement)\n        db.session.flush()",
      "        from ..models import Resource\n"
      "        Resource.query.filter(func.lower(Resource.category) == values['equipment_type'].lower())"
      ".update({Resource.quantity_available: Resource.quantity_available - values['quantity']},"
      " synchronize_session=False)\n"
-     "        db.session.add(requirement)\n        db.session.commit()"),
+     "        db.session.add(requirement)\n        db.session.flush()"),
     ("B15", "backend", "A recorded requirement is shown as reserved", "AC5, AC6",
      ROUTES, "status=equipment.REQUESTED, **values)", 'status="reserved", **values)'),
     ("B16", "backend", "Marking a requirement unavailable removes it", "AC6",
      ROUTES,
-     "        requirement.arrangement_updated_at = datetime.utcnow()\n        db.session.commit()",
+     "        requirement.arrangement_updated_at = datetime.utcnow()\n"
+     "        requirement_id = requirement.id",
      "        requirement.arrangement_updated_at = datetime.utcnow()\n"
      "        if requirement.status == 'unavailable':\n"
      "            db.session.delete(requirement)\n"
-     "        db.session.commit()"),
+     "        requirement_id = requirement.id"),
     ("B17", "backend", "A failed save is not rolled back", "AC7",
      ROUTES,
      "        db.session.rollback()\n"
      "        return _error(EQUIPMENT_NOT_SAVED, 503, retryable=True)\n\n"
-     '    name = equipment.describe(values["quantity"], values["equipment_type"])\n'
-     '    message = (f"Recorded',
+     "    return _saved_reply(user, event, message, requirement_id, 201)",
      "        return _error(EQUIPMENT_NOT_SAVED, 503, retryable=True)\n\n"
-     '    name = equipment.describe(values["quantity"], values["equipment_type"])\n'
-     '    message = (f"Recorded'),
+     "    return _saved_reply(user, event, message, requirement_id, 201)"),
     ("B18", "backend", "A failed load is shown as an empty list", "AC7",
      ROUTES,
      'return _error("The equipment requirements could not be loaded. Please try again.", 503,\n'
      "                      retryable=True)",
      'return jsonify({"requirements": [], "message": NO_EQUIPMENT_REQUIREMENTS})'),
+    # Added after the review of PR #47.
+    ("B19", "backend", "A failure after saving is reported as a failed save", "AC7",
+     ROUTES,
+     '        return jsonify({"confirmation": confirmation, "saved": True,\n'
+     '                        "refresh_error": EQUIPMENT_SAVED_NOT_RELOADED}), status_code',
+     "        return _error(EQUIPMENT_NOT_SAVED, 503, retryable=True)"),
+    ("B20", "backend", "Editing keeps Technical Support's old note and who updated it", "AC4 (A8)",
+     ROUTES,
+     "            requirement.arrangement_note = None\n"
+     "            requirement.arrangement_updated_by_id = None\n"
+     "            requirement.arrangement_updated_at = None\n",
+     ""),
 
     # ---------- Frontend ----------
     ("F1", "frontend", "The planning page has no Equipment requirements link", "AC1",
@@ -135,4 +146,12 @@ MUTATIONS = [
     ("F11", "frontend", "A failed load offers no Retry", "AC7",
      PAGE, "setLoadError({ message: explain(error, NOT_LOADED), retryable: canRetry(error) });",
      "setLoadError({ message: explain(error, NOT_LOADED), retryable: false });"),
+    # Added after the review of PR #47.
+    ("F12", "frontend", "Pages for different events share their state", "AC3",
+     PAGE, "return <EventEquipment key={eventId} eventId={eventId} />;",
+     "return <EventEquipment eventId={eventId} />;"),
+    ("F13", "frontend", "An older load can replace a newer list", "AC3",
+     PAGE, "if (attempt === latest.current) setPage(response.data);", "setPage(response.data);"),
+    ("F14", "frontend", "A change saved without its list coming back is not reloaded", "AC7",
+     PAGE, "      load();\n      return;", "      return;"),
 ]

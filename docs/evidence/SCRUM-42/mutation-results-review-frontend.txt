@@ -1,0 +1,5 @@
+baseline: all frontend tests pass
+F12 | Pages for different events share their state | AC3 | CAUGHT | ignores a save for the previous event that finishes after moving on, starts the next event with an empty form, not the previous event's edit
+F13 | An older load can replace a newer list | AC3 | CAUGHT | keeps the newest list when an older load arrives after a save
+F14 | A change saved without its list coming back is not reloaded | AC7 | CAUGHT | loads the list again when the change was saved but the list could not be sent back, says the change was saved when the list can't be loaded afterwards either
+after restore: all pass
