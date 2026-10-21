@@ -190,22 +190,27 @@ class QuantityTests(AvailabilityTestCase):
         self.assertEqual(
             {t: (l["requested_quantity"], l["available_quantity"], l["result"])
              for t, l in self.lines(result).items()},
-            {"Wireless microphone": (3, 4, "enough"), "Projector": (1, 2, "enough"),
+            # The microphones have technical requirements ("Lapel"), so having enough by
+            # category is not the same as enough (review of PR #48, A3).
+            {"Wireless microphone": (3, 4, "enough_by_category"), "Projector": (1, 2, "enough"),
              "Hologram projector": (1, 0, "none_suitable"), "Speaker": (2, 1, "not_enough")})
         self.assertEqual(result["summary"],
-                         "2 of 4 equipment requirements can be met from available equipment.")
+                         "1 of 4 equipment requirements can be met from available equipment. "
+                         "1 more has enough by category, but its technical requirements are "
+                         "still to be checked.")
         self.assertIs(result["can_all_be_met"], False)
         self.assertIsNone(result["message"])
 
     # TC-43-06 · AC2
     def test_tc_43_06_exactly_enough_is_enough(self):
-        self.requirements["Wireless microphone"].quantity = 4
+        # The projector has no technical requirements, so enough is simply enough.
+        self.requirements["Projector"].quantity = 2
         self.db.session.commit()
 
-        line = self.lines(self.result())["Wireless microphone"]
+        line = self.lines(self.result())["Projector"]
 
         self.assertEqual((line["requested_quantity"], line["available_quantity"], line["result"]),
-                         (4, 4, "enough"))
+                         (2, 2, "enough"))
         self.assertEqual(line["result_label"], "Enough available")
 
     # TC-43-07 · AC2
@@ -288,6 +293,49 @@ class NoReservationTests(AvailabilityTestCase):
 
 
 # ---------- AC5: missing times and failed checks give an error with details ----------
+
+
+# ---------- Review of PR #48: shared stock and technical suitability ----------
+
+
+class ReviewTests(AvailabilityTestCase):
+    # TC-43-23 · AC1, AC2 (A11)
+    def test_tc_43_23_requirements_for_the_same_equipment_share_its_stock(self):
+        handheld = EquipmentRequirement(event_id=self.events["G1"].id,
+                                        equipment_type="Wireless microphone" + SUFFIX, quantity=3,
+                                        technical_requirements="Handheld",
+                                        recorded_by_id=self.users["alice"].id)
+        self.db.session.add(handheld)
+        self.db.session.commit()
+        lapel = self.requirements["Wireless microphone"]
+
+        result = self.result()
+
+        mics = [l for l in result["checks"] if base(l["equipment_type"]) == "Wireless microphone"]
+        self.assertEqual([l["requirement_id"] for l in mics], [lapel.id, handheld.id])
+        for line, other in zip(mics, (handheld.id, lapel.id)):
+            # 3 + 3 requested, 4 microphones in all: neither can be counted as enough.
+            self.assertEqual((line["requested_quantity"], line["available_quantity"],
+                              line["shared_requested_quantity"], line["result"]),
+                             (3, 4, 6, "not_enough"))
+            self.assertEqual(line["shared_with"], [other])
+            self.assertIn("together 6 requested, 4 available", line["shared_note"])
+        self.assertEqual(result["summary"],
+                         "1 of 5 equipment requirements can be met from available equipment.")
+        self.assertIsNone(self.lines(result)["Projector"]["shared_note"])
+
+    # TC-43-24 · AC1, AC2 (A3)
+    def test_tc_43_24_enough_by_category_is_not_confirmed_technical_suitability(self):
+        lines = self.lines(self.result())
+
+        self.assertEqual(lines["Wireless microphone"]["result"], "enough_by_category")
+        self.assertEqual(lines["Wireless microphone"]["result_label"],
+                         "Enough by category; technical requirements still to be checked")
+        self.assertEqual(lines["Projector"]["result"], "enough")
+
+        self.requirements["Wireless microphone"].technical_requirements = None
+        self.db.session.commit()
+        self.assertEqual(self.lines(self.result())["Wireless microphone"]["result"], "enough")
 
 
 class ErrorTests(AvailabilityTestCase):

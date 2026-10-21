@@ -2600,7 +2600,8 @@ def check_equipment_availability(event_id: int):
                 EquipmentUnavailability, event.start_time, event.end_time).all()
             for period in periods:
                 unavailable.setdefault(period.resource_id, []).append(period)
-        checks = [availability.check(q, resources, unavailable) for q in requirements]
+        # Requirements for the same equipment share its stock (review of PR #48).
+        checks = availability.check_all(requirements, resources, unavailable)
     except _Rejected as rejected:
         return _error(rejected.message, rejected.status_code, **rejected.extra)
     except SQLAlchemyError:

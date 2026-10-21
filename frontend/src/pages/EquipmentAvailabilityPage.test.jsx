@@ -23,7 +23,10 @@ const MICS = {
   requirement_id: 11, equipment_type: "Wireless microphone", requested_quantity: 3,
   technical_requirements: "Lapel",
   technical_note: "Technical Support must confirm the technical requirements: Lapel",
-  available_quantity: 4, result: "enough", result_label: "Enough available",
+  // "Lapel" can't be checked automatically (review of PR #48).
+  available_quantity: 4, result: "enough_by_category",
+  result_label: "Enough by category; technical requirements still to be checked",
+  shared_with: [], shared_requested_quantity: 3, shared_note: null,
   suitable: [
     { id: 1, name: "Shure SLX-D", category: "Wireless microphone", quantity_available: 2 },
     { id: 2, name: "Sennheiser EW-D", category: "wireless  MICROPHONE", quantity_available: 2 },
@@ -87,7 +90,7 @@ describe("SCRUM-43 Technical Support check equipment availability", () => {
     const [mics, , hologram] = lines();
     expect(mics.textContent).toContain("3 × Wireless microphone");
     expect(mics.textContent).toContain("Requested: 3 · Available: 4");
-    expect(mics.textContent).toContain("Enough available");
+    expect(mics.textContent).toContain("Enough by category; technical requirements still to be checked");
     expect(mics.textContent).toContain("Counted: Shure SLX-D (2), Sennheiser EW-D (2)");
     expect(mics.textContent).toContain("Technical Support must confirm the technical requirements: Lapel");
     expect(hologram.textContent).toContain("Requested: 1 · Available: 0");
@@ -184,6 +187,27 @@ function later() {
   const promise = new Promise((done) => { resolve = done; });
   return { promise, resolve };
 }
+
+// Review of PR #48: requirements for the same equipment share its stock.
+describe("SCRUM-43 shared stock", () => {
+  // TC-43-25
+  it("says when requirements share the same equipment, and that together they need more", async () => {
+    const note = "Shared with 3 × Wireless microphone (Handheld): together 6 requested, 4 available.";
+    const shared = {
+      ...MICS, result: "not_enough", result_label: "Not enough available",
+      shared_with: [14], shared_requested_quantity: 6, shared_note: note,
+    };
+    apiClient.get.mockResolvedValue({ data: { ...RESULT, checks: [shared, PROJECTOR] } });
+    renderPage();
+
+    await screen.findByRole("heading", { name: "Equipment availability" });
+    const mics = lines()[0];
+    expect(mics.textContent).toContain("Requested: 3 · Available: 4");
+    expect(mics.textContent).toContain(note);
+    expect(mics.textContent).toContain("Not enough available");
+    expect(lines()[1].textContent).not.toContain("Shared with");
+  });
+});
 
 describe("SCRUM-43 results for another event or out of order", () => {
   // TC-43-22

@@ -101,8 +101,62 @@ class EquipmentAvailabilityRuleTests(unittest.TestCase):
                          "Every equipment requirement can be met from available equipment.")
         self.assertIsNone(rules.summary([]))
 
+    # ---------- Review of PR #48 ----------
+
+    def check_all(self, *requirements, resources=MICS, unavailable=None):
+        return _rules().check_all(list(requirements), resources, unavailable or {})
+
+    def test_requirements_for_the_same_equipment_share_its_stock(self):  # A11
+        lapel, handheld = self.check_all(need("Wireless microphone", 3, id=1),
+                                         need("wireless  MICROPHONE", 3, id=2))
+        for line, other in ((lapel, 2), (handheld, 1)):
+            self.assertEqual(line["available_quantity"], 4)
+            self.assertEqual(line["shared_requested_quantity"], 6)
+            self.assertEqual(line["shared_with"], [other])
+            self.assertEqual(line["result"], "not_enough")
+            self.assertIn("together 6 requested, 4 available", line["shared_note"])
+
+    def test_shared_stock_that_covers_every_requirement_is_enough(self):  # A11
+        lines = self.check_all(need("Wireless microphone", 2, id=1),
+                               need("Wireless microphone", 2, id=2))
+        self.assertEqual([line["result"] for line in lines], ["enough", "enough"])
+        self.assertIn("together 4 requested, 4 available", lines[0]["shared_note"])
+
+    def test_different_equipment_does_not_share_stock(self):  # A11
+        mics, projector = self.check_all(need("Wireless microphone", 4, id=1),
+                                         need("Projector", 1, id=2))
+        self.assertEqual((mics["shared_with"], mics["shared_note"], mics["result"]),
+                         ([], None, "enough"))
+        self.assertEqual(projector["shared_with"], [])
+
+    def test_enough_by_category_is_not_confirmed_technical_suitability(self):  # A3
+        line = self.check(need("Wireless microphone", 1, technical="Lapel"))
+        self.assertEqual(line["result"], "enough_by_category")
+        self.assertEqual(line["result_label"],
+                         "Enough by category; technical requirements still to be checked")
+        self.assertEqual(self.check(need("Wireless microphone", 1))["result"], "enough")
+
+    def test_too_few_stays_not_enough_whatever_the_technical_requirements(self):  # A3
+        line = self.check(need("Wireless microphone", 9, technical="Lapel"))
+        self.assertEqual(line["result"], "not_enough")
+
+    def test_the_summary_counts_unconfirmed_requirements_separately(self):  # A3
+        rules = _rules()
+        lines = [self.check(need("Wireless microphone", 1)),
+                 self.check(need("Wireless microphone", 1, technical="Lapel")),
+                 self.check(need("Hologram projector", 1))]
+        self.assertEqual(rules.summary(lines),
+                         "1 of 3 equipment requirements can be met from available equipment. "
+                         "1 more has enough by category, but its technical requirements are "
+                         "still to be checked.")
+        self.assertEqual(rules.summary(lines[1:2]),
+                         "0 of 1 equipment requirements can be met from available equipment. "
+                         "1 more has enough by category, but its technical requirements are "
+                         "still to be checked.")
+
     def test_nothing_says_reserved_booked_or_confirmed(self):  # AC4
-        for requirement in (need("Wireless microphone", 3), need("Hologram projector", 1)):
+        for requirement in (need("Wireless microphone", 3), need("Hologram projector", 1),
+                            need("Wireless microphone", 1, technical="Lapel")):
             text = str(self.check(requirement)).lower()
             for word in ("reserved", "booked", "confirmed"):
                 self.assertNotIn(word, text)

@@ -19,6 +19,8 @@ function Line({ line }) {
       <strong>{`${line.requested_quantity} × ${line.equipment_type}`}</strong>
       <p>{`Requested: ${line.requested_quantity} · Available: ${line.available_quantity}`}</p>
       <p>{line.result_label}</p>
+      {/* Review of PR #48: requirements for the same equipment share its stock. */}
+      {line.shared_note && <p>{line.shared_note}</p>}
       {line.technical_note && <p>{line.technical_note}</p>}
       {line.suitable.length > 0 && <p>{`Counted: ${counted(line)}`}</p>}
       {line.excluded.map((item) => (

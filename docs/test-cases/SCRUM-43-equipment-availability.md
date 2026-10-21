@@ -18,7 +18,7 @@
 
 - **A1 — What is checked:** every equipment requirement recorded for the event (SCRUM-42), over the event's start and end time (Singapore time, half-open `[start, end)`). The check is read-only and runs each time it is asked for, from the saved data.
 - **A2 — Suitable equipment:** an item in the equipment catalogue (`resources`) whose **category** matches the requirement's equipment type, ignoring case and spacing (as SCRUM-42 A6). Its name is not matched. *(Q1)*
-- **A3 — Technical requirements:** they are free text on both sides, so they are **shown** on each line for Technical Support to judge, but not matched automatically. The line says so. *(Q2)*
+- **A3 — Technical requirements:** they are free text on both sides, so they are **shown** on each line for Technical Support to judge, but not matched automatically. The line says so. Because of that, a requirement with technical requirements is never reported as plain *enough*: if there is enough by category, its result is `enough_by_category`, "Enough by category; technical requirements still to be checked", and the summary counts it separately from the requirements that can be met (added after the review of PR #48). *(Q2)*
 - **A4 — Available suitable quantity:** the sum of `quantity_available` of the suitable items that are not excluded. An item with no quantity recorded (NULL) is excluded and listed as "quantity not recorded", never counted as available. *(Q3)*
 - **A5 — Recorded unavailability:** a new `equipment_unavailability` table (`db/equipment_unavailability.sql`) records periods when an item cannot be used (e.g. repair), with a reason. An item with a period that overlaps the event's `[start, end)` is excluded **as a whole** and listed with the reason and period. Touching periods do not overlap. Recording these periods is not part of this story: there is no screen or endpoint for it yet. *(Q4, Q5)*
 - **A6 — No setup time:** equipment is needed only for the event's own start and end time; SCRUM-84's setup and turnaround times apply to venues. *(Q6)*
@@ -26,6 +26,7 @@
 - **A8 — Reservations:** none exist until SCRUM-44, which will deduct reserved quantities from the same calculation. This story only reads.
 - **A9 — Who can check:** Technical Support Staff (`tech_staff`) only, as the story says. Everyone else gets HTTP 403 without the event's details. *(Q7)*
 - **A10 — Errors, first failure wins:** 401 (no valid user) → 404 (no such event) → 403 (not Technical Support) → 409 (cancelled or rejected event: there is nothing to arrange) → 422 (start or end time not recorded: `missing` names them) → 503 (the check could not be completed: `retryable: true`, nothing else returned). An event with no requirements is not an error: it returns no lines and says so.
+- **A11 — Shared stock:** requirements of the same event whose types match the same equipment (the same type, ignoring case and spacing) draw on one stock: together they can't count the same items twice. If together they ask for more than is available, none of them is *enough*; each line says which requirements it shares with and how many they need together. No requirement is given priority over another (added after the review of PR #48). *(Q8)*
 
 ## Seed data (AV-SEED)
 
@@ -54,7 +55,7 @@ Equipment (category · quantity available · recorded unavailability):
 
 The equipment catalogue is shared with real data (it already holds a demo "Wireless microphone"), so the automated tests add a per-run suffix to every category and equipment type.
 
-Expected for G1: microphones 3 requested, **4** available (enough); projector 1 requested, **2** available (enough; Epson excluded); hologram projector 1 requested, **0** (no suitable equipment); speakers 2 requested, **1** available (not enough; JBL excluded, quantity not recorded). Overall: 2 of 4 requirements can be met.
+Expected for G1: microphones 3 requested, **4** available (enough by category; "Lapel" still to be checked); projector 1 requested, **2** available (enough; Epson excluded); hologram projector 1 requested, **0** (no suitable equipment); speakers 2 requested, **1** available (not enough; JBL excluded, quantity not recorded). Overall: 1 of 4 requirements can be met, and 1 more has enough by category but its technical requirements are still to be checked.
 
 ---
 
@@ -89,13 +90,13 @@ Expected for G1: microphones 3 requested, **4** available (enough); projector 1 
 **TC-43-05 · Requested and available quantities, and whether there are enough**
 - **Traces to:** AC2 · **Type:** Positive · **Depends on:** A4, A7
 - **Steps:** Check G1.
-- **Expected result:** Microphones 3 / 4 *enough*; projector 1 / 2 *enough*; hologram projector 1 / 0 *none suitable*; speakers 2 / 1 *not enough*. The summary says 2 of 4 requirements can be met.
+- **Expected result:** Microphones 3 / 4 *enough by category* (they have technical requirements); projector 1 / 2 *enough*; hologram projector 1 / 0 *none suitable*; speakers 2 / 1 *not enough*. The summary says 1 of 4 requirements can be met and 1 more has enough by category, with its technical requirements still to be checked.
 - **Automated:** `test_tc_43_05_requested_and_available_quantity_for_each_requirement`
 
 **TC-43-06 · Exactly enough is enough**
 - **Traces to:** AC2 · **Type:** Boundary
-- **Steps:** Change the microphones to 4 and check G1.
-- **Expected result:** 4 requested, 4 available, *enough*.
+- **Steps:** Change the projector to 2 and check G1. (The projector has no technical requirements, so enough is simply enough.)
+- **Expected result:** 2 requested, 2 available, *enough*, "Enough available".
 - **Automated:** `test_tc_43_06_exactly_enough_is_enough`
 
 **TC-43-07 · Equipment with no quantity recorded is not counted**
@@ -109,6 +110,18 @@ Expected for G1: microphones 3 requested, **4** available (enough); projector 1 
 - **Steps:** As hana, check an approved, timed event with no requirements.
 - **Expected result:** HTTP 200, no lines, and "No equipment requirements have been recorded for this event."
 - **Automated:** `test_tc_43_08_an_event_with_no_requirements_says_so`
+
+**TC-43-23 · Requirements for the same equipment share its stock** *(added after the review of PR #48)*
+- **Traces to:** AC1, AC2 · **Type:** Business rule · **Depends on:** A11
+- **Steps:** Add 3 × Wireless microphone ("Handheld") to G1 (it already needs 3 × Wireless microphone, "Lapel"; there are 4 microphones), and check G1.
+- **Expected result:** Both microphone lines show 3 requested, 4 available, together 6 requested, and *not enough*, each naming the other requirement it shares with. The projector line shares with nothing. The summary says 1 of 5 requirements can be met.
+- **Automated:** `test_tc_43_23_requirements_for_the_same_equipment_share_its_stock`
+
+**TC-43-24 · Enough by category is not the same as technically suitable** *(added after the review of PR #48)*
+- **Traces to:** AC1, AC2 · **Type:** Business rule · **Depends on:** A3
+- **Steps:** Check G1. Remove the microphones' technical requirements and check again.
+- **Expected result:** The microphones ("Lapel") are *enough by category*, "Enough by category; technical requirements still to be checked"; the projector (no technical requirements) is *enough*. Without technical requirements the microphones are *enough*.
+- **Automated:** `test_tc_43_24_enough_by_category_is_not_confirmed_technical_suitability`
 
 ## AC3 — Equipment unavailable for the period is excluded
 
@@ -180,6 +193,8 @@ The same rules, run on plain objects: matching ignores case and spacing (A2); a 
 
 **TC-43-22 · Moving to another event shows only that event's result** *(added with the stale-result fix from the review of SCRUM-42's PR #47)* — AC1, AC2 · `shows only the event in the address, even when the previous event's result arrives last`, and `hides Check again while a check is running` (why two checks for one event can't overlap)
 
+**TC-43-25 · Shared stock is explained on the page** *(added after the review of PR #48)* — AC2 · `says when requirements share the same equipment, and that together they need more`
+
 Also: `explains a failed check without a server message`, `says when the event has no requirements to check`.
 
 ---
@@ -188,8 +203,8 @@ Also: `explains a failed check without a server message`, `says when the event h
 
 | AC | Test cases |
 |----|------------|
-| AC1 | 01, 02, 03, 04, 16, 21, 22 |
-| AC2 | 01, 03, 05, 06, 07, 08, 16, 22 |
+| AC1 | 01, 02, 03, 04, 16, 21, 22, 23, 24 |
+| AC2 | 01, 03, 05, 06, 07, 08, 16, 22, 23, 24, 25 |
 | AC3 | 09, 10, 11, 17 |
 | AC4 | 12, 18 |
 | AC5 | 13, 14, 15, 19, 20 |
@@ -205,3 +220,4 @@ Also: `explains a failed check without a server message`, `says when the event h
 | Q5 | Who records equipment unavailability, and where? (No story covers it yet.) | A5 |
 | Q6 | Does equipment need setup or return time around the event, like venues (SCRUM-84)? | A6, TC-43-10 |
 | Q7 | Should the event's coordinator also be able to run the check? | A9, TC-43-15 |
+| Q8 | When requirements for the same equipment together need more than there is, should some of them be met first (for example in the order recorded), rather than none being reported as enough (as built)? | A11, TC-43-23 |
