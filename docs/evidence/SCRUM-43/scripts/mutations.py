@@ -23,8 +23,8 @@ CHECK_LINK = "<Link to={`/events/${event.id}/equipment-availability`}>Check avai
 MUTATIONS = [
     # ---------- Backend ----------
     ("B1", "backend", "Check only the first requirement", "AC1",
-     ROUTES, "checks = [availability.check(q, resources, unavailable) for q in requirements]",
-     "checks = [availability.check(q, resources, unavailable) for q in requirements[:1]]"),
+     ROUTES, "checks = availability.check_all(requirements, resources, unavailable)",
+     "checks = availability.check_all(requirements[:1], resources, unavailable)"),
     ("B2", "backend", "Match categories exactly, so case and spacing matter", "AC1 (A2)",
      RULES, "return bool(resource.category) and _key(resource.category) == _key(equipment_type)",
      "return bool(resource.category) and resource.category == equipment_type"),
@@ -32,7 +32,7 @@ MUTATIONS = [
      RULES, 'available = sum(item["quantity_available"] for item in suitable)',
      'available = suitable[0]["quantity_available"] if suitable else 0'),
     ("B4", "backend", "Exactly the requested quantity is not enough", "AC2",
-     RULES, "elif available >= requirement.quantity:", "elif available > requirement.quantity:"),
+     RULES, "if available < requested:", "if available <= requested:"),
     ("B5", "backend", "Equipment with no quantity recorded is silently left out", "AC2 (A4)",
      RULES, '"reason": QUANTITY_NOT_RECORDED, "detail": "Quantity not recorded"})',
      '"reason": QUANTITY_NOT_RECORDED, "detail": "Quantity not recorded"}) if False else None'),
@@ -44,8 +44,8 @@ MUTATIONS = [
     ("B8", "backend", "An exclusion doesn't say why", "AC3",
      RULES, "f\"{(p.reason or '').strip() or 'no reason recorded'}\"", '"see the equipment record"'),
     ("B9", "backend", "Checking takes one of each suitable item out of stock", "AC4",
-     ROUTES, "checks = [availability.check(q, resources, unavailable) for q in requirements]",
-     "checks = [availability.check(q, resources, unavailable) for q in requirements]\n"
+     ROUTES, "checks = availability.check_all(requirements, resources, unavailable)",
+     "checks = availability.check_all(requirements, resources, unavailable)\n"
      "        Resource.query.filter(Resource.id.in_(suitable_ids or [0])).update("
      "{Resource.quantity_available: Resource.quantity_available - 1}, synchronize_session=False)\n"
      "        db.session.commit()"),
@@ -64,6 +64,16 @@ MUTATIONS = [
              '            raise _Rejected(f"This event is {event.status}, so there is no equipment',
      "if False:\n"
      '            raise _Rejected(f"This event is {event.status}, so there is no equipment'),
+    # Added after the review of PR #48.
+    ("B15", "backend", "Requirements for the same equipment each count all of it", "AC1, AC2 (A11)",
+     ROUTES, "checks = availability.check_all(requirements, resources, unavailable)",
+     "checks = [availability.check(q, resources, unavailable) for q in requirements]"),
+    ("B16", "backend", "Enough by category is reported as plain enough", "AC1, AC2 (A3)",
+     RULES, "return ENOUGH_BY_CATEGORY if technical else ENOUGH", "return ENOUGH"),
+    ("B17", "backend", "Shared stock is judged against each requirement's own quantity", "AC2 (A11)",
+     RULES, 'result = _result(line["available_quantity"], total, requirement.technical_requirements)',
+     'result = _result(line["available_quantity"], requirement.quantity,'
+     ' requirement.technical_requirements)'),
 
     # ---------- Frontend ----------
     ("F1", "frontend", "Technical Support get no link to the check", "AC1",
@@ -90,4 +100,7 @@ MUTATIONS = [
     ("F10", "frontend", "Pages for different events share their result", "AC1, AC2",
      PAGE, "return <EventAvailability key={eventId} eventId={eventId} />;",
      "return <EventAvailability eventId={eventId} />;"),
+    # Added after the review of PR #48.
+    ("F11", "frontend", "The shared-stock note is not shown", "AC2 (A11)",
+     PAGE, "{line.shared_note && <p>{line.shared_note}</p>}", ""),
 ]

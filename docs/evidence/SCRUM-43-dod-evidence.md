@@ -11,7 +11,7 @@
 | 3 | Test cases are correct and the code does what it says | ✅ Written test-first (red, then green); 23/23 deliberate breakages caught; behaviour confirmed in a real browser ([§3](#3-test-cases-are-correct-and-the-code-does-what-it-says)) |
 | 4 | Evidence of checks documented | ✅ This document, 3 screenshots, the scripts that produced them and the raw mutation results ([§4](#4-evidence-documented)) |
 
-**Updated 21 Oct 2026:** the stale-result issue the reviewer found in SCRUM-42's PR #47 also applied to this page; it is fixed here too. See [§5](#5-stale-result-fix-carried-over-from-the-review-of-pr-47). Sections 1–4 record the checks as first made.
+**Updated 21 Oct 2026:** the stale-result issue the reviewer found in SCRUM-42's PR #47 also applied to this page; it is fixed here too ([§5](#5-stale-result-fix-carried-over-from-the-review-of-pr-47)). The two issues found in the review of this PR (#48), shared stock and technical suitability, are fixed in [§6](#6-changes-after-the-review-of-pr-48). Sections 1–4 record the checks as first made.
 
 ## What this story changed
 
@@ -145,3 +145,45 @@ The reviewer of SCRUM-42 found that its equipment page kept the previous event's
 - **Mutation:** F10, "pages for different events share their result" (the key removed), is **caught** ([raw output](SCRUM-43/mutation-results-review-frontend.txt), [scripts/mutations_review.py](SCRUM-43/scripts/mutations_review.py)). All 24 SCRUM-43 mutation patterns still match the code after the merge.
 - **The branch now includes the merged SCRUM-42**, review fixes included (commit `58cceba`). Every SCRUM-42 and SCRUM-43 backend test passes on it: 78/78 with the schema check and the SCRUM-27 route walk.
 - **Not repeated:** the end-to-end check in §3c. The fix only changes what happens when the page moves between events, which the demo run does not do.
+
+## 6. Changes after the review of PR #48
+
+The reviewer found two issues. Both were confirmed against the code: `check()` worked out each requirement against the full stock on its own, and a requirement with technical requirements was reported as plain "Enough available".
+
+| # | Review finding | Fix | Regression tests |
+|---|----------------|-----|------------------|
+| 1 | **Shared equipment double-counting** (AC1/AC2). 3 lapel and 3 handheld microphones against 4 microphones were both "Enough available". | New `check_all()`. Requirements whose types match the same equipment share one stock. If together they need more than is available, none of them is *enough*, and each line says which requirements it shares with: "Shared with 3 × Wireless microphone (Handheld): together 6 requested, 4 available." No requirement is given priority over another (A11; whether to meet some first is the new open question Q8). | Rules: 3 tests (sharing, sharing that fits, different equipment not shared). API: TC-43-23. Page: TC-43-25. |
+| 2 | **Technical suitability** (AC1/AC2). Technical requirements were shown, but the result still said "Enough available". | A requirement with technical requirements is never plain *enough*. With enough stock by category it is `enough_by_category`, "Enough by category; technical requirements still to be checked", and the summary counts it separately: "1 of 4 equipment requirements can be met from available equipment. 1 more has enough by category, but its technical requirements are still to be checked." No specification system was added (A3). | Rules: 3 tests. API: TC-43-24, plus TC-43-05 and 06 updated. |
+
+**Wording.** The first attempt labelled the new result "not confirmed", and named it `enough_unconfirmed`. The AC4 tests make sure nothing in a result says reserved, booked or confirmed, and the extended AC4 test caught it, so both were renamed: `enough_by_category`, "still to be checked".
+
+**The new tests fail on the code before the fix.**
+
+| Run against the code before the fix | Result |
+|---|---|
+| Rule tests | 5 of the new tests fail. The sixth, "too few stays not enough", passes as intended: it pins down behaviour that must not change. |
+| API tests | TC-43-05, 23 and 24 fail. TC-43-06's new projector boundary passes, unchanged behaviour. |
+| Page test | TC-43-25 fails. |
+
+**Tests after the fix:**
+
+| Suite | Result |
+|---|---|
+| Backend: `tests.test_equipment_availability` and `tests.test_equipment_availability_unit` | 34/34 pass (17 API against Supabase, 17 rules) |
+| Frontend: `EquipmentAvailabilityPage.test.jsx` | 11/11 pass |
+| Frontend: whole suite | 33 files, 395/395 pass |
+
+**Mutation re-check:** 8/8 caught. [scripts/mutations_review.py](SCRUM-43/scripts/mutations_review.py) runs the four new mutations (B15–B17, F11), the three whose code the fix changed (B1, B4, B9; their patterns are updated in `mutations.py`) and F10 from §5. All 28 SCRUM-43 mutation patterns match the code. Raw output: [backend](SCRUM-43/mutation-results-review-backend.txt), [frontend](SCRUM-43/mutation-results-review-frontend.txt).
+
+| ID | Deliberate bug | Should break | Caught? | Failing tests (examples) |
+|----|----------------|--------------|---------|--------------------------|
+| B1 | Check only the first requirement | AC1 | ✅ | `test_tc_43_01_…` (+7) |
+| B4 | Exactly the requested quantity is not enough | AC2 | ✅ | `test_enough_at_exactly_the_requested_quantity`, `test_tc_43_06_exactly_enough_is_enough` (+2) |
+| B9 | Checking takes one of each suitable item out of stock | AC4 | ✅ | `test_tc_43_12_checking_changes_nothing_and_reserves_nothing` (+1) |
+| B15 | Requirements for the same equipment each count all of it | AC1, AC2 (A11) | ✅ | `test_tc_43_23_requirements_for_the_same_equipment_share_its_stock` |
+| B16 | Enough by category is reported as plain enough | AC1, AC2 (A3) | ✅ | `test_enough_by_category_is_not_confirmed_technical_suitability`, `test_tc_43_05_…` (+2) |
+| B17 | Shared stock is judged against each requirement's own quantity | AC2 (A11) | ✅ | `test_requirements_for_the_same_equipment_share_its_stock`, `test_tc_43_23_…` |
+| F10 | Pages for different events share their result | AC1, AC2 | ✅ | shows only the event in the address, even when the previous event's result arrives last |
+| F11 | The shared-stock note is not shown | AC2 (A11) | ✅ | says when requirements share the same equipment, and that together they need more |
+
+**What changes for the screenshots in §3c.** The end-to-end check was not repeated. Re-run now, the demo microphones (3, "Lapel") would read "Enough by category; technical requirements still to be checked" rather than "Enough available", and the summary would read "1 of 3 … 1 more has enough by category…". Everything else on those pages is unchanged.
