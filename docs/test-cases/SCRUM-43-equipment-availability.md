@@ -178,6 +178,8 @@ The same rules, run on plain objects: matching ignores case and spacing (A2); a 
 
 **TC-43-21 · Technical Support reach the check from the equipment requirements page; the coordinator isn't offered it** — AC1 · `EquipmentRequirementsPage` "links Technical Support Staff to the availability check" and "does not offer the check to the coordinator"
 
+**TC-43-22 · Moving to another event shows only that event's result** *(added with the stale-result fix from the review of SCRUM-42's PR #47)* — AC1, AC2 · `shows only the event in the address, even when the previous event's result arrives last`, and `hides Check again while a check is running` (why two checks for one event can't overlap)
+
 Also: `explains a failed check without a server message`, `says when the event has no requirements to check`.
 
 ---
@@ -186,8 +188,8 @@ Also: `explains a failed check without a server message`, `says when the event h
 
 | AC | Test cases |
 |----|------------|
-| AC1 | 01, 02, 03, 04, 16, 21 |
-| AC2 | 01, 03, 05, 06, 07, 08, 16 |
+| AC1 | 01, 02, 03, 04, 16, 21, 22 |
+| AC2 | 01, 03, 05, 06, 07, 08, 16, 22 |
 | AC3 | 09, 10, 11, 17 |
 | AC4 | 12, 18 |
 | AC5 | 13, 14, 15, 19, 20 |

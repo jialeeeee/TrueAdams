@@ -86,4 +86,8 @@ MUTATIONS = [
      PAGE, '<p role="alert">{failure.message}</p>', "<p>{failure.message}</p>"),
     ("F9", "frontend", "A failed check offers no Retry", "AC5",
      PAGE, '{failure.retryable && <button type="button" onClick={load}>Retry</button>}', ""),
+    # Added with the stale-result fix carried over from the review of PR #47.
+    ("F10", "frontend", "Pages for different events share their result", "AC1, AC2",
+     PAGE, "return <EventAvailability key={eventId} eventId={eventId} />;",
+     "return <EventAvailability eventId={eventId} />;"),
 ]

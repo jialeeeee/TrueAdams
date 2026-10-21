@@ -11,6 +11,8 @@
 | 3 | Test cases are correct and the code does what it says | ✅ Written test-first (red, then green); 23/23 deliberate breakages caught; behaviour confirmed in a real browser ([§3](#3-test-cases-are-correct-and-the-code-does-what-it-says)) |
 | 4 | Evidence of checks documented | ✅ This document, 3 screenshots, the scripts that produced them and the raw mutation results ([§4](#4-evidence-documented)) |
 
+**Updated 21 Oct 2026:** the stale-result issue the reviewer found in SCRUM-42's PR #47 also applied to this page; it is fixed here too. See [§5](#5-stale-result-fix-carried-over-from-the-review-of-pr-47). Sections 1–4 record the checks as first made.
+
 ## What this story changed
 
 - **Database:** a new `equipment_unavailability` table (`backend/db/equipment_unavailability.sql`, run on Supabase on 21 Oct 2026 together with the updated `test_role.sql`): periods when an item of equipment can't be used, with a reason.
@@ -128,5 +130,18 @@ Demo data: microphones "[Demo] Shure SLX-D 43" (2) and "[Demo] Sennheiser EW-D 4
   - `mutations.py`: the mutations, run with the SCRUM-77 runner;
   - `seed_demo_availability.py`: the demo equipment and events, and the stock read-back used by E2E-04;
   - `e2e_check.mjs`: the end-to-end check.
-- **Raw mutation results:** `mutation-results-backend.txt`, `mutation-results-frontend.txt`.
+- **Raw mutation results:** `mutation-results-backend.txt`, `mutation-results-frontend.txt`, `mutation-results-review-frontend.txt`.
 - **Test cases and traceability:** [docs/test-cases/SCRUM-43-equipment-availability.md](../test-cases/SCRUM-43-equipment-availability.md).
+
+## 5. Stale-result fix carried over from the review of PR #47
+
+The reviewer of SCRUM-42 found that its equipment page kept the previous event's data when the address changed to another event, and that a late reply for the old event could replace the new one. This page had the same pattern: on a change from `/events/7/equipment-availability` to `/events/8/...`, a slow result for event 7 arriving last would be shown under event 8.
+
+- **Fix:** the page is rendered fresh for each event (keyed by event, as SCRUM-42's page and SCRUM-55's review page), so a result for a page you have left is ignored. Within one event two checks cannot overlap: "Check again" clears the result and is hidden until its check has finished.
+- **Tests (TC-43-22):**
+  - `shows only the event in the address, even when the previous event's result arrives last`: **fails before the fix, passes after.**
+  - `hides Check again while a check is running`: records why one event's checks can't overlap.
+  - `EquipmentAvailabilityPage.test.jsx`: 10/10 pass.
+- **Mutation:** F10, "pages for different events share their result" (the key removed), is **caught** ([raw output](SCRUM-43/mutation-results-review-frontend.txt), [scripts/mutations_review.py](SCRUM-43/scripts/mutations_review.py)). All 24 SCRUM-43 mutation patterns still match the code after the merge.
+- **The branch now includes the merged SCRUM-42**, review fixes included (commit `58cceba`). Every SCRUM-42 and SCRUM-43 backend test passes on it: 78/78 with the schema check and the SCRUM-27 route walk.
+- **Not repeated:** the end-to-end check in §3c. The fix only changes what happens when the page moves between events, which the demo run does not do.

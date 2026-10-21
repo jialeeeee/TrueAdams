@@ -28,8 +28,7 @@ function Line({ line }) {
   );
 }
 
-export default function EquipmentAvailabilityPage() {
-  const { eventId } = useParams();
+function EventAvailability({ eventId }) {
   const [result, setResult] = useState(null);
   const [failure, setFailure] = useState(null);
 
@@ -80,4 +79,11 @@ export default function EquipmentAvailabilityPage() {
       )}
     </section>
   );
+}
+
+export default function EquipmentAvailabilityPage() {
+  const { eventId } = useParams();
+  // A fresh page for each event, as the equipment requirements page (review of PR #47):
+  // a result for the previous event can never show under this one.
+  return <EventAvailability key={eventId} eventId={eventId} />;
 }

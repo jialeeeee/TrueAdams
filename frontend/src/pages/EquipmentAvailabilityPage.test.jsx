@@ -1,6 +1,6 @@
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import apiClient from "../api/client.js";
 import EquipmentAvailabilityPage from "./EquipmentAvailabilityPage.jsx";
@@ -167,5 +167,66 @@ describe("SCRUM-43 Technical Support check equipment availability", () => {
 
     expect((await screen.findByRole("alert")).textContent).toContain(denied);
     expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+  });
+});
+
+// The same protection SCRUM-42's page got in the review of PR #47: a result for another
+// event, or an older result, must never show.
+const WORKSHOP = {
+  ...RESULT,
+  event: { ...EVENT, id: 8, title: "Workshop" },
+  checks: [{ ...HOLOGRAM, requirement_id: 21, equipment_type: "Lectern" }],
+  summary: "0 of 1 equipment requirements can be met from available equipment.",
+};
+
+function later() {
+  let resolve;
+  const promise = new Promise((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
+describe("SCRUM-43 results for another event or out of order", () => {
+  // TC-43-22
+  it("shows only the event in the address, even when the previous event's result arrives last", async () => {
+    const gala = later();
+    apiClient.get.mockImplementation(async (url) => {
+      if (url === "/events/7/equipment-availability") return gala.promise;
+      if (url === "/events/8/equipment-availability") return { data: WORKSHOP };
+      throw new Error(`Unexpected API read: ${url}`);
+    });
+    render(
+      <MemoryRouter initialEntries={["/events/7/equipment-availability"]} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+        <Link to="/events/8/equipment-availability">Open the workshop</Link>
+        <Routes>
+          <Route path="/events/:eventId/equipment-availability" element={<EquipmentAvailabilityPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole("link", { name: "Open the workshop" }));
+    expect(await screen.findByRole("heading", { name: "Workshop" })).toBeTruthy();
+    await act(async () => gala.resolve({ data: RESULT }));
+
+    expect(screen.queryByRole("heading", { name: "Charity Gala" })).toBeNull();
+    expect(screen.queryByText(/Wireless microphone/)).toBeNull();
+    expect(lines()[0].textContent).toContain("1 × Lectern");
+  });
+
+  // Within one event two checks can't overlap: "Check again" clears the result and is
+  // hidden until the check it started has finished.
+  it("hides Check again while a check is running", async () => {
+    const second = later();
+    apiClient.get.mockResolvedValueOnce({ data: RESULT }).mockReturnValueOnce(second.promise);
+    const user = renderPage();
+    await screen.findByText(RESULT.summary);
+
+    await user.click(screen.getByRole("button", { name: "Check again" }));
+
+    expect(screen.getByText("Checking…")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Check again" })).toBeNull();
+    expect(screen.queryByText(RESULT.summary)).toBeNull();
+    await act(async () => second.resolve({ data: RESULT }));
+    expect(screen.getByRole("button", { name: "Check again" })).toBeTruthy();
   });
 });
