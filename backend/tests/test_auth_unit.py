@@ -59,11 +59,15 @@ class AuthHttpUnitTests(unittest.TestCase):
         return response.get_json()
 
     def test_success_returns_token_and_stored_role(self):
-        response = self.login()
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.get_json()["role"], self.user.role)
-        with self.app.app_context():
-            self.assertEqual(decode_token(response.get_json()["access_token"])["sub"], "75")
+        # SCRUM-76 TC-76-01: extend existing login evidence for both Week 7 roles.
+        for role in ("coordinator", "coordinator_lead", "safety_officer"):
+            with self.subTest(role=role):
+                self.user.role = role
+                response = self.login()
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.get_json()["role"], role)
+                with self.app.app_context():
+                    self.assertEqual(decode_token(response.get_json()["access_token"])["sub"], "75")
 
     def test_invalid_credentials_never_issue_a_token(self):
         with mock.patch.object(routes, "create_access_token") as issue:
