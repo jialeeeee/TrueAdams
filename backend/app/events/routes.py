@@ -18,6 +18,7 @@ from ..models import (
     Venue,
 )
 from ..registrations.routes import REGISTERED, REGISTRABLE_STATUS, singapore_now
+from . import suitability
 from .permissions import (
     COORDINATOR_ROLE,
     can_view_clarifications,
@@ -292,11 +293,43 @@ def _optional_text_validator(label):
     return validate
 
 
+REQUIREMENT_ITEM_MAX_LENGTH = 100
+REQUIREMENT_MAX_ITEMS = 20
+
+
+def _requirement_list_validator(label):
+    """A list of short names (SCRUM-38). An empty list means none are needed; null
+    clears it back to not recorded."""
+
+    def validate(value):
+        if value is None:
+            return None, None
+        if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+            return None, f"{label} must be a list of names."
+        items = [" ".join(item.split()) for item in value]
+        if any(not item for item in items):
+            return None, f"{label} can't include a blank name."
+        if any(len(item) > REQUIREMENT_ITEM_MAX_LENGTH for item in items):
+            return None, (f"Each name in {label.lower()} must be "
+                          f"{REQUIREMENT_ITEM_MAX_LENGTH} characters or fewer.")
+        if len(items) > REQUIREMENT_MAX_ITEMS:
+            return None, f"{label} can have at most {REQUIREMENT_MAX_ITEMS} names."
+        return list(dict.fromkeys(items)), None
+
+    return validate
+
+
 NORMAL_FIELD_VALIDATORS = {
     "title": _validate_title,
     "purpose": _optional_text_validator("Purpose"),
     "description": _optional_text_validator("Description"),
     "accessibility_needs": _optional_text_validator("Accessibility needs"),
+    # SCRUM-38: what the event needs of a venue. Not restricted: they are only used to
+    # assess venues and change no existing arrangement.
+    "required_facilities": _requirement_list_validator("Required facilities"),
+    "required_accessibility_features": _requirement_list_validator(
+        "Required accessibility features"),
+    "required_layouts": _requirement_list_validator("Required layouts"),
 }
 
 # Fields whose changes affect existing arrangements, so they go through the review
@@ -2129,3 +2162,49 @@ def request_reassignment(event_id: int):
         ),
         201,
     )
+
+
+# ---------- Assess a venue against an event's requirements (SCRUM-38) ----------
+
+
+@events_bp.get("/<int:event_id>/venue-suitability")
+@jwt_required()
+def venue_suitability(event_id: int):
+    """A read-only check of the chosen venue against the event's saved requirements.
+
+    It never books, requests or changes anything, and a database failure is an error,
+    never a result with requirements quietly left out.
+    """
+    try:
+        user = _current_user()
+        if user is None:
+            return _error("Your session is no longer valid. Please log in again.", 401)
+
+        event = db.session.get(Event, event_id)
+        if event is None:
+            return _error("Event not found.", 404)
+        if not _is_current_coordinator(user, event):
+            return _error("You are not allowed to check venues for this event.", 403)
+
+        raw = request.args.get("venue_id", "").strip()
+        if not raw.isdigit():
+            return _error("Select a venue to check.", 400,
+                          fields={"venue_id": "Select a venue to check."})
+        venue = db.session.get(Venue, int(raw))
+        if venue is None:
+            return _error("Venue not found.", 404)
+
+        checks, overall, summary = suitability.assess(event, venue)
+        payload = {
+            "event": {"id": event.id, "title": event.title},
+            "venue": {"id": venue.id, "name": venue.name},
+            "checks": checks,
+            "overall": overall,
+            "summary": summary,
+        }
+    except SQLAlchemyError:
+        db.session.rollback()
+        return _error("The venue check could not be completed. Please try again.", 503,
+                      retryable=True)
+
+    return jsonify(payload)

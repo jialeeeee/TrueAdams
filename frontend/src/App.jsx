@@ -26,6 +26,7 @@ import VenueAvailabilityPage from "./pages/VenueAvailabilityPage.jsx";
 import VenueBookingRequestPage from "./pages/VenueBookingRequestPage.jsx";
 import VenueBookingRequestsPage from "./pages/VenueBookingRequestsPage.jsx";
 import VenueSearchPage from "./pages/VenueSearchPage.jsx";
+import VenueSuitabilityPage from "./pages/VenueSuitabilityPage.jsx";
 import VenuesPage from "./pages/VenuesPage.jsx";
 
 function RequireSignIn() {
@@ -86,6 +87,7 @@ export default function App() {
           <Route path="/events/:eventId/register" element={<EventRegistrationPage />} />
           <Route path="/events/:eventId/registration-settings" element={<RegistrationSettingsPage />} />
           <Route path="/events/:eventId/venue-request" element={<VenueBookingRequestPage />} />
+          <Route path="/events/:eventId/venue-suitability" element={<VenueSuitabilityPage />} />
           <Route path="/events/:eventId/reassign" element={<ReassignmentRequestPage />} />
           <Route path="/events/:eventId/assign" element={<AssignCoordinatorPage />} />
           <Route path="/events/:eventId/change-coordinator" element={<ReassignCoordinatorPage />} />
