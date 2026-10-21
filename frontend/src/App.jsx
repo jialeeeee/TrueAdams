@@ -3,6 +3,7 @@ import { Link, Navigate, Outlet, Route, Routes, useLocation, useNavigate } from 
 import AssignCoordinatorPage from "./pages/AssignCoordinatorPage.jsx";
 import ClarificationPage from "./pages/ClarificationPage.jsx";
 import DraftEventPage from "./pages/DraftEventPage.jsx";
+import EquipmentAvailabilityPage from "./pages/EquipmentAvailabilityPage.jsx";
 import EquipmentRequestsPage from "./pages/EquipmentRequestsPage.jsx";
 import EquipmentRequirementsPage from "./pages/EquipmentRequirementsPage.jsx";
 import EventDetailsPage from "./pages/EventDetailsPage.jsx";
@@ -92,6 +93,7 @@ export default function App() {
           <Route path="/events/:eventId/venue-request" element={<VenueBookingRequestPage />} />
           <Route path="/events/:eventId/venue-suitability" element={<VenueSuitabilityPage />} />
           <Route path="/events/:eventId/equipment" element={<EquipmentRequirementsPage />} />
+          <Route path="/events/:eventId/equipment-availability" element={<EquipmentAvailabilityPage />} />
           <Route path="/events/:eventId/reassign" element={<ReassignmentRequestPage />} />
           <Route path="/events/:eventId/assign" element={<AssignCoordinatorPage />} />
           <Route path="/events/:eventId/change-coordinator" element={<ReassignCoordinatorPage />} />
