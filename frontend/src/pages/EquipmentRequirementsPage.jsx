@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import apiClient from "../api/client.js";
 import ARRANGEMENT_STATUSES from "../utils/arrangementStatuses.js";
@@ -111,9 +111,10 @@ function Requirement({ requirement, page, onEdit, onRemove, onArrange }) {
   );
 }
 
-export default function EquipmentRequirementsPage() {
-  const { eventId } = useParams();
+function EventEquipment({ eventId }) {
   const url = `/events/${eventId}/equipment-requirements`;
+  // Only the newest load or save may update the list, whatever order replies arrive in.
+  const latest = useRef(0);
   const [page, setPage] = useState(null);
   const [loadError, setLoadError] = useState(null);
   const [form, setForm] = useState(EMPTY_FORM);
@@ -124,12 +125,15 @@ export default function EquipmentRequirementsPage() {
   const [confirmation, setConfirmation] = useState("");
 
   const load = useCallback(async () => {
+    const attempt = ++latest.current;
     setLoadError(null);
     try {
       const response = await apiClient.get(`/events/${eventId}/equipment-requirements`);
-      setPage(response.data);
+      if (attempt === latest.current) setPage(response.data);
     } catch (error) {
-      setLoadError({ message: explain(error, NOT_LOADED), retryable: canRetry(error) });
+      if (attempt === latest.current) {
+        setLoadError({ message: explain(error, NOT_LOADED), retryable: canRetry(error) });
+      }
     }
   }, [eventId]);
 
@@ -144,8 +148,14 @@ export default function EquipmentRequirementsPage() {
   }
 
   function finished(response) {
-    setPage(response.data);
     setConfirmation(response.data.confirmation);
+    if (response.data.refresh_error) {
+      // Saved, but the server couldn't send the updated list back: load it (AC7).
+      load();
+      return;
+    }
+    latest.current += 1; // Any load still on its way is older than this reply.
+    setPage(response.data);
   }
 
   function resetForm() {
@@ -207,6 +217,7 @@ export default function EquipmentRequirementsPage() {
     return (
       <section>
         <h1>Equipment requirements</h1>
+        {confirmation && <p role="status">{confirmation}</p>}
         <p role="alert">{loadError.message}</p>
         {loadError.retryable && <button type="button" onClick={load}>Retry</button>}
       </section>
@@ -247,4 +258,11 @@ export default function EquipmentRequirementsPage() {
       )}
     </section>
   );
+}
+
+export default function EquipmentRequirementsPage() {
+  const { eventId } = useParams();
+  // A fresh page for each event (as SCRUM-55's review page): nothing from the previous
+  // event, and no reply to it, can show under this one (AC3).
+  return <EventEquipment key={eventId} eventId={eventId} />;
 }

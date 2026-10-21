@@ -2347,6 +2347,24 @@ def _with_requirement(page, requirement_id):
     return {"requirement": requirement, **page}
 
 
+# The change is committed but the updated page could not be read back (AC7).
+EQUIPMENT_SAVED_NOT_RELOADED = ("The change was saved, but the updated requirements could "
+                                "not be loaded. Reload the page to see them.")
+
+
+def _saved_reply(user, event, confirmation, requirement_id=None, status_code=200):
+    """The reply once a change is committed. Reading the page back can still fail, and
+    that must not be reported as a failed save: the change is in the database (AC7)."""
+    try:
+        page = _equipment_page(user, event)
+        payload = _with_requirement(page, requirement_id) if requirement_id else page
+    except SQLAlchemyError:
+        db.session.rollback()
+        return jsonify({"confirmation": confirmation, "saved": True,
+                        "refresh_error": EQUIPMENT_SAVED_NOT_RELOADED}), status_code
+    return jsonify({"confirmation": confirmation, "saved": True, **payload}), status_code
+
+
 @events_bp.get("/<int:event_id>/equipment-requirements")
 @jwt_required()
 def get_equipment_requirements(event_id: int):
@@ -2374,18 +2392,19 @@ def record_equipment_requirement(event_id: int):
         requirement = EquipmentRequirement(event_id=event.id, recorded_by_id=user.id,
                                            status=equipment.REQUESTED, **values)
         db.session.add(requirement)
+        db.session.flush()  # Its id, read before the commit expires it.
+        requirement_id = requirement.id
+        name = equipment.describe(values["quantity"], values["equipment_type"])
+        message = (f"Recorded {name} for {event.title}. "
+                   "Recording a requirement does not reserve any equipment.")
         db.session.commit()
-        payload = _with_requirement(_equipment_page(user, event), requirement.id)
     except _Rejected as rejected:
         return _error(rejected.message, rejected.status_code, **rejected.extra)
     except SQLAlchemyError:
         db.session.rollback()
         return _error(EQUIPMENT_NOT_SAVED, 503, retryable=True)
 
-    name = equipment.describe(values["quantity"], values["equipment_type"])
-    message = (f"Recorded {name} for {event.title}. "
-               "Recording a requirement does not reserve any equipment.")
-    return jsonify({"confirmation": message, **payload}), 201
+    return _saved_reply(user, event, message, requirement_id, 201)
 
 
 @events_bp.put("/<int:event_id>/equipment-requirements/<int:requirement_id>")
@@ -2399,30 +2418,37 @@ def edit_equipment_requirement(event_id: int, requirement_id: int):
         values = _valid_requirement(event, _equipment_body("equipment requirement"),
                                     requirement.id)
         changed = any(getattr(requirement, name) != value for name, value in values.items())
-        # The arrangements were for the old details, so they start again (A8).
-        reset = changed and requirement.status != equipment.REQUESTED
+        # Any arrangement was for the old details, so it starts again: the status goes
+        # back to Requested and Technical Support's note and update are cleared (A8).
+        reset = changed and (requirement.status != equipment.REQUESTED
+                             or requirement.arrangement_note is not None
+                             or requirement.arrangement_updated_by_id is not None)
         if changed:
             for name, value in values.items():
                 setattr(requirement, name, value)
             requirement.status = equipment.REQUESTED
+            requirement.arrangement_note = None
+            requirement.arrangement_updated_by_id = None
+            requirement.arrangement_updated_at = None
             requirement.last_saved_at = datetime.utcnow()
+        name = equipment.describe(values["quantity"], values["equipment_type"])
+        if not changed:
+            message = f"No changes were made to {name}."
+        elif reset:
+            message = (f"Updated {name}. It is back to Requested and Technical Support's "
+                       "earlier arrangement and note were cleared, because they were for "
+                       "the old details.")
+        else:
+            message = f"Updated {name}."
+        requirement_id = requirement.id
         db.session.commit()
-        payload = _with_requirement(_equipment_page(user, event), requirement.id)
     except _Rejected as rejected:
         return _error(rejected.message, rejected.status_code, **rejected.extra)
     except SQLAlchemyError:
         db.session.rollback()
         return _error(EQUIPMENT_NOT_SAVED, 503, retryable=True)
 
-    name = equipment.describe(values["quantity"], values["equipment_type"])
-    if not changed:
-        message = f"No changes were made to {name}."
-    elif reset:
-        message = (f"Updated {name}. It is back to Requested, because the earlier "
-                   "arrangements were for the old details.")
-    else:
-        message = f"Updated {name}."
-    return jsonify({"confirmation": message, **payload})
+    return _saved_reply(user, event, message, requirement_id)
 
 
 @events_bp.delete("/<int:event_id>/equipment-requirements/<int:requirement_id>")
@@ -2436,14 +2462,13 @@ def remove_equipment_requirement(event_id: int, requirement_id: int):
         name = equipment.describe(requirement.quantity, requirement.equipment_type)
         db.session.delete(requirement)
         db.session.commit()
-        payload = _equipment_page(user, event)
     except _Rejected as rejected:
         return _error(rejected.message, rejected.status_code, **rejected.extra)
     except SQLAlchemyError:
         db.session.rollback()
         return _error(EQUIPMENT_NOT_REMOVED, 503, retryable=True)
 
-    return jsonify({"confirmation": f"Removed {name}.", **payload})
+    return _saved_reply(user, event, f"Removed {name}.")
 
 
 @events_bp.patch("/<int:event_id>/equipment-requirements/<int:requirement_id>/arrangement")
@@ -2462,8 +2487,8 @@ def update_equipment_arrangement(event_id: int, requirement_id: int):
             setattr(requirement, name, value)
         requirement.arrangement_updated_by_id = user.id
         requirement.arrangement_updated_at = datetime.utcnow()
+        requirement_id = requirement.id
         db.session.commit()
-        payload = _with_requirement(_equipment_page(user, event), requirement.id)
     except _Rejected as rejected:
         return _error(rejected.message, rejected.status_code, **rejected.extra)
     except SQLAlchemyError:
@@ -2471,7 +2496,7 @@ def update_equipment_arrangement(event_id: int, requirement_id: int):
         return _error(ARRANGEMENT_NOT_SAVED, 503, retryable=True)
 
     label = equipment.status_label(values["status"])
-    return jsonify({"confirmation": f"Arrangement status updated to {label}.", **payload})
+    return _saved_reply(user, event, f"Arrangement status updated to {label}.", requirement_id)
 
 
 @events_bp.get("/equipment-requests")
