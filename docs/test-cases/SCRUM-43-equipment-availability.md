@@ -2,7 +2,7 @@
 
 **User story:** As a Technical Support Staff member, I want to view all available equipment so that I can determine whether an event's equipment requirements can be fulfilled.
 
-**Created:** 21 Oct 2026 · **Status of all cases:** written, automated tests failing (TDD, red) · **Automated tests:** `backend/tests/test_equipment_availability.py` (through the API), `backend/tests/test_equipment_availability_unit.py` (the rules, no database), `frontend/src/pages/EquipmentAvailabilityPage.test.jsx` (+ the link in `EquipmentRequirementsPage.test.jsx`) · **Endpoint:** `GET /api/events/<id>/equipment-availability` · **Related:** SCRUM-42 (the requirements checked here), SCRUM-44 (reserving; it will deduct reservations from the same check), SCRUM-84 (setup and turnaround time, venues only)
+**Created:** 21 Oct 2026 · **Status of all cases:** automated cases pass (21 Oct 2026, Supabase + Vitest); end-to-end check passed in the browser, see [the DoD evidence](../evidence/SCRUM-43-dod-evidence.md) · **Automated tests:** `backend/tests/test_equipment_availability.py` (through the API), `backend/tests/test_equipment_availability_unit.py` (the rules, no database), `frontend/src/pages/EquipmentAvailabilityPage.test.jsx` (+ the link in `EquipmentRequirementsPage.test.jsx`) · **Endpoint:** `GET /api/events/<id>/equipment-availability` · **Related:** SCRUM-42 (the requirements checked here), SCRUM-44 (reserving; it will deduct reservations from the same check), SCRUM-84 (setup and turnaround time, venues only)
 
 ## Acceptance criteria
 
