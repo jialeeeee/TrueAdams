@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import apiClient from "../api/client.js";
 import explain from "../utils/explain.js";
+import occupiedParts from "../utils/occupiedParts.js";
 import statusLabel from "../utils/statusLabel.js";
 
 // SCRUM-39: the event's coordinator requests a venue for an approved event.
@@ -15,6 +16,12 @@ const MISSING = {
   start_time: "Enter the start date and time.",
   end_time: "Enter the end date and time.",
   venue_requirements: "Enter the venue requirements.",
+};
+
+const CONFLICT_LABELS = {
+  booking: "Confirmed booking",
+  block: "Blocked",
+  hold: "Tentative hold",
 };
 
 // Event and booking times are Singapore time without a time zone: show them as recorded.
@@ -40,6 +47,8 @@ export default function VenueBookingRequestPage() {
   const [error, setError] = useState("");
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(null);
+  // SCRUM-84: the server's conflicts when the occupied period clashes, and that period.
+  const [clash, setClash] = useState(null);
 
   const load = useCallback(async () => {
     setLoadError("");
@@ -57,6 +66,8 @@ export default function VenueBookingRequestPage() {
         start_time: asInput(loaded.start_time),
         end_time: asInput(loaded.end_time),
         venue_requirements: loaded.venue_requirements ?? "",
+        setup_minutes: "0",
+        turnaround_minutes: "0",
       });
     } catch (failure) {
       setLoadError(explain(failure, NOT_LOADED));
@@ -72,6 +83,7 @@ export default function VenueBookingRequestPage() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError("");
+    setClash(null);
     const missing = missingFields(form);
     setFieldErrors(missing);
     if (Object.keys(missing).length) return;
@@ -84,12 +96,18 @@ export default function VenueBookingRequestPage() {
         start_time: form.start_time,
         end_time: form.end_time,
         venue_requirements: form.venue_requirements.trim(),
+        setup_minutes: form.setup_minutes,
+        turnaround_minutes: form.turnaround_minutes,
       });
       setSent(response.data);
     } catch (failure) {
       // The entered details stay in the form so the request can be sent again (AC6).
       setError(explain(failure, NOT_SENT));
       setFieldErrors(failure.response?.data?.fields ?? {});
+      const data = failure.response?.data;
+      if (failure.response?.status === 409 && data?.conflicts) {
+        setClash({ conflicts: data.conflicts, occupied: data.occupied });
+      }
     } finally {
       setSending(false);
     }
@@ -117,6 +135,9 @@ export default function VenueBookingRequestPage() {
         <p role="status">{sent.message}</p>
         <p>{`Venue: ${booking.venue.name}`}</p>
         <p>{`Requested: ${asText(booking.start_time)} to ${asText(booking.end_time)}`}</p>
+        {(booking.setup_minutes > 0 || booking.turnaround_minutes > 0) && (
+          <p>{`Occupied: ${asText(booking.occupied_start)} to ${asText(booking.occupied_end)}`}</p>
+        )}
         <p>{`Status: ${statusLabel(booking.status)}`}</p>
       </section>
     );
@@ -175,12 +196,40 @@ export default function VenueBookingRequestPage() {
           onChange={change("end_time")} />
         {fieldError("end_time")}
 
+        <label htmlFor="venue-request-setup">Setup time before the event (minutes)</label>
+        <input id="venue-request-setup" type="number" min="0" max="1440" step="1"
+          value={form.setup_minutes} onChange={change("setup_minutes")} />
+        {fieldError("setup_minutes")}
+
+        <label htmlFor="venue-request-turnaround">Turnaround time after the event (minutes)</label>
+        <input id="venue-request-turnaround" type="number" min="0" max="1440" step="1"
+          value={form.turnaround_minutes} onChange={change("turnaround_minutes")} />
+        {fieldError("turnaround_minutes")}
+
         <label htmlFor="venue-request-requirements">Venue requirements</label>
         <textarea id="venue-request-requirements" rows={4} value={form.venue_requirements}
           onChange={change("venue_requirements")} />
         {fieldError("venue_requirements")}
 
         {error && <p role="alert">{error}</p>}
+        {clash && (
+          <>
+            {clash.occupied && (
+              <p>{`Your request would occupy the venue ${asText(clash.occupied.start)} to ${asText(clash.occupied.end)}.`}</p>
+            )}
+            <ul aria-label="Conflicts">
+              {clash.conflicts.map((conflict) => {
+                const parts = occupiedParts(conflict);
+                return (
+                  <li key={`${conflict.type}-${conflict.id}`}>
+                    {`${CONFLICT_LABELS[conflict.type] ?? "Conflict"}: ${asText(conflict.start)} to ${asText(conflict.end)}`}
+                    {parts ? ` (${parts})` : ""}
+                  </li>
+                );
+              })}
+            </ul>
+          </>
+        )}
         <button type="submit" disabled={sending}>Submit request</button>
       </form>
     </section>

@@ -41,6 +41,9 @@ ALL_ROUTES = [
     ("GET", "/api/notifications/"),
     ("GET", "/api/venues/"),
     ("POST", "/api/venues/"),
+    ("PUT", "/api/venues/1"),
+    ("GET", "/api/venues/options"),
+    ("GET", "/api/venues/1/history"),
     ("GET", "/api/venues/1"),
     ("GET", "/api/venues/1/availability"),
     ("GET", "/api/venues/bookings"),
@@ -60,7 +63,6 @@ UNIMPLEMENTED_ROUTES = [
     ("POST", "/api/auth/register"),
     ("POST", "/api/events/"),
     ("POST", "/api/events/1/change-requests"),
-    ("POST", "/api/venues/"),
     ("POST", "/api/resources/1/reservations"),
 ]
 

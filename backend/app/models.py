@@ -104,6 +104,11 @@ class VenueBooking(db.Model):
     __tablename__ = "venue_bookings"
     __table_args__ = (
         db.CheckConstraint("end_time > start_time", name="venue_bookings_end_after_start"),
+        # SCRUM-84: setup and turnaround are whole minutes, up to a day each.
+        db.CheckConstraint("setup_minutes between 0 and 1440",
+                           name="venue_bookings_setup_minutes_range"),
+        db.CheckConstraint("turnaround_minutes between 0 and 1440",
+                           name="venue_bookings_turnaround_minutes_range"),
         # An event can have at most one pending venue request (SCRUM-39 A6).
         db.Index(
             "venue_bookings_one_pending_per_event",
@@ -113,10 +118,11 @@ class VenueBooking(db.Model):
         ),
         # No two confirmed bookings at one venue may overlap, whichever code saves them
         # (SCRUM-41 A4). Periods are half-open, so touching is allowed; the venue id is
-        # a one-value range so plain GiST can compare it without an extension.
+        # a one-value range so plain GiST can compare it without an extension. It is the
+        # occupied period (setup before, turnaround after) that must not overlap (SCRUM-84).
         ExcludeConstraint(
             (db.text("int4range(venue_id, venue_id, '[]')"), "&&"),
-            (db.text("tsrange(start_time, end_time)"), "&&"),
+            (db.text("tsrange(occupied_start, occupied_end)"), "&&"),
             name="venue_bookings_no_overlapping_confirmed",
             using="gist",
             where=db.text("status = 'confirmed'"),
@@ -144,6 +150,17 @@ class VenueBooking(db.Model):
     held_at = db.Column(db.DateTime)
     held_by_id = db.Column(db.Integer, db.ForeignKey("users.id"))
     hold_expires_at = db.Column(db.DateTime)
+    # SCRUM-84: minutes of setup before and turnaround after the event. The venue is
+    # occupied from start_time - setup to end_time + turnaround, which the database works
+    # out (occupied_start/occupied_end) so the no-overlap rule can use it.
+    setup_minutes = db.Column(db.Integer, nullable=False, default=0, server_default="0")
+    turnaround_minutes = db.Column(db.Integer, nullable=False, default=0, server_default="0")
+    occupied_start = db.Column(
+        db.DateTime,
+        db.Computed("start_time - make_interval(mins => setup_minutes)", persisted=True))
+    occupied_end = db.Column(
+        db.DateTime,
+        db.Computed("end_time + make_interval(mins => turnaround_minutes)", persisted=True))
 
 
 class VenueBlock(db.Model):
@@ -267,3 +284,19 @@ class EquipmentRequirement(db.Model):
     # Which Technical Support Staff member last updated the arrangement, and when (UTC).
     arrangement_updated_by_id = db.Column(db.Integer, db.ForeignKey("users.id"))
     arrangement_updated_at = db.Column(db.DateTime)
+
+
+class VenueChange(db.Model):
+    """SCRUM-63: one add or edit of a venue, with who made it and when."""
+
+    __tablename__ = "venue_changes"
+
+    id = db.Column(db.Integer, primary_key=True)
+    venue_id = db.Column(db.Integer, db.ForeignKey("venues.id"), nullable=False)
+    # "added" or "edited".
+    action = db.Column(db.String(10), nullable=False)
+    changed_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    # Naive UTC, like the other audit timestamps.
+    changed_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    # {"<field>": {"from": ..., "to": ...}} for every field the change touched.
+    changes = db.Column(JSONB, nullable=False)

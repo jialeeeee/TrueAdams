@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import apiClient from "../api/client.js";
 import explain from "../utils/explain.js";
 import formatSavedAt from "../utils/formatSavedAt.js";
+import occupiedParts from "../utils/occupiedParts.js";
 import statusLabel from "../utils/statusLabel.js";
 
 // SCRUM-39: Venue Staff's list of pending venue requests (GET /api/venues/bookings).
@@ -15,6 +16,12 @@ const NOT_HELD = "The hold was not placed. Check your connection and try again."
 // Booking times are Singapore time without a time zone: show them as recorded.
 const asText = (value) => value.slice(0, 16).replace("T", " ");
 
+// SCRUM-84: a booking's period includes its setup and turnaround, which are labelled.
+const withParts = (text, item) => {
+  const parts = occupiedParts(item);
+  return parts ? `${text} (${parts})` : text;
+};
+
 // One line per conflict, in the order the server lists them.
 function conflictText(conflict) {
   const period = `${asText(conflict.start)} to ${asText(conflict.end)}`;
@@ -22,12 +29,16 @@ function conflictText(conflict) {
     return conflict.reason ? `Blocked (${conflict.reason}), ${period}` : `Blocked, ${period}`;
   }
   if (conflict.type === "booking") {
-    return conflict.event
+    const text = conflict.event
       ? `Confirmed booking for ${conflict.event.title}, ${period}`
       : `Confirmed booking, ${period}`;
+    return withParts(text, conflict);
   }
   if (conflict.type === "hold") {
-    return `Tentative hold for ${conflict.event.title} until ${asText(conflict.expires_at)}, ${period}`;
+    return withParts(
+      `Tentative hold for ${conflict.event.title} until ${asText(conflict.expires_at)}, ${period}`,
+      conflict,
+    );
   }
   return `This event's confirmed booking at ${conflict.venue.name}, ${period}`;
 }
@@ -125,6 +136,12 @@ export default function VenueBookingRequestsPage() {
                 {`Venue: ${booking.venue.name}${booking.venue.location ? `, ${booking.venue.location}` : ""}`}
               </p>
               <p>{`Requested: ${asText(booking.start_time)} to ${asText(booking.end_time)}`}</p>
+              {(booking.setup_minutes > 0 || booking.turnaround_minutes > 0) && (
+                <p>
+                  {`Occupied: ${asText(booking.occupied_start)} to ${asText(booking.occupied_end)} `
+                    + `(setup ${booking.setup_minutes} min, turnaround ${booking.turnaround_minutes} min)`}
+                </p>
+              )}
               <p>{`Expected attendance: ${booking.event.expected_attendance ?? "Not recorded"}`}</p>
               <p>{`Requirements: ${booking.venue_requirements}`}</p>
               <p>

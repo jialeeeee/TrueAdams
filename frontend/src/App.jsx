@@ -28,6 +28,7 @@ import VenueAvailabilityPage from "./pages/VenueAvailabilityPage.jsx";
 import VenueBookingRequestPage from "./pages/VenueBookingRequestPage.jsx";
 import VenueBookingRequestsPage from "./pages/VenueBookingRequestsPage.jsx";
 import VenueSearchPage from "./pages/VenueSearchPage.jsx";
+import VenueFormPage from "./pages/VenueFormPage.jsx";
 import VenueSuitabilityPage from "./pages/VenueSuitabilityPage.jsx";
 import VenuesPage from "./pages/VenuesPage.jsx";
 
@@ -96,6 +97,8 @@ export default function App() {
           <Route path="/events/:eventId/assign" element={<AssignCoordinatorPage />} />
           <Route path="/events/:eventId/change-coordinator" element={<ReassignCoordinatorPage />} />
           <Route path="/venues" element={<VenuesPage />} />
+          <Route path="/venues/new" element={<VenueFormPage />} />
+          <Route path="/venues/:venueId/edit" element={<VenueFormPage />} />
           <Route path="/venues/availability" element={<VenueAvailabilityPage />} />
           <Route path="/venues/search" element={<VenueSearchPage />} />
           <Route path="/venues/bookings" element={<VenueBookingRequestsPage />} />
