@@ -10,7 +10,7 @@ from .. import tasks
 from ..events.permissions import is_current_coordinator
 from ..extensions import db
 from ..local_time import singapore_now
-from ..models import Event, Notification, User, Venue, VenueBooking
+from ..models import Event, Notification, User, Venue, VenueBooking, VenueChange
 
 venues_bp = Blueprint("venues", __name__)
 
@@ -146,9 +146,205 @@ def get_venue(venue_id: int):
     return jsonify(details)
 
 
+# ---------- Maintain the venue catalogue (SCRUM-63) ----------
+
+CATALOGUE_ROLES = {"venue_staff"}
+_CATALOGUE_DENIED = "Only Venue Staff can add or edit venues."
+# The defined lists a venue's facilities and accessibility features come from, so they can
+# be used as search filters. Layouts are the keys a search already understands.
+# Assumption A3: the lists in the SCRUM-63 test cases; the customer has not given more.
+FACILITY_OPTIONS = ["Projector", "Microphone", "Video conferencing"]
+ACCESSIBILITY_OPTIONS = ["Wheelchair ramp", "Hearing loop"]
+LAYOUT_OPTIONS = ["theatre", "classroom", "boardroom", "banquet"]
+# Catalogue field -> (label used in messages, defined list).
+_LIST_FIELDS = {
+    "facilities": ("Facilities", FACILITY_OPTIONS),
+    "accessibility_features": ("Accessibility features", ACCESSIBILITY_OPTIONS),
+    "room_layouts": ("Layouts", LAYOUT_OPTIONS),
+}
+CATALOGUE_FIELDS = ["name", "location", "capacity", *_LIST_FIELDS, "operating_hours"]
+REQUIRED_FIELDS = {"name": "Name", "location": "Location", "capacity": "Capacity"}
+TEXT_MAX_LENGTH = 255  # Venue.name and Venue.location columns.
+
+
+def _catalogue_problems(body, creating):
+    """(values, problems): the cleaned values for the fields sent, and a message for every
+    invalid one, so they can all be corrected at once (SCRUM-63 AC5)."""
+    values, problems = {}, {}
+    for key in body:
+        if key not in CATALOGUE_FIELDS:
+            problems[key] = f"{key} cannot be set here."
+
+    for key, label in REQUIRED_FIELDS.items():
+        if key not in body:
+            if creating:
+                problems[key] = f"{label} is required."
+            continue
+        if key == "capacity":
+            continue
+        text = body[key].strip() if isinstance(body[key], str) else None
+        if not text:
+            problems[key] = f"{label} is required."
+        elif len(text) > TEXT_MAX_LENGTH:
+            problems[key] = f"{label} must be at most {TEXT_MAX_LENGTH} characters."
+        else:
+            values[key] = text
+
+    if "capacity" in body:
+        capacity = body["capacity"]
+        if capacity is None or (isinstance(capacity, str) and not capacity.strip()):
+            problems["capacity"] = "Capacity is required."
+        else:
+            whole = _whole_number(capacity)
+            if whole is None:
+                problems["capacity"] = "Capacity must be a whole number."
+            elif whole < 1:
+                problems["capacity"] = "Capacity must be a whole number of at least 1."
+            else:
+                values["capacity"] = whole
+
+    for key, (label, options) in _LIST_FIELDS.items():
+        if key not in body:
+            continue
+        chosen = body[key]
+        if not isinstance(chosen, list) or not all(isinstance(item, str) for item in chosen):
+            problems[key] = f"{label} must be chosen from the list."
+            continue
+        by_name = {option.lower(): option for option in options}
+        unknown = [item for item in chosen if item.strip().lower() not in by_name]
+        if unknown:
+            problems[key] = f"{label} must be chosen from the list: {', '.join(unknown)} is not an option."
+            continue
+        values[key] = list(dict.fromkeys(by_name[item.strip().lower()] for item in chosen))
+
+    if "operating_hours" in body:
+        hours = body["operating_hours"]
+        if hours is None or (isinstance(hours, str) and not hours.strip()):
+            values["operating_hours"] = None  # Not recorded.
+        elif not isinstance(hours, str) or not scheduling.parse_operating_hours(hours):
+            problems["operating_hours"] = (
+                "Operating hours must look like 'Mon-Fri 09:00-18:00' "
+                "(separate several parts with commas).")
+        else:
+            values["operating_hours"] = hours.strip()
+    return values, problems
+
+
+def _whole_number(value):
+    """The int for a whole number (4, 4.0 or "4"), else None."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value) if value.is_integer() else None
+    if isinstance(value, str) and re.fullmatch(r"-?\d+(\.0+)?", value.strip()):
+        return int(float(value.strip()))
+    return None
+
+
+def _check_catalogue_request(body, creating):
+    if not isinstance(body, dict):
+        raise _Rejected("Send the venue details as a JSON object.", 400, fields={})
+    values, problems = _catalogue_problems(body, creating)
+    if problems:
+        # Name the first problem in full so the whole reply says what to fix.
+        raise _Rejected(next(iter(problems.values())), 400, fields=problems)
+    return values
+
+
+def _save_failed():
+    db.session.rollback()
+    return _error("The venue could not be saved. Your entries were not lost; please try again.",
+                  503, retryable=True)
+
+
+@venues_bp.get("/options")
+@jwt_required()
+def venue_options():
+    try:
+        _require_viewer(CATALOGUE_ROLES, _CATALOGUE_DENIED)
+    except _Rejected as rejected:
+        return _error(rejected.message, rejected.status_code)
+    except SQLAlchemyError:
+        return _load_failed()
+    return jsonify({key: list(options) for key, (_, options) in _LIST_FIELDS.items()})
+
+
 @venues_bp.post("/")
+@jwt_required()
 def create_venue():
-    return jsonify({"message": "create venue not yet implemented"}), 501
+    try:
+        user = _require_viewer(CATALOGUE_ROLES, _CATALOGUE_DENIED)
+        values = _check_catalogue_request(request.get_json(silent=True), creating=True)
+        venue = Venue(**values)
+        db.session.add(venue)
+        db.session.flush()
+        db.session.add(VenueChange(
+            venue_id=venue.id, action="added", changed_by_id=user.id,
+            changes={key: {"from": None, "to": value} for key, value in values.items()}))
+        db.session.commit()
+        payload = _details(venue)
+    except _Rejected as rejected:
+        db.session.rollback()
+        return _error(rejected.message, rejected.status_code, **rejected.extra)
+    except SQLAlchemyError:
+        return _save_failed()
+    return jsonify({"message": f"{payload['name']} was added to the catalogue.",
+                    "venue": payload}), 201
+
+
+@venues_bp.put("/<int:venue_id>")
+@jwt_required()
+def update_venue(venue_id: int):
+    try:
+        user = _require_viewer(CATALOGUE_ROLES, _CATALOGUE_DENIED)
+        venue = db.session.get(Venue, venue_id)
+        if venue is None:
+            raise _Rejected("Venue not found.", 404)
+        values = _check_catalogue_request(request.get_json(silent=True), creating=False)
+        changes = {}
+        for key, value in values.items():
+            old = getattr(venue, key)
+            if old != value:
+                changes[key] = {"from": old, "to": value}
+                setattr(venue, key, value)
+        if changes:
+            db.session.add(VenueChange(
+                venue_id=venue.id, action="edited", changed_by_id=user.id, changes=changes))
+        db.session.commit()
+        payload = _details(venue)
+    except _Rejected as rejected:
+        db.session.rollback()
+        return _error(rejected.message, rejected.status_code, **rejected.extra)
+    except SQLAlchemyError:
+        return _save_failed()
+    return jsonify({"message": f"{payload['name']} was updated.", "venue": payload})
+
+
+@venues_bp.get("/<int:venue_id>/history")
+@jwt_required()
+def venue_history(venue_id: int):
+    try:
+        _require_viewer(CATALOGUE_ROLES, _CATALOGUE_DENIED)
+        if db.session.get(Venue, venue_id) is None:
+            raise _Rejected("Venue not found.", 404)
+        rows = (VenueChange.query.filter_by(venue_id=venue_id)
+                .order_by(VenueChange.changed_at, VenueChange.id).all())
+        history = []
+        for row in rows:
+            who = db.session.get(User, row.changed_by_id)
+            history.append({
+                "action": row.action,
+                "changed_by": {"id": who.id, "email": who.email},
+                "changed_at": row.changed_at.isoformat(),
+                "changes": row.changes,
+            })
+    except _Rejected as rejected:
+        return _error(rejected.message, rejected.status_code)
+    except SQLAlchemyError:
+        return _load_failed()
+    return jsonify({"history": history})
 
 
 def _parse_date(value, name):
