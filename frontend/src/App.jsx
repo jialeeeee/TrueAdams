@@ -3,6 +3,8 @@ import { Link, Navigate, Outlet, Route, Routes, useLocation, useNavigate } from 
 import AssignCoordinatorPage from "./pages/AssignCoordinatorPage.jsx";
 import ClarificationPage from "./pages/ClarificationPage.jsx";
 import DraftEventPage from "./pages/DraftEventPage.jsx";
+import EquipmentRequestsPage from "./pages/EquipmentRequestsPage.jsx";
+import EquipmentRequirementsPage from "./pages/EquipmentRequirementsPage.jsx";
 import EventDetailsPage from "./pages/EventDetailsPage.jsx";
 import EventPlanningPage from "./pages/EventPlanningPage.jsx";
 import EventRegistrationPage from "./pages/EventRegistrationPage.jsx";
@@ -65,6 +67,7 @@ export default function App() {
         <Link to="/venues/bookings">Venue booking requests</Link>
         <Link to="/venues/holds">Tentative holds</Link>
         <Link to="/resources">Resources</Link>
+        <Link to="/equipment-requests">Equipment requests</Link>
         <Link to="/my-registrations">My registrations</Link>
         {signedIn ? <button type="button" onClick={signOut}>Sign out</button> : <Link to="/login">Login</Link>}
       </nav>
@@ -89,6 +92,7 @@ export default function App() {
           <Route path="/events/:eventId/registration-settings" element={<RegistrationSettingsPage />} />
           <Route path="/events/:eventId/venue-request" element={<VenueBookingRequestPage />} />
           <Route path="/events/:eventId/venue-suitability" element={<VenueSuitabilityPage />} />
+          <Route path="/events/:eventId/equipment" element={<EquipmentRequirementsPage />} />
           <Route path="/events/:eventId/reassign" element={<ReassignmentRequestPage />} />
           <Route path="/events/:eventId/assign" element={<AssignCoordinatorPage />} />
           <Route path="/events/:eventId/change-coordinator" element={<ReassignCoordinatorPage />} />
@@ -100,6 +104,7 @@ export default function App() {
           <Route path="/venues/bookings" element={<VenueBookingRequestsPage />} />
           <Route path="/venues/holds" element={<TentativeHoldsPage />} />
           <Route path="/resources" element={<ResourcesPage />} />
+          <Route path="/equipment-requests" element={<EquipmentRequestsPage />} />
           <Route path="/my-registrations" element={<MyRegistrationsPage />} />
           <Route path="/registrations" element={<Navigate to="/my-registrations" replace />} />
         </Route>

@@ -105,6 +105,8 @@ export default function EventPlanningPage() {
       )}
       {/* SCRUM-38: a read-only check of a venue against the event's requirements. */}
       <Link to={`/events/${event.id}/venue-suitability`}>Check venue suitability</Link>
+      {/* SCRUM-42: record what equipment the event needs, for Technical Support Staff. */}
+      <Link to={`/events/${event.id}/equipment`}>Equipment requirements</Link>
       {event.status === "approved" && event.registration_required === true && (
         <Link to={`/events/${event.id}/registration-settings`}>Set up registration</Link>
       )}
