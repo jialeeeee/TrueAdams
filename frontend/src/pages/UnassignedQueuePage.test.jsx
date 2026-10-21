@@ -1,5 +1,6 @@
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { StrictMode } from "react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import apiClient from "../api/client.js";
@@ -29,6 +30,13 @@ const failed = (status, data) =>
   Object.assign(new Error("Request failed"), { response: { status, data } });
 
 const LOAD_FAILED = "The queue could not be loaded. Please try again.";
+
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((succeed, fail) => { resolve = succeed; reject = fail; });
+  return { promise, resolve, reject };
+}
 
 function renderPage() {
   render(
@@ -127,5 +135,58 @@ describe("SCRUM-81 the Lead's unassigned queue", () => {
       "The queue could not be loaded. Check your connection and try again.",
     );
     expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
+  });
+
+  // SCRUM-80 TC-80-06: main.jsx uses StrictMode, which can overlap initial loads.
+  it.each([
+    [503, LOAD_FAILED, true],
+    [403, "Only Event Coordinator Leads can view the queue.", false],
+  ].flatMap(([status, message, retryable]) =>
+    ["success", "failure"].flatMap((latest) =>
+      ["older first", "newer first"].map((order) => ({ status, message, retryable, latest, order })),
+    ),
+  ))("keeps the latest $latest with $status when overlapping loads finish $order", async ({ status, message, retryable, latest, order }) => {
+    const olderRequest = deferred();
+    const newerRequest = deferred();
+    apiClient.get
+      .mockReturnValueOnce(olderRequest.promise)
+      .mockReturnValueOnce(newerRequest.promise);
+    render(
+      <StrictMode>
+        <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+          <UnassignedQueuePage />
+        </MemoryRouter>
+      </StrictMode>,
+    );
+
+    expect(apiClient.get).toHaveBeenCalledTimes(2);
+    const settle = (request, success) => act(async () => {
+      if (success) request.resolve(loaded());
+      else request.reject(failed(status, { error: message, retryable }));
+    });
+    const expectLatest = () => {
+      if (latest === "success") {
+        expect(screen.getByRole("link", { name: "Alumni Mixer" })).toBeTruthy();
+        expect(screen.queryByRole("alert")).toBeNull();
+        expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+      } else {
+        expect(screen.getByRole("alert").textContent).toContain(message);
+        expect(screen.queryByRole("list")).toBeNull();
+        expect(screen.queryByText(`Organiser: ${EVAN.email}`)).toBeNull();
+        expect(Boolean(screen.queryByRole("button", { name: "Retry" }))).toBe(retryable);
+      }
+    };
+
+    if (order === "older first") {
+      await settle(olderRequest, latest !== "success");
+      expect(screen.queryByRole("list")).toBeNull();
+      expect(screen.queryByRole("alert")).toBeNull();
+      await settle(newerRequest, latest === "success");
+    } else {
+      await settle(newerRequest, latest === "success");
+      expectLatest();
+      await settle(olderRequest, latest !== "success");
+    }
+    expectLatest();
   });
 });

@@ -103,6 +103,8 @@ export default function EventPlanningPage() {
       {event.status === "approved" && (
         <Link to={`/events/${event.id}/venue-request`}>Request a venue</Link>
       )}
+      {/* SCRUM-38: a read-only check of a venue against the event's requirements. */}
+      <Link to={`/events/${event.id}/venue-suitability`}>Check venue suitability</Link>
       {event.status === "approved" && event.registration_required === true && (
         <Link to={`/events/${event.id}/registration-settings`}>Set up registration</Link>
       )}
