@@ -142,9 +142,11 @@ class VenueBooking(db.Model):
     # SCRUM-39: what Venue Staff assess the request against, and who asked.
     venue_requirements = db.Column(db.Text)
     requested_by_id = db.Column(db.Integer, db.ForeignKey("users.id"))
-    # SCRUM-40: when (naive UTC) and by which Venue Staff member it was approved.
+    # SCRUM-40/69: when (naive UTC) and by which Venue Staff member it was decided.
     decided_at = db.Column(db.DateTime)
     decided_by_id = db.Column(db.Integer, db.ForeignKey("users.id"))
+    # SCRUM-69: saved on the request itself; NULL for requests without a rejection.
+    rejection_reason = db.Column(db.Text)
     # SCRUM-87: a tentative hold: when (naive UTC) and by which Venue Staff member it
     # was placed, and when it expires (Singapore time, set by Venue Staff).
     held_at = db.Column(db.DateTime)

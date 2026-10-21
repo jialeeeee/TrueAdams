@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -59,6 +59,7 @@ function mockLoad(event = planning()) {
   apiClient.get.mockImplementation((url) => {
     if (url === "/events/7/planning") return Promise.resolve({ data: event });
     if (url === "/venues/") return Promise.resolve({ data: VENUES });
+    if (url === "/venues/bookings") return Promise.resolve({ data: { bookings: [], message: null } });
     return Promise.reject(new Error(`unexpected GET ${url}`));
   });
 }
@@ -235,5 +236,73 @@ describe("SCRUM-40 the coordinator sees the confirmed venue", () => {
     await renderLoaded(planning({ venue: { id: 3, name: "Aurora Ballroom", location: null } }));
 
     expect(screen.getByText("Venue confirmed: Aurora Ballroom")).toBeTruthy();
+  });
+});
+
+// SCRUM-69: TC-69-14/15/26, AC4; see
+// docs/test-cases/SCRUM-69-reject-venue-booking.md and
+// backend/tests/test_venue_booking_rejection.py. GREEN requires recovery from
+// request rows; notification storage must not be the only saved-decision source.
+describe("SCRUM-69 coordinator sees the saved venue rejection", () => {
+  const REASON = "The required stage power cannot be provided for this arrangement.";
+  const SAVED = {
+    id: 11, status: "rejected", rejection_reason: REASON,
+    event: { id: 7, title: "Harbour Lights Festival" },
+    venue: { id: 3, name: "Aurora Ballroom" },
+    start_time: "2027-03-12T16:00:00", end_time: "2027-03-12T22:30:00",
+    decided_at: "2026-10-21T03:00:00", decided_by: { id: 9, email: "gus.venue@connectsphere.test" },
+  };
+
+  function mockSaved(bookings = [SAVED], failure = null, event = planning()) {
+    apiClient.get.mockImplementation((url) => {
+      if (url === "/events/7/planning") return Promise.resolve({ data: event });
+      if (url === "/venues/") return Promise.resolve({ data: VENUES });
+      if (url === "/venues/bookings") {
+        return failure ? Promise.reject(failure) : Promise.resolve({ data: { bookings, message: null } });
+      }
+      return Promise.reject(new Error(`unexpected GET ${url}`));
+    });
+  }
+
+  it("shows the persisted rejection and reason when reopening the coordinator page", async () => {
+    mockSaved();
+    renderPage();
+
+    expect(await screen.findByText(`Reason: ${REASON}`)).toBeTruthy();
+    expect(screen.getByText("Status: Rejected")).toBeTruthy();
+    expect(screen.getByText("Requested: 2027-03-12 16:00 to 2027-03-12 22:30")).toBeTruthy();
+    expect(apiClient.get).toHaveBeenCalledWith("/venues/bookings", { params: { event_id: "7" } });
+    expect(apiClient.get).not.toHaveBeenCalledWith("/notifications/");
+    expect(apiClient.post).not.toHaveBeenCalled();
+    expect(screen.getByRole("heading", { name: /Harbour Lights Festival/ })).toBeTruthy();
+    // Rejected venue request does not change the event to rejected or confirm a venue.
+    expect(screen.queryByText(/Venue confirmed:/)).toBeNull();
+  });
+
+  it("keeps the saved rejection visible alongside a later confirmed venue", async () => {
+    mockSaved([SAVED], null, planning({ venue: { id: 4, name: "Civic Hall", location: "12 Civic Road" } }));
+    renderPage();
+
+    expect(await screen.findByText(`Reason: ${REASON}`)).toBeTruthy();
+    expect(screen.getByRole("region", { name: "Previous venue decisions" })).toBeTruthy();
+    expect(screen.getByText("Venue confirmed: Civic Hall, 12 Civic Road")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Submit request" })).toBeNull();
+  });
+
+  it("reports saved rejection load failure and retries without losing request details", async () => {
+    const message = "Saved venue outcomes could not be loaded. Please try again.";
+    mockSaved([], httpFailure(503, { error: message, retryable: true }));
+    const user = renderPage();
+    await screen.findByRole("heading", { name: /request a venue/i });
+    await user.clear(field("Venue requirements"));
+    await user.type(field("Venue requirements"), "Keep my unsent requirements.");
+
+    expect((await screen.findByRole("alert")).textContent).toContain(message);
+    mockSaved();
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+
+    expect(await screen.findByText(`Reason: ${REASON}`)).toBeTruthy();
+    expect(field("Venue requirements").value).toBe("Keep my unsent requirements.");
+    await waitFor(() => expect(screen.queryByText(message)).toBeNull());
   });
 });

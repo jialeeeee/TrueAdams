@@ -10,6 +10,7 @@ import statusLabel from "../utils/statusLabel.js";
 
 const NOT_LOADED = "The event or venues could not be loaded. Check your connection and try again.";
 const NOT_SENT = "Your venue request was not sent. Check your connection and try again.";
+const OUTCOMES_NOT_LOADED = "Saved venue outcomes could not be loaded. Check your connection and try again.";
 // Must match the "missing" messages in _booking_problems (backend/app/venues/routes.py).
 const MISSING = {
   venue_id: "Choose a venue.",
@@ -49,6 +50,22 @@ export default function VenueBookingRequestPage() {
   const [sent, setSent] = useState(null);
   // SCRUM-84: the server's conflicts when the occupied period clashes, and that period.
   const [clash, setClash] = useState(null);
+  const [bookings, setBookings] = useState([]);
+  const [outcomeError, setOutcomeError] = useState(null);
+
+  // SCRUM-69: recover decisions from request rows, independently of notifications.
+  const loadOutcomes = useCallback(async () => {
+    setOutcomeError(null);
+    try {
+      const response = await apiClient.get("/venues/bookings", { params: { event_id: eventId } });
+      setBookings(response.data.bookings);
+    } catch (failure) {
+      setOutcomeError({
+        message: explain(failure, OUTCOMES_NOT_LOADED),
+        retryable: !failure.response || failure.response.data?.retryable === true,
+      });
+    }
+  }, [eventId]);
 
   const load = useCallback(async () => {
     setLoadError("");
@@ -69,12 +86,15 @@ export default function VenueBookingRequestPage() {
         setup_minutes: "0",
         turnaround_minutes: "0",
       });
+      loadOutcomes();
     } catch (failure) {
       setLoadError(explain(failure, NOT_LOADED));
     }
-  }, [eventId]);
+  }, [eventId, loadOutcomes]);
 
   useEffect(() => {
+    setBookings([]);
+    setOutcomeError(null);
     load();
   }, [load]);
 
@@ -125,6 +145,32 @@ export default function VenueBookingRequestPage() {
   if (!event || !form) return <p>Loading…</p>;
 
   const back = <Link to={`/events/${event.id}/planning`}>Back to the event</Link>;
+  const rejections = bookings.filter((booking) => booking.status === "rejected");
+  const outcomes = (
+    <>
+      {outcomeError && (
+        <div>
+          <p role="alert">{outcomeError.message}</p>
+          {outcomeError.retryable && <button type="button" onClick={loadOutcomes}>Retry</button>}
+        </div>
+      )}
+      {rejections.length > 0 && (
+        <section aria-label="Previous venue decisions">
+          <h2>Previous venue decisions</h2>
+          <ul>
+            {rejections.map((booking) => (
+              <li key={booking.id}>
+                <p>{`Status: ${statusLabel(booking.status)}`}</p>
+                <p>{`Venue: ${booking.venue.name}`}</p>
+                <p>{`Requested: ${asText(booking.start_time)} to ${asText(booking.end_time)}`}</p>
+                <p>{`Reason: ${booking.rejection_reason}`}</p>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+    </>
+  );
 
   if (sent) {
     const { booking } = sent;
@@ -139,6 +185,7 @@ export default function VenueBookingRequestPage() {
           <p>{`Occupied: ${asText(booking.occupied_start)} to ${asText(booking.occupied_end)}`}</p>
         )}
         <p>{`Status: ${statusLabel(booking.status)}`}</p>
+        {outcomes}
       </section>
     );
   }
@@ -153,6 +200,7 @@ export default function VenueBookingRequestPage() {
           {`Venue confirmed: ${event.venue.name}${event.venue.location ? `, ${event.venue.location}` : ""}`}
         </p>
         <p>To change the venue, submit a change request.</p>
+        {outcomes}
       </section>
     );
   }
@@ -163,6 +211,7 @@ export default function VenueBookingRequestPage() {
         {back}
         <h1>Request a venue: {event.title}</h1>
         <p>{`A venue can only be requested for an approved event. This event is ${statusLabel(event.status)}.`}</p>
+        {outcomes}
       </section>
     );
   }
@@ -174,6 +223,7 @@ export default function VenueBookingRequestPage() {
     <section>
       {back}
       <h1>Request a venue: {event.title}</h1>
+      {outcomes}
       <form onSubmit={handleSubmit} noValidate>
         <label htmlFor="venue-request-venue">Venue</label>
         <select id="venue-request-venue" value={form.venue_id} onChange={change("venue_id")}>

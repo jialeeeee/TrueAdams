@@ -65,14 +65,14 @@ def _error(message, status_code, **extra):
 
 
 def _require_viewer(roles=VENUE_VIEWER_ROLES, denied="You are not allowed to view venues."):
-    """The caller, checked in the database so role changes apply to existing tokens."""
+    """Load the stored caller; roles=None defers permission until after record lookup."""
     try:
         user = db.session.get(User, int(get_jwt_identity()))
     except (TypeError, ValueError):
         user = None
     if user is None:
         raise _Rejected("Your session is no longer valid. Please log in again.", 401)
-    if user.role not in roles:
+    if roles is not None and user.role not in roles:
         raise _Rejected(denied, 403)
     return user
 
@@ -790,6 +790,10 @@ def request_booking():
 @venues_bp.get("/bookings")
 @jwt_required()
 def list_booking_requests():
+    # SCRUM-69: the assigned coordinator can recover decisions from request rows,
+    # independently of notification delivery/ownership. Staff's existing list is unchanged.
+    if "event_id" in request.args:
+        return _event_booking_requests()
     try:
         _require_viewer(BOOKING_REVIEWER_ROLES, "Only Venue Staff can view venue requests.")
         bookings = (VenueBooking.query.filter_by(status=PENDING)
@@ -812,6 +816,42 @@ def list_booking_requests():
     return jsonify({
         "bookings": payloads,
         "message": None if payloads else "There are no pending venue requests.",
+    })
+
+
+def _booking_decision_payload(booking):
+    """Request details plus the durable decision, for rejection and coordinator reads."""
+    decider = db.session.get(User, booking.decided_by_id) if booking.decided_by_id else None
+    return {
+        **_booking_payload(booking),
+        "rejection_reason": booking.rejection_reason,
+        "decided_at": booking.decided_at.isoformat() if booking.decided_at else None,
+        "decided_by": {"id": decider.id, "email": decider.email} if decider else None,
+    }
+
+
+def _event_booking_requests():
+    """SCRUM-69: only the current coordinator may read an event's saved requests."""
+    try:
+        user = _require_viewer(roles=None)
+        event_id = request.args.get("event_id", "")
+        if not _WHOLE_NUMBER.fullmatch(event_id):
+            raise _Rejected("Choose an event to view its venue requests.", 400, field="event_id")
+        event = db.session.get(Event, int(event_id))
+        if event is None:
+            raise _Rejected("Event not found.", 404)
+        if not is_current_coordinator(user, event):
+            raise _Rejected("Only the event's assigned coordinator can view its venue requests.", 403)
+        bookings = (VenueBooking.query.filter_by(event_id=event.id)
+                    .order_by(VenueBooking.created_at.desc(), VenueBooking.id.desc()).all())
+        payloads = [_booking_decision_payload(booking) for booking in bookings]
+    except _Rejected as rejected:
+        return _error(rejected.message, rejected.status_code, **rejected.extra)
+    except SQLAlchemyError:
+        return _load_failed("Saved venue outcomes could not be loaded. Please try again.")
+    return jsonify({
+        "bookings": payloads,
+        "message": None if payloads else "There are no venue requests for this event.",
     })
 
 
@@ -991,6 +1031,87 @@ def approve_booking(booking_id: int):
         to_address, f"Venue confirmed for {title}: {venue_name}", message, event_id)
     return jsonify({
         "message": f"You approved {venue_name} for {title}. {to_address} has been notified.",
+        "booking": payload,
+        "notification": {"in_app": True, "email_queued": email_queued},
+    })
+
+
+# ---------- Rejecting a pending request (SCRUM-69) ----------
+
+# AC3 specifies characters, independently of the event decision's word limit.
+MAX_REJECTION_REASON_LENGTH = 500
+REJECTION_NOTIFICATION = "venue_booking_rejected"
+
+
+def _rejection_reason(body):
+    if not isinstance(body, dict):
+        raise _Rejected("Send the rejection as JSON.", 400)
+    reason = body.get("reason")
+    if reason is not None and not isinstance(reason, str):
+        raise _Rejected("The rejection reason must be text.", 400, field="reason")
+    reason = (reason or "").strip()
+    if not reason:
+        raise _Rejected("A rejection reason is required.", 400, field="reason")
+    if len(reason) > MAX_REJECTION_REASON_LENGTH:
+        raise _Rejected(
+            f"The rejection reason must be {MAX_REJECTION_REASON_LENGTH} characters or fewer.",
+            400, field="reason")
+    return reason
+
+
+@venues_bp.post("/bookings/<int:booking_id>/reject")
+@jwt_required()
+def reject_booking(booking_id: int):
+    try:
+        # Load the user first, then the record, then check permission (AGENTS.md).
+        user = _require_viewer(roles=None)
+        booking = db.session.get(VenueBooking, booking_id, with_for_update=True,
+                                 populate_existing=True)
+        if booking is None:
+            raise _Rejected("Booking request not found.", 404)
+        if user.role not in BOOKING_REVIEWER_ROLES:
+            raise _Rejected("Only Venue Staff can reject venue requests.", 403)
+        reason = _rejection_reason(request.get_json(silent=True))
+        if booking.status != PENDING:
+            raise _Rejected(
+                f"This request is {booking.status}, so it can no longer be rejected.",
+                409, reason="not_pending")
+        event = db.session.get(Event, booking.event_id, with_for_update=True,
+                               populate_existing=True) if booking.event_id else None
+        coordinator = (db.session.get(User, event.coordinator_id)
+                       if event and event.coordinator_id else None)
+        if event is None or coordinator is None:
+            raise _Rejected(
+                "The request needs an event with an assigned coordinator before it can be rejected.",
+                409)
+        venue = db.session.get(Venue, booking.venue_id)
+        # Retain the request row and all arrangements; rejecting reserves nothing.
+        booking.status = "rejected"
+        booking.rejection_reason = reason
+        booking.decided_at = datetime.utcnow()
+        booking.decided_by_id = user.id
+        message = (
+            f'Your venue request for "{event.title}" at {venue.name} '
+            f"({_period_text(booking.start_time, booking.end_time)}) was rejected by "
+            f"{user.email}. Reason: {reason}"
+        )
+        db.session.add(Notification(recipient_id=coordinator.id, kind=REJECTION_NOTIFICATION,
+                                    message=message, event_id=event.id))
+        payload = _booking_decision_payload(booking)
+        to_address, title, venue_name, event_id = (coordinator.email, event.title,
+                                                  venue.name, event.id)
+        # A saved rejection must always have its in-app notification, and vice versa.
+        db.session.commit()
+    except _Rejected as rejected:
+        return _error(rejected.message, rejected.status_code, **rejected.extra)
+    except SQLAlchemyError:
+        db.session.rollback()
+        return _error("The rejection was not saved. Please try again.", 503, retryable=True)
+
+    email_queued = _queue_coordinator_email(
+        to_address, f"Venue request rejected for {title}: {venue_name}", message, event_id)
+    return jsonify({
+        "message": f"The venue request for {title} at {venue_name} was rejected.",
         "booking": payload,
         "notification": {"in_app": True, "email_queued": email_queued},
     })
