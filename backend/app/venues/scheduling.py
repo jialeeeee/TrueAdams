@@ -71,8 +71,31 @@ def parse_operating_hours(text):
     return hours
 
 
+def occupied(record):
+    """The (start, end) a booking, hold or block occupies: a booking's setup before and
+    turnaround after its event are included (SCRUM-84 A1)."""
+    if isinstance(record, VenueBooking):
+        return (record.start_time - timedelta(minutes=record.setup_minutes or 0),
+                record.end_time + timedelta(minutes=record.turnaround_minutes or 0))
+    return record.start_time, record.end_time
+
+
+def part(start, end):
+    """A setup or turnaround part as {"start", "end", "minutes"}, or None if it is empty."""
+    minutes = int((end - start).total_seconds() // 60)
+    if minutes <= 0:
+        return None
+    return {"start": start.isoformat(), "end": end.isoformat(), "minutes": minutes}
+
+
 def overlapping(query, model, start, end):
-    """Rows of `model` whose period overlaps [start, end)."""
+    """Rows of `model` whose occupied period overlaps [start, end).
+
+    A booking's occupied period includes its setup and turnaround (SCRUM-84 A1); a
+    block's is just its own period.
+    """
+    if model is VenueBooking:
+        return query.filter(model.occupied_start < end, model.occupied_end > start)
     return query.filter(model.start_time < end, model.end_time > start)
 
 

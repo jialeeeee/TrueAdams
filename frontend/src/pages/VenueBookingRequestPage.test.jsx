@@ -125,7 +125,9 @@ describe("SCRUM-39 submit a venue booking request", () => {
 
     await user.click(submitButton());
 
-    expect(apiClient.post).toHaveBeenCalledWith("/venues/bookings", body);
+    // SCRUM-84: setup and turnaround default to none.
+    expect(apiClient.post).toHaveBeenCalledWith(
+      "/venues/bookings", { ...body, setup_minutes: "0", turnaround_minutes: "0" });
     expect((await screen.findByRole("status")).textContent).toContain("sent to Venue Staff");
     expect(screen.getByText("Venue: Aurora Ballroom")).toBeTruthy();
     expect(screen.getByText("Requested: 2027-03-12 16:00 to 2027-03-12 22:30")).toBeTruthy();

@@ -22,7 +22,8 @@ grant usage on schema public to connectsphere_test;
 grant select, insert, update, delete
   on public.users, public.venues, public.resources, public.events, public.registrations,
      public.venue_bookings, public.venue_blocks, public.event_clarifications, public.notifications,
-     public.reassignment_requests, public.equipment_requirements, public.equipment_unavailability
+     public.reassignment_requests, public.venue_changes, public.equipment_requirements,
+     public.equipment_unavailability
   to connectsphere_test;
 grant usage, select on all sequences in schema public to connectsphere_test;
 
@@ -35,7 +36,7 @@ begin
   foreach t in array array['users', 'venues', 'resources', 'events', 'registrations',
                        'venue_bookings', 'venue_blocks',
                        'event_clarifications', 'notifications', 'reassignment_requests',
-                       'equipment_requirements', 'equipment_unavailability'] loop
+                       'venue_changes', 'equipment_requirements', 'equipment_unavailability'] loop
     execute format('drop policy if exists connectsphere_test_all on public.%I', t);
     execute format(
       'create policy connectsphere_test_all on public.%I for all to connectsphere_test '
