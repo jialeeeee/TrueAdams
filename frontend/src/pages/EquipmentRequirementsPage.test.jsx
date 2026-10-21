@@ -248,6 +248,25 @@ describe("SCRUM-42 AC1/AC3 the coordinator records equipment requirements", () =
   });
 });
 
+// SCRUM-43 (TC-43-21): Technical Support reach the availability check from here.
+describe("SCRUM-43 check availability from the equipment requirements", () => {
+  it("links Technical Support Staff to the availability check", async () => {
+    apiClient.get.mockResolvedValue({ data: TECH_PAGE });
+    renderPage();
+
+    const link = await screen.findByRole("link", { name: "Check availability" });
+    expect(link.getAttribute("href")).toBe("/events/7/equipment-availability");
+  });
+
+  it("does not offer the check to the coordinator", async () => {
+    apiClient.get.mockResolvedValue(loaded());
+    renderPage();
+
+    await screen.findByRole("heading", { name: "Charity Gala" });
+    expect(screen.queryByRole("link", { name: "Check availability" })).toBeNull();
+  });
+});
+
 describe("SCRUM-42 AC4/AC6 Technical Support Staff update the arrangements", () => {
   // TC-42-35
   it("lets Technical Support Staff update the arrangement status", async () => {
