@@ -23,7 +23,8 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.events import routes
-from app.models import Event, User
+from app.models import EquipmentRequirement, Event, User, Venue
+from app.venues.routes import venues_bp
 
 
 class AuthorizationHttpUnitTests(unittest.TestCase):
@@ -180,6 +181,97 @@ class AuthorizationHttpUnitTests(unittest.TestCase):
                 headers = self.headers(4, additional_claims={"role": claim})
                 response = self.client.put("/api/events/7/coordinator", json={"coordinator_id": 4}, headers=headers)
                 self.assert_refused_unchanged(response, before)
+
+    # SCRUM-76 TC-76-02/03: neither new role inherits coordinator/staff reads,
+    # even when the caller matches the coordinator ID or supervising Lead.
+    def test_new_roles_cannot_read_unrelated_protected_information(self):
+        self.app.register_blueprint(venues_bp, url_prefix="/api/venues")
+        self.event.coordinator_id = 4
+        self.event.coordinator_assigned_by_id = 4
+        before = dict(self.event.__dict__)
+        paths = ("/api/events/7/planning", "/api/events/7/clarifications",
+                 "/api/events/7/equipment-requirements", "/api/venues/8")
+        for role in ("coordinator_lead", "safety_officer"):
+            self.users[4].role = role
+            for path in paths:
+                with self.subTest(role=role, path=path):
+                    response = self.client.get(path, headers=self.headers(4))
+                    self.assert_refused_unchanged(response, before)
+                    self.assertEqual(set(response.get_json()), {"error"})
+                    for user_id in (1, 2, 3):
+                        self.assertNotIn(self.users[user_id].email, response.get_data(as_text=True))
+
+    # SCRUM-76 TC-76-02/03: representative writes exercise the independent
+    # coordinator, Technical Support and Venue Staff guards with valid bodies.
+    def test_new_roles_denied_writes_leave_state_and_side_effects_unchanged(self):
+        self.app.register_blueprint(venues_bp, url_prefix="/api/venues")
+        self.event.coordinator_id = 4
+        self.event.coordinator_assigned_by_id = 4
+        venue = SimpleNamespace(id=8, name="Private venue", capacity=80)
+        requirement = SimpleNamespace(id=9, event_id=7, status="requested", arrangement_note=None,
+                                      arrangement_updated_by_id=None, arrangement_updated_at=None)
+        original_load = self.session.get.side_effect
+
+        def load(model, record_id, **kwargs):
+            if model is Venue and record_id == venue.id:
+                return venue
+            if model is EquipmentRequirement and record_id == requirement.id:
+                return requirement
+            return original_load(model, record_id, **kwargs)
+
+        self.session.get.side_effect = load
+        before = dict(self.event.__dict__)
+        venue_before, requirement_before = dict(venue.__dict__), dict(requirement.__dict__)
+        requests = (
+            ("PATCH", "/api/events/7", {"title": "Unauthorised title"}),
+            ("PATCH", "/api/events/7/equipment-requirements/9/arrangement",
+             {"status": "being_arranged", "note": "Unauthorised arrangement"}),
+            ("PUT", "/api/venues/8", {"capacity": 200}),
+        )
+        for role in ("coordinator_lead", "safety_officer"):
+            self.users[4].role = role
+            for method, path, body in requests:
+                with self.subTest(role=role, method=method, path=path):
+                    response = self.client.open(path, method=method, json=body, headers=self.headers(4))
+                    self.assert_refused_unchanged(response, before)
+                    self.assertEqual(set(response.get_json()), {"error"})
+                    self.assertEqual(venue.__dict__, venue_before)
+                    self.assertEqual(requirement.__dict__, requirement_before)
+                    self.session.flush.assert_not_called()
+                    self.session.delete.assert_not_called()
+                    self.assertNotIn(venue.name, response.get_data(as_text=True))
+
+    # SCRUM-76 TC-76-04: reuse one JWT across Safety Officer -> Lead -> Safety
+    # Officer; forged claims cannot replace the stored role in either direction.
+    def test_safety_officer_lead_access_follows_stored_role_with_original_token(self):
+        self.users[4].role = "safety_officer"
+        self.event.coordinator_id = None
+        before = dict(self.event.__dict__)
+        headers = self.headers(4, additional_claims={"role": "safety_officer"})
+        forged = self.headers(4, additional_claims={"role": "coordinator_lead"})
+        for token_headers in (headers, forged):
+            with self.subTest(stage="safety officer", forged=token_headers is forged):
+                self.assert_refused_unchanged(
+                    self.client.get("/api/events/7/assignment", headers=token_headers), before)
+        self.assert_refused_unchanged(self.client.get("/api/events/queue", headers=headers), before)
+        self.candidates.assert_not_called()
+
+        self.users[4].role = "coordinator_lead"
+        queue = self.client.get("/api/events/queue", headers=headers)
+        self.assertEqual(queue.status_code, 200)
+        self.assertEqual(queue.get_json()["events"], [])
+        assignment = self.client.get("/api/events/7/assignment", headers=headers)
+        self.assertEqual(assignment.status_code, 200)
+        self.assertEqual(assignment.get_json()["event"]["id"], 7)
+        self.assertEqual(assignment.get_json()["coordinators"], [
+            {"id": 3, "email": self.users[3].email},
+        ])
+
+        self.users[4].role = "safety_officer"
+        self.assert_refused_unchanged(self.client.get("/api/events/queue", headers=headers), before)
+        response = self.client.post("/api/events/7/assignment", headers=headers,
+                                    json={"coordinator_id": 3})
+        self.assert_refused_unchanged(response, before)
 
     def test_forged_relationship_fields_are_rejected_before_mutation(self):
         before = dict(self.event.__dict__)

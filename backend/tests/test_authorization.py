@@ -135,6 +135,24 @@ class AuthorizationEvidenceTests(AppTestCase):
                 self.assert_denied_without_details(response)
                 self.assertEqual(self.event_state(), before)
 
+    # SCRUM-76 TC-76-02/03, AC4/5: complement mocked-state tests with real rows.
+    def test_new_roles_cannot_modify_persisted_planning_information(self):
+        before = self.event_state()
+        event_id = self.event.id
+        notified = Notification.query.filter_by(event_id=event_id).count()
+        with mock.patch.object(tasks.send_notification_email, "delay") as email:
+            for role in ("coordinator_lead", "safety_officer"):
+                with self.subTest(role=role):
+                    caller = self.make_user(role=role)
+                    response = self.client.patch(
+                        f"/api/events/{event_id}", json={"description": "Unauthorised edit"},
+                        headers=self.auth_headers(caller),
+                    )
+                    self.assert_denied_without_details(response)
+                    self.assertEqual(self.event_state(), before)
+                    self.assertEqual(Notification.query.filter_by(event_id=event_id).count(), notified)
+            email.assert_not_called()
+
     # TC-27-01/02: both self-assignment and changing someone else's coordinator.
     def test_unrelated_coordinator_cannot_reassign_or_self_assign(self):
         unrelated = self.make_user(role="coordinator")
