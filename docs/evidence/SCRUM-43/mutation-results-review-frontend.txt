@@ -1,0 +1,4 @@
+baseline: all frontend tests pass
+F10 | Pages for different events share their result | AC1, AC2 | CAUGHT | shows only the event in the address, even when the previous event's result arrives last
+F11 | The shared-stock note is not shown | AC2 (A11) | CAUGHT | says when requirements share the same equipment, and that together they need more
+after restore: all pass

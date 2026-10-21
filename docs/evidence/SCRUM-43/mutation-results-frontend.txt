@@ -1,0 +1,11 @@
+baseline: all frontend tests pass
+F1 | Technical Support get no link to the check | AC1 | CAUGHT | links Technical Support Staff to the availability check
+F2 | The coordinator is offered the check too | AC1 (A9) | CAUGHT | does not offer the check to the coordinator
+F3 | The available quantity is not shown | AC2 | CAUGHT | shows each requirement with its requested and available quantity
+F4 | Whether there is enough is not shown | AC2 | CAUGHT | shows each requirement with its requested and available quantity
+F5 | The technical requirements note is not shown | AC1 | CAUGHT | shows each requirement with its requested and available quantity
+F6 | Excluded equipment is not listed | AC3 | CAUGHT | lists the equipment excluded and why
+F7 | The page doesn't say checking reserves nothing | AC4 | CAUGHT | says that checking does not reserve any equipment
+F8 | An error is not announced as an alert | AC5 | CAUGHT | explains a failed check without a server message, explains missing times without showing a result, offers Retry after a failed check, shows a refusal without Retry
+F9 | A failed check offers no Retry | AC5 | CAUGHT | explains a failed check without a server message, offers Retry after a failed check
+after restore: all pass

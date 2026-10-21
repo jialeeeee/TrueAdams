@@ -237,6 +237,10 @@ function EventEquipment({ eventId }) {
       <p>{`Status: ${statusLabel(event.status)}`}</p>
       <p>{when(event)}</p>
       {page.organiser_note && <p>{`From the organiser's request: ${page.organiser_note}`}</p>}
+      {/* SCRUM-43: Technical Support check whether the requirements can be met. */}
+      {page.can_update_arrangements && (
+        <Link to={`/events/${event.id}/equipment-availability`}>Check availability</Link>
+      )}
       {page.notice && <p>{page.notice}</p>}
       {confirmation && <p role="status">{confirmation}</p>}
       {failure && <p role="alert">{failure}</p>}

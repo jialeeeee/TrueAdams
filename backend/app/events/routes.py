@@ -10,15 +10,19 @@ from .. import tasks
 from ..extensions import db
 from ..models import (
     EquipmentRequirement,
+    EquipmentUnavailability,
     Event,
     EventClarification,
     Notification,
     ReassignmentRequest,
     Registration,
+    Resource,
     User,
     Venue,
 )
 from ..registrations.routes import REGISTERED, REGISTRABLE_STATUS, singapore_now
+from ..resources import availability
+from ..venues.scheduling import overlapping
 from . import equipment, suitability
 from .permissions import (
     COORDINATOR_ROLE,
@@ -2548,3 +2552,73 @@ def list_equipment_requests():
                       retryable=True)
 
     return jsonify({"events": items, "message": None if items else NO_EQUIPMENT_REQUESTS})
+
+
+# ---------- Check equipment availability (SCRUM-43) ----------
+
+EQUIPMENT_CHECK_TECH_ONLY = "Only Technical Support Staff can check equipment availability."
+CHECK_DOES_NOT_RESERVE = "Checking availability does not reserve any equipment."
+CHECK_NOT_COMPLETED = "The equipment availability check could not be completed. Please try again."
+# The event fields the check needs, with how they are named in the error (AC5).
+CHECK_TIME_FIELDS = {"start_time": "start time", "end_time": "end time"}
+
+
+def _missing_times(event):
+    """A 422 naming the event's times that aren't recorded (A10)."""
+    missing = [name for name in CHECK_TIME_FIELDS if getattr(event, name) is None]
+    if missing:
+        labels = _join_words([CHECK_TIME_FIELDS[name] for name in missing])
+        verb = "is" if len(missing) == 1 else "are"
+        raise _Rejected(
+            f"The event's {labels} {verb} not recorded, so equipment availability can't be "
+            "checked. Ask the event's coordinator to record them.",
+            422, missing=missing)
+
+
+@events_bp.get("/<int:event_id>/equipment-availability")
+@jwt_required()
+def check_equipment_availability(event_id: int):
+    """Whether each recorded requirement can be met from the equipment catalogue over the
+    event's period. Read-only: it reserves nothing (AC4)."""
+    try:
+        _, event = _equipment_event(event_id, is_tech_staff, EQUIPMENT_CHECK_TECH_ONLY)
+        if event.status in EQUIPMENT_CLOSED_STATUSES:
+            raise _Rejected(f"This event is {event.status}, so there is no equipment to arrange.",
+                            409)
+        _missing_times(event)
+
+        requirements = (EquipmentRequirement.query.filter_by(event_id=event.id)
+                        .order_by(EquipmentRequirement.id).all())
+        resources = Resource.query.order_by(Resource.name, Resource.id).all() if requirements else []
+        suitable_ids = [r.id for r in resources
+                        if any(availability.is_suitable(r, q.equipment_type) for q in requirements)]
+        unavailable = {}
+        if suitable_ids:
+            periods = overlapping(
+                EquipmentUnavailability.query.filter(
+                    EquipmentUnavailability.resource_id.in_(suitable_ids)),
+                EquipmentUnavailability, event.start_time, event.end_time).all()
+            for period in periods:
+                unavailable.setdefault(period.resource_id, []).append(period)
+        # Requirements for the same equipment share its stock (review of PR #48).
+        checks = availability.check_all(requirements, resources, unavailable)
+    except _Rejected as rejected:
+        return _error(rejected.message, rejected.status_code, **rejected.extra)
+    except SQLAlchemyError:
+        db.session.rollback()
+        return _error(CHECK_NOT_COMPLETED, 503, retryable=True)
+
+    return jsonify({
+        "event": {
+            "id": event.id,
+            "title": event.title,
+            "status": event.status,
+            "start_time": _isoformat(event.start_time),
+            "end_time": _isoformat(event.end_time),
+        },
+        "checks": checks,
+        "summary": availability.summary(checks),
+        "can_all_be_met": bool(checks) and all(c["result"] == availability.ENOUGH for c in checks),
+        "notice": CHECK_DOES_NOT_RESERVE,
+        "message": None if checks else NO_EQUIPMENT_REQUIREMENTS,
+    })

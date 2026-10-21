@@ -286,6 +286,28 @@ class EquipmentRequirement(db.Model):
     arrangement_updated_at = db.Column(db.DateTime)
 
 
+class EquipmentUnavailability(db.Model):
+    """A recorded period when an item of equipment can't be used, e.g. repair (SCRUM-43).
+
+    It makes the whole item unavailable for any event it overlaps (A5).
+    """
+
+    __tablename__ = "equipment_unavailability"
+    __table_args__ = (
+        db.CheckConstraint("end_time > start_time",
+                           name="equipment_unavailability_end_after_start"),
+        db.Index("equipment_unavailability_resource_id", "resource_id"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    resource_id = db.Column(db.Integer, db.ForeignKey("resources.id"), nullable=False)
+    # Singapore time, stored without a time zone; half-open [start, end).
+    start_time = db.Column(db.DateTime, nullable=False)
+    end_time = db.Column(db.DateTime, nullable=False)
+    reason = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+
 class VenueChange(db.Model):
     """SCRUM-63: one add or edit of a venue, with who made it and when."""
 
