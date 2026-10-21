@@ -1,0 +1,8 @@
+baseline: all backend tests pass
+B12 | Editing the details keeps the old arrangement status | AC4 (A8) | CAUGHT | test_tc_42_06_editing_the_details_sends_it_back_to_requested
+B14 | Recording reduces the equipment's available quantity | AC5 | CAUGHT | test_tc_42_24_recording_does_not_reserve_or_reduce_availability
+B16 | Marking a requirement unavailable removes it | AC6 | CAUGHT | test_tc_42_26_unavailable_stays_recorded_and_is_not_fulfilled
+B17 | A failed save is not rolled back | AC7 | CAUGHT | test_tc_42_27_a_failed_save_keeps_existing_requirements
+B19 | A failure after saving is reported as a failed save | AC7 | CAUGHT | test_tc_42_40_a_failure_after_saving_is_not_reported_as_a_failed_save
+B20 | Editing keeps Technical Support's old note and who updated it | AC4 (A8) | CAUGHT | test_tc_42_06_editing_the_details_sends_it_back_to_requested
+after restore: all pass

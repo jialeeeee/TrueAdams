@@ -29,11 +29,11 @@
   - the same type with the same technical requirements (ignoring case and spacing) can't be recorded twice for one event: the coordinator is told to change the existing one's quantity.
 - **A6 — Types are free text,** not chosen from the equipment catalogue, so a requirement can be recorded even when no suitable equipment exists (AC6). SCRUM-43 will match a type to equipment ignoring case and spacing. *(Q4)*
 - **A7 — Technical Support Staff:** any `tech_staff` user can see every open event that has requirements, view them, and set each requirement's arrangement status with an optional note (up to 1,000 characters). The statuses are **Requested** (the starting status), **Being arranged** and **Suitable equipment unavailable**. Nobody can set a requirement to reserved or fulfilled here: reserving is SCRUM-44. They cannot change the coordinator's details. *(Q6)*
-- **A8 — Editing resets the arrangement:** when the coordinator changes a requirement's type, quantity or technical requirements, its status goes back to Requested, because the arrangements were for the old details. Saving with nothing changed keeps the status. Removing a requirement deletes it. *(Q7)*
+- **A8 — Editing resets the arrangement:** when the coordinator changes a requirement's type, quantity or technical requirements, its status goes back to Requested and Technical Support's note, and who updated it and when, are cleared, because the arrangements were for the old details (changed after the review of PR #47: keeping the note made the old arrangement look as if it applied to the new details). Saving with nothing changed keeps everything. Removing a requirement deletes it. *(Q7)*
 - **A9 — Who can view:** the event's coordinator and Technical Support Staff. Everyone else, including the organiser and other coordinators, is refused (HTTP 403) without the event's details. *(Q8)*
 - **A10 — No notifications** are sent when requirements are recorded or updated. *(Q9)*
 - **A11 — Order of checks:** 401 (no valid user) → 404 (no such event) → 403 (not allowed) → 404 (no such requirement on this event) → 409 (cancelled or rejected event) → 400 (body is not a JSON object) → 422 (invalid fields). The requirement's 404 comes after the 403 so people who may not see an event learn nothing about its requirements. The 409 comes before validation, as in the planning edit (SCRUM-53).
-- **A12 — Failures:** a failed load is an error (HTTP 503, `retryable: true`), never an empty list. A failed save, edit, removal or status update is rolled back, leaves every recorded requirement as it was, and says so (HTTP 503, `retryable: true`). The page keeps what was entered.
+- **A12 — Failures:** a failed load is an error (HTTP 503, `retryable: true`), never an empty list. A failed save, edit, removal or status update is rolled back, leaves every recorded requirement as it was, and says so (HTTP 503, `retryable: true`). The page keeps what was entered. Once a change is committed it is never reported as failed: if reading the updated list back fails, the reply is the usual success with `saved: true` and `refresh_error` instead of the list, and the page loads the list again (added after the review of PR #47). The page shows only the event in its address, and only the newest reply.
 
 ## Seed data (EQ-SEED)
 
@@ -88,7 +88,7 @@ The requirement used is **2 × Wireless microphone**, technical requirements "La
 **TC-42-06 · Editing the details sends a requirement back to Requested**
 - **Traces to:** AC1, AC4 · **Type:** Business rule · **Depends on:** A8
 - **Steps:** hana sets alice's Wireless microphone × 2 to Being arranged. alice saves it unchanged, then changes the quantity to 3.
-- **Expected result:** The unchanged save keeps Being arranged. The quantity change sets it back to Requested and the message says why. hana's note is kept.
+- **Expected result:** The unchanged save keeps Being arranged, hana's note and that hana updated it. The quantity change sets it back to Requested and clears the note and who updated it and when; the message says why.
 - **Automated:** `test_tc_42_06_editing_the_details_sends_it_back_to_requested`
 
 **TC-42-07 · Cancelled and rejected events can't be changed**
@@ -241,6 +241,12 @@ The requirement used is **2 × Wireless microphone**, technical requirements "La
 - **Expected result:** HTTP 503, `retryable: true`, and no `requirements` or `events` in the reply.
 - **Automated:** `test_tc_42_29_a_failed_load_is_a_failure_not_an_empty_list`
 
+**TC-42-40 · A failure after the change is saved is not reported as a failed save** *(added after the review of PR #47)*
+- **Traces to:** AC7 · **Type:** Negative (failure) · **Depends on:** A12
+- **Steps:** Make reading the updated list fail after the commit, while alice records a Projector, changes the microphones to 3 and removes them, and while hana marks them Being arranged.
+- **Expected result:** Each reply is the usual success (201 or 200) with the confirmation, `saved: true` and a `refresh_error` saying the change was saved; never an `error` or "unchanged". Each change is in the database.
+- **Automated:** `test_tc_42_40_a_failure_after_saving_is_not_reported_as_a_failed_save`
+
 ## Frontend
 
 `EquipmentRequirementsPage` (`/events/:eventId/equipment`, linked from the coordinator's planning page) and `EquipmentRequestsPage` (`/equipment-requests`, in the navigation for Technical Support Staff). The API is mocked with replies that mirror the backend contract.
@@ -265,6 +271,10 @@ The requirement used is **2 × Wireless microphone**, technical requirements "La
 
 **TC-42-39 · The planning page links to the equipment requirements** — AC1 · `EventPlanningPage` "links to the equipment requirements"
 
+**TC-42-41 · Moving to another event shows only that event** *(added after the review of PR #47)* — AC3 · `shows only the event in the address, even when the previous event's reply arrives last`, `starts the next event with an empty form, not the previous event's edit`, `ignores a save for the previous event that finishes after moving on`, `keeps the newest list when an older load arrives after a save`
+
+**TC-42-42 · A change saved without its list coming back is reloaded, and still said to be saved** *(added after the review of PR #47)* — AC7 · `loads the list again when the change was saved but the list could not be sent back`, `says the change was saved when the list can't be loaded afterwards either`
+
 ---
 
 ## Traceability matrix
@@ -273,11 +283,11 @@ The requirement used is **2 × Wireless microphone**, technical requirements "La
 |----|------------|
 | AC1 | 01, 02, 03, 04, 05, 06, 07, 08, 30, 31, 34, 36, 39 |
 | AC2 | 09, 10, 11, 12, 13, 14, 15, 32 |
-| AC3 | 01, 03, 05, 12, 16, 17, 18, 29, 30, 31 |
+| AC3 | 01, 03, 05, 12, 16, 17, 18, 29, 30, 31, 41 |
 | AC4 | 06, 19, 20, 21, 22, 23, 28, 35, 38 |
 | AC5 | 24, 31 |
 | AC6 | 22, 25, 26, 35 |
-| AC7 | 14, 27, 28, 29, 33, 37, 38 |
+| AC7 | 14, 27, 28, 29, 33, 37, 38, 40, 42 |
 
 ## Open questions for the customer
 
@@ -289,6 +299,6 @@ The requirement used is **2 × Wireless microphone**, technical requirements "La
 | Q4 | Should equipment types be chosen from a defined list rather than typed freely? A defined list makes availability matching (SCRUM-43) exact, but then nothing outside the list could be recorded. | A6, TC-42-25 |
 | Q5 | Should the organiser's free-text equipment note from the request be kept alongside the recorded requirements (as built), or replaced by them? | A2 |
 | Q6 | What does Technical Support "update the request" with? Assumed: a status (Requested, Being arranged, Suitable equipment unavailable) and a note. | A7, TC-42-21, 22 |
-| Q7 | When the coordinator changes a requirement that Technical Support are already arranging, should it go back to Requested (as built)? | A8, TC-42-06 |
+| Q7 | When the coordinator changes a requirement that Technical Support are already arranging, should it go back to Requested with Technical Support's note cleared (as built), or should the earlier arrangement be kept as history? | A8, TC-42-06 |
 | Q8 | Should the organiser or the Coordinator Lead be able to view the recorded requirements? | A9, TC-42-23 |
 | Q9 | Should Technical Support Staff be notified when requirements are recorded or changed, or the coordinator when an arrangement is updated? | A10 |

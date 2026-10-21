@@ -42,6 +42,7 @@ from flask_jwt_extended import create_access_token
 from sqlalchemy import event as sa_event
 from sqlalchemy.exc import OperationalError, SQLAlchemyError
 
+from app.events import routes as event_routes
 from app.models import Event, Resource
 from tests import seed_data
 from tests.base import AppTestCase
@@ -261,14 +262,24 @@ class RecordTests(EquipmentTestCase):
 
         unchanged = self.edit(requirement_id)
         self.assertEqual(unchanged.status_code, 200, unchanged.get_json())
-        self.assertEqual(unchanged.get_json()["requirement"]["status"], "being_arranged")
+        kept = unchanged.get_json()["requirement"]
+        self.assertEqual((kept["status"], kept["arrangement_note"]), ("being_arranged", note))
+        self.assertEqual(kept["arrangement_updated_by"]["id"], self.users["hana"].id)
 
         changed = self.edit(requirement_id, quantity=3)
         self.assertEqual(changed.status_code, 200, changed.get_json())
         requirement = changed.get_json()["requirement"]
-        self.assertEqual(requirement["status"], "requested")
-        self.assertEqual(requirement["arrangement_note"], note)
+        # The old arrangement was for 2, so none of it is shown against 3 (review of PR #47).
+        self.assertEqual(
+            {k: requirement[k] for k in ("status", "arrangement_note", "arrangement_updated_by",
+                                         "arrangement_updated_at")},
+            {"status": "requested", "arrangement_note": None, "arrangement_updated_by": None,
+             "arrangement_updated_at": None})
         self.assertIn("Requested", changed.get_json()["confirmation"])
+        self.assertIn("note were cleared", changed.get_json()["confirmation"])
+        row = self.stored(requirement_id)
+        self.assertEqual((row.arrangement_note, row.arrangement_updated_by_id,
+                          row.arrangement_updated_at), (None, None, None))
 
     # TC-42-07 · AC1 (A4)
     def test_tc_42_07_cancelled_and_rejected_events_cannot_be_changed(self):
@@ -660,6 +671,43 @@ class FailureTests(EquipmentTestCase):
         self.assert_unavailable(response)
         row = self.stored(requirement_id)
         self.assertEqual((row.status, row.arrangement_note), ("requested", None))
+
+    # TC-42-40 · AC7 (review of PR #47) — once the change is committed, failing to read the
+    # page back must not be reported as a failed save.
+    def test_tc_42_40_a_failure_after_saving_is_not_reported_as_a_failed_save(self):
+        requirement_id = self.recorded_id()
+
+        def stored_quantity_and_status():
+            row = self.stored(requirement_id)
+            return None if row is None else (row.quantity, row.status)
+
+        steps = [
+            ("record", lambda: self.record(equipment_type="Projector", quantity=1,
+                                           technical_requirements=None), 201,
+             lambda: self.assertIn(("Projector", 1, None, "requested"), self.recorded())),
+            ("edit", lambda: self.edit(requirement_id, quantity=3), 200,
+             lambda: self.assertEqual(stored_quantity_and_status(), (3, "requested"))),
+            ("arrange", lambda: self.arrange(requirement_id, status="being_arranged"), 200,
+             lambda: self.assertEqual(stored_quantity_and_status(), (3, "being_arranged"))),
+            ("remove", lambda: self.remove(requirement_id), 200,
+             lambda: self.assertIsNone(stored_quantity_and_status())),
+        ]
+        for action, call, status_code, saved in steps:
+            with self.subTest(action=action):
+                outage = OperationalError("SELECT", {}, Exception("simulated outage"))
+                with mock.patch.object(event_routes, "_equipment_page", side_effect=outage):
+                    response = call()
+
+                self.assertEqual(response.status_code, status_code, response.get_json())
+                body = response.get_json()
+                self.assertIs(body["saved"], True)
+                self.assertTrue(body["confirmation"].strip())
+                self.assertIn("was saved", body["refresh_error"])
+                self.assertNotIn("error", body)
+                self.assertNotIn("requirements", body)
+                saved()
+
+        self.assertEqual(self.recorded(), [("Projector", 1, None, "requested")])
 
     # TC-42-29 · AC7, AC3
     def test_tc_42_29_a_failed_load_is_a_failure_not_an_empty_list(self):

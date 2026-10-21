@@ -1,11 +1,11 @@
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import apiClient from "../api/client.js";
 import EquipmentRequirementsPage from "./EquipmentRequirementsPage.jsx";
 
-// Frontend cases TC-42-30 to TC-42-37 in docs/test-cases/SCRUM-42-equipment-requirements.md.
+// Frontend cases TC-42-30 to TC-42-37, 41 and 42 in docs/test-cases/SCRUM-42-equipment-requirements.md.
 // The API is covered by backend/tests/test_equipment_requirements.py; responses mirror its
 // contract:
 //   GET    /events/<id>/equipment-requirements -> PAGE
@@ -310,6 +310,153 @@ describe("SCRUM-42 AC4/AC6 Technical Support Staff update the arrangements", () 
 
     expect((await screen.findByRole("alert")).textContent).toContain(refusal);
     expect(screen.getByLabelText("Arrangement status for 1 × Projector").value).toBe("unavailable");
+  });
+});
+
+// Review of PR #47: replies for another event, or older replies, must never show.
+const WORKSHOP = {
+  ...PAGE,
+  event: { ...EVENT, id: 8, title: "Workshop" },
+  organiser_note: null,
+  requirements: [{ ...MIC, id: 21, equipment_type: "Lectern", quantity: 1, technical_requirements: null }],
+};
+
+function later() {
+  let resolve;
+  const promise = new Promise((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
+// One mounted route, as when the address changes from event 7's page to event 8's.
+function renderMovingToWorkshop() {
+  render(
+    <MemoryRouter initialEntries={["/events/7/equipment"]} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+      <Link to="/events/8/equipment">Open the workshop</Link>
+      <Routes>
+        <Route path="/events/:eventId/equipment" element={<EquipmentRequirementsPage />} />
+      </Routes>
+    </MemoryRouter>,
+  );
+  return userEvent.setup();
+}
+
+const pageFor = (gala) => async (url) => {
+  if (url === "/events/7/equipment-requirements") return gala;
+  if (url === "/events/8/equipment-requirements") return { data: WORKSHOP };
+  throw new Error(`Unexpected API read: ${url}`);
+};
+
+describe("SCRUM-42 replies for another event or out of order", () => {
+  // TC-42-41
+  it("shows only the event in the address, even when the previous event's reply arrives last", async () => {
+    const gala = later();
+    apiClient.get.mockImplementation(pageFor(gala.promise));
+    const user = renderMovingToWorkshop();
+
+    await user.click(screen.getByRole("link", { name: "Open the workshop" }));
+    expect(await screen.findByRole("heading", { name: "Workshop" })).toBeTruthy();
+    await act(async () => gala.resolve({ data: PAGE }));
+
+    expect(screen.getByRole("heading", { name: "Workshop" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Charity Gala" })).toBeNull();
+    expect(screen.queryByText(/Wireless microphone/)).toBeNull();
+    expect(within(list()).getByRole("listitem").textContent).toContain("1 × Lectern");
+  });
+
+  it("starts the next event with an empty form, not the previous event's edit", async () => {
+    apiClient.get.mockImplementation(pageFor(Promise.resolve({ data: PAGE })));
+    const user = renderMovingToWorkshop();
+    await user.click(await screen.findByRole("button", { name: "Edit 2 × Wireless microphone" }));
+    expect(typeInput().value).toBe("Wireless microphone");
+
+    await user.click(screen.getByRole("link", { name: "Open the workshop" }));
+
+    expect(await screen.findByRole("heading", { name: "Workshop" })).toBeTruthy();
+    expect(typeInput().value).toBe("");
+    expect(screen.queryByRole("button", { name: "Save changes" })).toBeNull();
+  });
+
+  it("ignores a save for the previous event that finishes after moving on", async () => {
+    const saved = later();
+    apiClient.get.mockImplementation(pageFor(Promise.resolve({ data: PAGE })));
+    apiClient.post.mockReturnValue(saved.promise);
+    const user = renderMovingToWorkshop();
+    await screen.findByLabelText("Equipment type");
+    await enter(user, { type: "Projector", quantity: "1" });
+    await user.click(recordButton());
+
+    await user.click(screen.getByRole("link", { name: "Open the workshop" }));
+    await screen.findByRole("heading", { name: "Workshop" });
+    await act(async () => saved.resolve({
+      data: { ...PAGE, requirements: [MIC, PROJECTOR], requirement: PROJECTOR, confirmation: "Recorded 1 × Projector for Charity Gala." },
+    }));
+
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.queryByText(/Projector/)).toBeNull();
+    expect(within(list()).getByRole("listitem").textContent).toContain("1 × Lectern");
+  });
+
+  // TC-42-42
+  it("loads the list again when the change was saved but the list could not be sent back", async () => {
+    const confirmation = "Recorded 1 × Projector for Charity Gala. Recording a requirement does not reserve any equipment.";
+    apiClient.get
+      .mockResolvedValueOnce(loaded())
+      .mockResolvedValueOnce(loaded({ requirements: [MIC, PROJECTOR] }));
+    apiClient.post.mockResolvedValue({ data: {
+      confirmation, saved: true,
+      refresh_error: "The change was saved, but the updated requirements could not be loaded. Reload the page to see them.",
+    } });
+    const user = renderPage();
+    await screen.findByLabelText("Equipment type");
+
+    await enter(user, { type: "Projector", quantity: "1" });
+    await user.click(recordButton());
+
+    expect((await screen.findByRole("status")).textContent).toContain(confirmation);
+    expect(await within(list()).findByText("1 × Projector")).toBeTruthy();
+    expect(apiClient.get).toHaveBeenCalledTimes(2);
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(typeInput().value).toBe("");
+  });
+
+  it("says the change was saved when the list can't be loaded afterwards either", async () => {
+    apiClient.get
+      .mockResolvedValueOnce(loaded())
+      .mockRejectedValueOnce(failed(503, { error: "The equipment requirements could not be loaded. Please try again.", retryable: true }));
+    apiClient.post.mockResolvedValue({ data: {
+      confirmation: "Recorded 1 × Projector for Charity Gala.", saved: true,
+      refresh_error: "The change was saved, but the updated requirements could not be loaded. Reload the page to see them.",
+    } });
+    const user = renderPage();
+    await screen.findByLabelText("Equipment type");
+
+    await enter(user, { type: "Projector", quantity: "1" });
+    await user.click(recordButton());
+
+    expect((await screen.findByRole("alert")).textContent).toContain("could not be loaded");
+    expect(screen.getByRole("status").textContent).toContain("Recorded 1 × Projector");
+    expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
+  });
+
+  it("keeps the newest list when an older load arrives after a save", async () => {
+    const reload = later();
+    apiClient.get
+      .mockResolvedValueOnce(loaded())
+      .mockReturnValueOnce(reload.promise);
+    apiClient.post
+      .mockResolvedValueOnce({ data: { confirmation: "Recorded 1 × Projector.", saved: true, refresh_error: "Reload the page." } })
+      .mockResolvedValueOnce({ data: { ...PAGE, requirements: [MIC, PROJECTOR, { ...PROJECTOR, id: 13, equipment_type: "Screen" }], confirmation: "Recorded 1 × Screen." } });
+    const user = renderPage();
+    await screen.findByLabelText("Equipment type");
+
+    await enter(user, { type: "Projector", quantity: "1" });
+    await user.click(recordButton());
+    await enter(user, { type: "Screen", quantity: "1" });
+    await user.click(recordButton());
+    expect(await within(list()).findByText("1 × Screen")).toBeTruthy();
+    await act(async () => reload.resolve(loaded()));
+
+    expect(within(list()).getAllByRole("listitem")).toHaveLength(3);
   });
 });
 
