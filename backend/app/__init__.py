@@ -6,6 +6,8 @@ from .events.routes import events_bp
 from .extensions import celery, cors, db, jwt
 from .notifications.routes import notifications_bp
 from .registrations.routes import registrations_bp
+# Imported for its rule that releases equipment reservations on saving (SCRUM-44 A10).
+from .resources import release  # noqa: F401
 from .resources.routes import resources_bp
 from .venues.routes import venues_bp
 

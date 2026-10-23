@@ -1,0 +1,16 @@
+baseline: all frontend tests pass
+F1 | No form to reserve with | AC2 | CAUGHT | explains a failed save without a server message, keeps the selection after a failed save so it can be tried again, loads the page again when the reservation was saved but the page could not be sent back, reserves the chosen quantities and shows the confirmation, sends only the items given a quantity, shows the available quantity when more is chosen than is available, shows the reservation period and what can be reserved for each requirement
+F2 | A form is offered when nothing can be reserved | AC6 | CAUGHT | reserves the chosen quantities and shows the confirmation, says when no suitable equipment is available and offers nothing to reserve
+F3 | The coordinator is offered the form | AC1 (A3) | CAUGHT | explains why an event that is not approved cannot be reserved for, shows the coordinator the reservations without a way to reserve
+F4 | Every item is sent, with or without a quantity | AC2 | CAUGHT | sends only the items given a quantity
+F5 | The reservation period is not shown | AC1 | CAUGHT | shows the reservation period and what can be reserved for each requirement
+F6 | How much is reserved is not shown | AC3 | CAUGHT | reserves the chosen quantities and shows the confirmation, shows the coordinator the reservations without a way to reserve, shows the reservation period and what can be reserved for each requirement
+F7 | Other events' reservations are not explained | AC4 | CAUGHT | says how much of an item other events and this event have reserved
+F8 | The confirmation is not shown | AC3 | CAUGHT | keeps the selection after a failed save so it can be tried again, loads the page again when the reservation was saved but the page could not be sent back, reserves the chosen quantities and shows the confirmation
+F9 | A refusal is not shown | AC5, AC7 | CAUGHT | explains a failed save without a server message, keeps the selection after a failed save so it can be tried again, shows the available quantity when more is chosen than is available
+F10 | The selection is cleared after a failed save | AC7 | CAUGHT | keeps the selection after a failed save so it can be tried again, shows the available quantity when more is chosen than is available
+F11 | Released reservations are not listed | AC9 | CAUGHT | lists released reservations with the reason
+F12 | A page for the previous event can show under the next | AC1 | CAUGHT | shows only the event in the address, even when the previous event's page arrives last
+F13 | The availability check hides other events' reservations | AC4 | CAUGHT | shows how much of each item other events have reserved
+F14 | Technical Support and the coordinator get the same link | AC1 | CAUGHT | links Technical Support Staff to reserving equipment, links the coordinator to the reserved equipment
+after restore: all pass

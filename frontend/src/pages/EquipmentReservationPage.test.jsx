@@ -156,14 +156,15 @@ describe("SCRUM-44 Technical Support reserve equipment for an event", () => {
 
   it("sends only the items given a quantity", async () => {
     apiClient.get.mockResolvedValue({ data: PAGE });
-    apiClient.post.mockResolvedValue({ data: { ...PAGE, confirmation: "Reserved 1 × BenQ LU935.", saved: true } });
+    apiClient.post.mockResolvedValue({ data: { ...PAGE, confirmation: "Reserved 2 × Sennheiser EW-D.", saved: true } });
     const user = renderPage();
 
-    await user.type(await screen.findByLabelText("Quantity of BenQ LU935"), "1");
-    await user.click(reserveButton("1 × Projector"));
+    await user.type(await screen.findByLabelText("Quantity of Sennheiser EW-D"), "2");
+    await user.type(quantity("Shure SLX-D"), "0");
+    await user.click(reserveButton("3 × Wireless microphone"));
 
     expect(apiClient.post).toHaveBeenCalledWith("/events/7/equipment-reservations", {
-      requirement_id: 12, items: [{ resource_id: 4, quantity: 1 }],
+      requirement_id: 11, items: [{ resource_id: 2, quantity: 2 }],
     });
   });
 

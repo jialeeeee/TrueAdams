@@ -310,6 +310,43 @@ class EquipmentUnavailability(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 
+class EquipmentReservation(db.Model):
+    """A quantity of one item of equipment reserved for an event's requirement (SCRUM-44).
+
+    Only "reserved" rows hold equipment. A released row is kept as history: it says when
+    and why it stopped holding the equipment (A10).
+    """
+
+    __tablename__ = "equipment_reservations"
+    __table_args__ = (
+        db.CheckConstraint("quantity > 0", name="equipment_reservations_quantity_positive"),
+        db.CheckConstraint("end_time > start_time",
+                           name="equipment_reservations_end_after_start"),
+        db.Index("equipment_reservations_event_id", "event_id"),
+        db.Index("equipment_reservations_requirement_id", "requirement_id"),
+        db.Index("equipment_reservations_resource_id", "resource_id"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    event_id = db.Column(db.Integer, db.ForeignKey("events.id"), nullable=False)
+    # NULL once the requirement it was for has been removed; the release reason says so.
+    requirement_id = db.Column(
+        db.Integer, db.ForeignKey("equipment_requirements.id", ondelete="SET NULL"))
+    resource_id = db.Column(db.Integer, db.ForeignKey("resources.id"), nullable=False)
+    quantity = db.Column(db.Integer, nullable=False)
+    # The reservation period: the event's times when it was reserved (Singapore time,
+    # stored without a time zone, half-open [start, end); A2).
+    start_time = db.Column(db.DateTime, nullable=False)
+    end_time = db.Column(db.DateTime, nullable=False)
+    # "reserved" or "released".
+    status = db.Column(db.String(20), nullable=False, default="reserved")
+    # Who reserved it and when, and when and why it was released (naive UTC).
+    reserved_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    reserved_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    released_at = db.Column(db.DateTime)
+    release_reason = db.Column(db.Text)
+
+
 class VenueChange(db.Model):
     """SCRUM-63: one add or edit of a venue, with who made it and when."""
 

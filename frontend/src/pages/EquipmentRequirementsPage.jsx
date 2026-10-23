@@ -241,6 +241,10 @@ function EventEquipment({ eventId }) {
       {page.can_update_arrangements && (
         <Link to={`/events/${event.id}/equipment-availability`}>Check availability</Link>
       )}
+      {/* SCRUM-44: Technical Support reserve; the coordinator can see what is reserved. */}
+      <Link to={`/events/${event.id}/equipment-reservations`}>
+        {page.can_update_arrangements ? "Reserve equipment" : "Reserved equipment"}
+      </Link>
       {page.notice && <p>{page.notice}</p>}
       {confirmation && <p role="status">{confirmation}</p>}
       {failure && <p role="alert">{failure}</p>}

@@ -155,11 +155,24 @@ class EquipmentAvailabilityRuleTests(unittest.TestCase):
                          "still to be checked.")
 
     def test_nothing_says_reserved_booked_or_confirmed(self):  # AC4
+        # The text shown, not the field names: since SCRUM-44 each item has a number
+        # under "reserved_for_other_events", which says nothing was reserved here.
         for requirement in (need("Wireless microphone", 3), need("Hologram projector", 1),
                             need("Wireless microphone", 1, technical="Lapel")):
-            text = str(self.check(requirement)).lower()
+            text = " ".join(texts(self.check(requirement))).lower()
             for word in ("reserved", "booked", "confirmed"):
                 self.assertNotIn(word, text)
+
+
+def texts(value):
+    """Every piece of text in a result, at any depth, without the field names."""
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        return [text for item in value.values() for text in texts(item)]
+    if isinstance(value, (list, tuple)):
+        return [text for item in value for text in texts(item)]
+    return []
 
 
 if __name__ == "__main__":
