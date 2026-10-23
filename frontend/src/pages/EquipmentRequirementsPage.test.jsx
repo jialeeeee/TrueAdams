@@ -267,6 +267,27 @@ describe("SCRUM-43 check availability from the equipment requirements", () => {
   });
 });
 
+// SCRUM-44 (TC-44-47): reserving starts from here; the coordinator can see what is reserved.
+describe("SCRUM-44 reserve equipment from the equipment requirements", () => {
+  it("links Technical Support Staff to reserving equipment", async () => {
+    apiClient.get.mockResolvedValue({ data: TECH_PAGE });
+    renderPage();
+
+    const link = await screen.findByRole("link", { name: "Reserve equipment" });
+    expect(link.getAttribute("href")).toBe("/events/7/equipment-reservations");
+    expect(screen.queryByRole("link", { name: "Reserved equipment" })).toBeNull();
+  });
+
+  it("links the coordinator to the reserved equipment", async () => {
+    apiClient.get.mockResolvedValue(loaded());
+    renderPage();
+
+    const link = await screen.findByRole("link", { name: "Reserved equipment" });
+    expect(link.getAttribute("href")).toBe("/events/7/equipment-reservations");
+    expect(screen.queryByRole("link", { name: "Reserve equipment" })).toBeNull();
+  });
+});
+
 describe("SCRUM-42 AC4/AC6 Technical Support Staff update the arrangements", () => {
   // TC-42-35
   it("lets Technical Support Staff update the arrangement status", async () => {
