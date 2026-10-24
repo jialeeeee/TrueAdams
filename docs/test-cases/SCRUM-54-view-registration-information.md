@@ -191,6 +191,12 @@ R3 has no registrations. evan's only event is R5. A new organiser made for the t
 - **Expected result:** On a retryable failure (or no connection) the error is shown with a Retry button and no event data. Moving from one event's registrations to another that fails to load leaves none of the first event's data on screen. Retrying successfully shows the data.
 - **Automated:** `EventRegistrationsPage.test.jsx`, `OrganisedEventsPage.test.jsx`
 
+**TC-54-21 · A late reply for an earlier event is ignored**
+- **Traces to:** AC6 · **Type:** Frontend (added after review of PR #51)
+- **Steps:** Open event 7's registrations and, before its reply arrives, move to event 9. Event 9's reply arrives first; event 7's arrives afterwards, as a success or as a failure.
+- **Expected result:** The page keeps showing event 9's details and registrations. Nothing from event 7 appears and no error is shown.
+- **Automated:** `EventRegistrationsPage.test.jsx`
+
 ---
 
 ## Traceability matrix
@@ -202,7 +208,7 @@ R3 has no registrations. evan's only event is R5. A new organiser made for the t
 | AC3 | 01, 06, 07 |
 | AC4 | 08, 09, 10, 18 |
 | AC5 | 11, 12, 19 |
-| AC6 | 13, 14, 20 |
+| AC6 | 13, 14, 20, 21 |
 
 | Type | Test cases |
 |------|-----------|
@@ -210,7 +216,7 @@ R3 has no registrations. evan's only event is R5. A new organiser made for the t
 | Negative (authorisation) | 06, 07, 08, 09, 10 |
 | Negative (failure) | 13, 14 |
 | Empty state | 11, 12 |
-| Frontend | 15, 16, 17, 18, 19, 20 |
+| Frontend | 15, 16, 17, 18, 19, 20, 21 |
 
 ## Open questions for the customer
 

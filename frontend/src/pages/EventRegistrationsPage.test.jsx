@@ -1,11 +1,11 @@
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import apiClient from "../api/client.js";
 import EventRegistrationsPage from "./EventRegistrationsPage.jsx";
 
-// Frontend cases TC-54-17 to TC-54-20 in
+// Frontend cases TC-54-17 to TC-54-21 in
 // docs/test-cases/SCRUM-54-view-registration-information.md. The API itself is covered by
 // backend/tests/test_organiser_registrations.py; responses mirror its contract.
 
@@ -33,6 +33,22 @@ const failure = (status, error, extra = {}) => Object.assign(new Error("fail"), 
   response: { status, data: { error, ...extra } },
 });
 const UNAVAILABLE = "The registration information for this event could not be loaded. Please try again.";
+
+const OTHER_EVENT = {
+  id: 9, title: "Harbour Lights Festival", start_time: "2026-12-12T17:00:00", status: "approved",
+  registration: { capacity: 2, registered_count: 1, slots_remaining: 1 },
+};
+const OTHER_REGISTRATIONS = [
+  { id: 14, attendee: { id: 24, email: "att3@test.invalid" },
+    registered_at: "2026-10-04T06:00:00", status: "registered" },
+];
+
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((succeed, fail) => { resolve = succeed; reject = fail; });
+  return { promise, resolve, reject };
+}
 
 function renderPage(path = "/events/7/registrations") {
   render(
@@ -148,4 +164,32 @@ describe("SCRUM-54 an event's registrations", () => {
     expect(screen.queryByRole("heading", { name: "Alumni Mixer" })).toBeNull();
     expect(screen.queryByText("att1@test.invalid")).toBeNull();
   });
+
+  // TC-54-21 (review of PR #51): event 7's reply arrives after event 9's, so it is stale.
+  // Only a late reply after event 9 loaded can show wrong data: if event 9 failed instead,
+  // its error is shown ahead of any data whatever arrives later.
+  it.each(["success", "failure"])(
+    "keeps the current event when the earlier event's %s arrives late", async (lateOutcome) => {
+      const earlierEvent = deferred();
+      const currentEvent = deferred();
+      apiClient.get
+        .mockReturnValueOnce(earlierEvent.promise)
+        .mockReturnValueOnce(currentEvent.promise);
+      const user = renderPage();
+      await user.click(screen.getByRole("link", { name: "Another event" }));
+      expect(apiClient.get).toHaveBeenLastCalledWith("/events/9/registrations");
+
+      await act(async () => currentEvent.resolve(loaded(OTHER_REGISTRATIONS, null, OTHER_EVENT)));
+      await act(async () => {
+        if (lateOutcome === "success") earlierEvent.resolve(loaded());
+        else earlierEvent.reject(failure(503, UNAVAILABLE, { retryable: true }));
+      });
+
+      expect(screen.getByRole("heading", { name: "Harbour Lights Festival" })).toBeTruthy();
+      expect(screen.getByText("att3@test.invalid")).toBeTruthy();
+      expect(screen.queryByRole("heading", { name: "Alumni Mixer" })).toBeNull();
+      expect(screen.queryByText("att1@test.invalid")).toBeNull();
+      expect(screen.queryByRole("alert")).toBeNull();
+    },
+  );
 });
