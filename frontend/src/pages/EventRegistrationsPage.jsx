@@ -50,17 +50,19 @@ export default function EventRegistrationsPage() {
   const loadAttempt = useRef(0);
 
   const load = useCallback(async () => {
+    // Another event's registrations must never show (AC6): the page is cleared while this
+    // one loads, and a late reply from an earlier load, e.g. for the event the organiser
+    // just left, is dropped (TC-54-21), as in SCRUM-80's queue.
     const attempt = ++loadAttempt.current;
-    // Cleared first, so another event's registrations never show while this one loads
-    // or after it fails (AC6).
+    const isStale = () => attempt !== loadAttempt.current;
     setLoadError(null);
     setResult(null);
     try {
       const response = await apiClient.get(`/events/${eventId}/registrations`);
-      if (attempt !== loadAttempt.current) return;
+      if (isStale()) return;
       setResult(response.data);
     } catch (failure) {
-      if (attempt !== loadAttempt.current) return;
+      if (isStale()) return;
       // A refusal (AC4) shows its message with no Retry; only failures worth retrying get one.
       setLoadError({ message: explain(failure, NOT_LOADED), retryable: canRetry(failure) });
     }
