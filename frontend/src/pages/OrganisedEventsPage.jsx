@@ -1,7 +1,15 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import apiClient from "../api/client.js";
+import explain from "../utils/explain.js";
+import proposedDate from "../utils/proposedDate.js";
+import registrationSummary from "../utils/registrationSummary.js";
 import statusLabel from "../utils/statusLabel.js";
+
+// The organiser's events with their registration summary, each opening its
+// registrations (SCRUM-54 AC1, AC2).
+const NOT_LOADED =
+  "Your events' registration information could not be loaded. Check your connection and try again.";
 
 export default function OrganisedEventsPage() {
   const [result, setResult] = useState(null);
@@ -13,10 +21,7 @@ export default function OrganisedEventsPage() {
       const response = await apiClient.get("/events/organised");
       setResult(response.data);
     } catch (failure) {
-      const error = failure.response?.data?.error;
-      setLoadError(typeof error === "string" && error.trim()
-        ? error
-        : "Your events' registration information could not be loaded. Check your connection and try again.");
+      setLoadError(explain(failure, NOT_LOADED));
     }
   }, []);
 
@@ -41,11 +46,9 @@ export default function OrganisedEventsPage() {
           {result.events.map((event) => (
             <li key={event.id}>
               <Link to={`/events/${event.id}/registrations`}>{event.title || "Not recorded"}</Link>
-              <p>{`Proposed date: ${event.start_time ? event.start_time.slice(0, 16).replace("T", " ") : "Not recorded"}`}</p>
+              <p>{`Proposed date: ${proposedDate(event.start_time)}`}</p>
               <p>{`Status: ${statusLabel(event.status)}`}</p>
-              <p>{`Registrations: ${event.registration.registered_count}`}</p>
-              <p>{`Capacity: ${event.registration.capacity ?? "Not set up"}`}</p>
-              <p>{`Remaining places: ${event.registration.slots_remaining ?? "Not set up"}`}</p>
+              {registrationSummary(event.registration).map((line) => <p key={line}>{line}</p>)}
             </li>
           ))}
         </ul>

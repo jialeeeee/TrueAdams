@@ -2,7 +2,7 @@
 
 **User story:** As an Event Organiser, I want to view registration information for the events I manage so that I can track attendance and make decisions about my events.
 
-**Created:** 24 Oct 2026 (story reopened with new acceptance criteria) · **Status of all cases:** Written; automated (TDD, red). · **Automated tests:** `backend/tests/test_organiser_registrations.py`, `frontend/src/pages/OrganisedEventsPage.test.jsx`, `frontend/src/pages/EventRegistrationsPage.test.jsx` · **Endpoints:** `GET /api/events/organised` (new), `GET /api/events/<id>/registrations` (new) · **Related:** SCRUM-45 (registering, places and registration period), SCRUM-68 (withdrawing), SCRUM-62 (the coordinator's managed-events list, same shape), SCRUM-74 (registration numbers on the event page)
+**Created:** 24 Oct 2026 (story reopened with new acceptance criteria) · **Status of all cases:** Automated cases pass (24 Oct 2026, Supabase + Vitest). · **Automated tests:** `backend/tests/test_organiser_registrations.py`, `frontend/src/pages/OrganisedEventsPage.test.jsx`, `frontend/src/pages/EventRegistrationsPage.test.jsx` · **Endpoints:** `GET /api/events/organised` (new), `GET /api/events/<id>/registrations` (new) · **Related:** SCRUM-45 (registering, places and registration period), SCRUM-68 (withdrawing), SCRUM-62 (the coordinator's managed-events list, same shape), SCRUM-74 (registration numbers on the event page)
 
 ## Acceptance criteria
 
