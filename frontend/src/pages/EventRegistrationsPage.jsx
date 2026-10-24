@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import apiClient from "../api/client.js";
 import canRetry from "../utils/canRetry.js";
@@ -47,16 +47,20 @@ export default function EventRegistrationsPage() {
   const { eventId } = useParams();
   const [result, setResult] = useState(null);
   const [loadError, setLoadError] = useState(null);
+  const loadAttempt = useRef(0);
 
   const load = useCallback(async () => {
+    const attempt = ++loadAttempt.current;
     // Cleared first, so another event's registrations never show while this one loads
     // or after it fails (AC6).
     setLoadError(null);
     setResult(null);
     try {
       const response = await apiClient.get(`/events/${eventId}/registrations`);
+      if (attempt !== loadAttempt.current) return;
       setResult(response.data);
     } catch (failure) {
+      if (attempt !== loadAttempt.current) return;
       // A refusal (AC4) shows its message with no Retry; only failures worth retrying get one.
       setLoadError({ message: explain(failure, NOT_LOADED), retryable: canRetry(failure) });
     }
