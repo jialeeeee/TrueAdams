@@ -1394,6 +1394,109 @@ def list_managed():
     )
 
 
+# ---------- Registration information for the organiser (SCRUM-54) ----------
+
+
+@events_bp.get("/organised")
+@jwt_required()
+def list_organised():
+    try:
+        user = _current_user()
+        if user is None:
+            return _error("Your session is no longer valid. Please log in again.", 401)
+        if user.role != ORGANISER_ROLE:
+            return _error(
+                "Only event organisers can view registration information for their events.",
+                403,
+            )
+        events = (
+            Event.query.filter(Event.organiser_id == user.id, Event.status != DRAFT_STATUS)
+            .order_by(Event.start_time.asc().nulls_last(), Event.id)
+            .all()
+        )
+        counts = _registered_counts([e.id for e in events])
+        items = []
+        for e in events:
+            registered = counts.get(e.id, 0)
+            capacity = e.registration_capacity
+            items.append({
+                "id": e.id,
+                "title": _recorded(e.title),
+                "start_time": _isoformat(e.start_time),
+                "status": e.status,
+                "registration": {
+                    "capacity": capacity,
+                    "registered_count": registered,
+                    "slots_remaining": None if capacity is None else max(capacity - registered, 0),
+                },
+            })
+    except SQLAlchemyError:
+        db.session.rollback()
+        return _error(
+            "Your events' registration information could not be loaded. Please try again.",
+            503, retryable=True,
+        )
+
+    return jsonify({
+        "events": items,
+        "message": None if items else "You have no events yet. Events appear here once you submit them.",
+    })
+
+
+@events_bp.get("/<int:event_id>/registrations")
+@jwt_required()
+def get_event_registrations(event_id: int):
+    try:
+        user = _current_user()
+        if user is None:
+            return _error("Your session is no longer valid. Please log in again.", 401)
+        event = db.session.get(Event, event_id) if event_id <= DB_INTEGER_MAX else None
+        if event is None:
+            return _error(EVENT_NOT_FOUND, 404)
+        if not is_current_organiser(user, event):
+            return _error(
+                "You can only view registration information for events you organise.", 403
+            )
+        registered = _registered_counts([event.id]).get(event.id, 0)
+        rows = (
+            db.session.query(Registration, User)
+            .join(User, User.id == Registration.attendee_id)
+            .filter(Registration.event_id == event.id)
+            .order_by(Registration.registered_at, Registration.id)
+            .all()
+        )
+        capacity = event.registration_capacity
+        event_payload = {
+            "id": event.id,
+            "title": _recorded(event.title),
+            "start_time": _isoformat(event.start_time),
+            "status": event.status,
+            "registration": {
+                "capacity": capacity,
+                "registered_count": registered,
+                "slots_remaining": None if capacity is None else max(capacity - registered, 0),
+            },
+        }
+        registrations = [
+            {"id": r.id, "attendee": {"id": u.id, "email": u.email},
+             "registered_at": _isoformat(r.registered_at), "status": r.status}
+            for r, u in rows
+        ]
+    except SQLAlchemyError:
+        db.session.rollback()
+        return _error(
+            "The registration information for this event could not be loaded. "
+            "Please try again.",
+            503, retryable=True,
+        )
+
+    return jsonify({
+        "event": event_payload,
+        "registrations": registrations,
+        "message": None if registrations else "No one has registered for this event yet.",
+    })
+
+
 # ---------- The events a Coordinator Lead assigned (SCRUM-83) ----------
 
 # Events still being worked on, so a Lead can supervise them (A3, open question Q2).
