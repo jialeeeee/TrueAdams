@@ -6,6 +6,11 @@ import proposedDate from "../utils/proposedDate.js";
 import registrationSummary from "../utils/registrationSummary.js";
 import statusLabel from "../utils/statusLabel.js";
 
+// The coordinator's assigned events with their registration summary, each opening its
+// registration overview (SCRUM-72 AC1, AC2).
+const NOT_LOADED =
+  "The registration information for your events could not be loaded. Check your connection and try again.";
+
 export default function ManagedRegistrationsPage() {
   const [result, setResult] = useState(null);
   const [loadError, setLoadError] = useState("");
@@ -16,8 +21,7 @@ export default function ManagedRegistrationsPage() {
       const response = await apiClient.get("/events/managed/registrations");
       setResult(response.data);
     } catch (failure) {
-      setLoadError(explain(failure,
-        "The registration information for your events could not be loaded. Check your connection and try again."));
+      setLoadError(explain(failure, NOT_LOADED));
     }
   }, []);
 
