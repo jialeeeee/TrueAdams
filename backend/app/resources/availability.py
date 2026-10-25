@@ -1,8 +1,9 @@
 """SCRUM-43: whether an event's equipment requirements can be met from the catalogue.
 
-Pure rules, independent of Flask and the database, so SCRUM-44 can reuse them when it
-deducts reserved quantities. The caller passes only the unavailable periods that
-overlap the event (found with scheduling.overlapping). Nothing here reserves anything.
+Pure rules, independent of Flask and the database. The caller passes only the unavailable
+periods that overlap the event (found with scheduling.overlapping) and, since SCRUM-44,
+the quantities reserved for other events whose reservations overlap it, which are
+deducted (SCRUM-44 A5, A11). Nothing here reserves anything.
 """
 
 ENOUGH = "enough"
@@ -23,14 +24,16 @@ UNAVAILABLE = "unavailable"
 QUANTITY_NOT_RECORDED = "quantity_not_recorded"
 
 
-def _key(text):
+def match_key(text):
+    """A category or equipment type without case or extra spacing. The route narrows the
+    catalogue in SQL by the same key (SCRUM-44 review), then is_suitable decides."""
     return " ".join(text.split()).lower()
 
 
 def is_suitable(resource, equipment_type):
     """An item suits a requirement when its category matches the requirement's equipment
     type, ignoring case and spacing (A2, open question Q1)."""
-    return bool(resource.category) and _key(resource.category) == _key(equipment_type)
+    return bool(resource.category) and match_key(resource.category) == match_key(equipment_type)
 
 
 def _time(value):
@@ -58,9 +61,11 @@ def _describe(requirement):
     return f"{name} ({technical})" if technical else name
 
 
-def check(requirement, resources, unavailable):
+def check(requirement, resources, unavailable, reserved=None):
     """One line of the check: the requirement, the suitable items counted, and the ones
-    left out and why. `unavailable` maps an item's id to its overlapping periods."""
+    left out and why. `unavailable` maps an item's id to its overlapping periods, and
+    `reserved` to the quantity of it reserved for other overlapping events (SCRUM-44)."""
+    reserved = reserved or {}
     suitable, excluded = [], []
     for resource in resources:
         if not is_suitable(resource, requirement.equipment_type):
@@ -74,11 +79,16 @@ def check(requirement, resources, unavailable):
             excluded.append({"id": resource.id, "name": resource.name,
                              "reason": QUANTITY_NOT_RECORDED, "detail": "Quantity not recorded"})
         else:
+            # Reserved for another event at the same time is not available (SCRUM-44 AC4).
+            # Shown as reserved even if it is more than is now recorded, never below 0.
+            taken = reserved.get(resource.id, 0)
             suitable.append({"id": resource.id, "name": resource.name,
                              "category": resource.category,
-                             "quantity_available": resource.quantity_available})
+                             "quantity_available": resource.quantity_available,
+                             "reserved_for_other_events": taken,
+                             "available_quantity": max(resource.quantity_available - taken, 0)})
 
-    available = sum(item["quantity_available"] for item in suitable)
+    available = sum(item["available_quantity"] for item in suitable)
     technical = requirement.technical_requirements
     result = _result(available, requirement.quantity, technical)
     return {
@@ -101,15 +111,15 @@ def check(requirement, resources, unavailable):
     }
 
 
-def check_all(requirements, resources, unavailable):
+def check_all(requirements, resources, unavailable, reserved=None):
     """Every requirement's line. Requirements for the same equipment draw on one stock, so
     together they can't count the same items twice: if they need more than there is, none
     of them is enough. No requirement is given priority over another (A11, open question
     Q8; review of PR #48)."""
-    lines = [check(requirement, resources, unavailable) for requirement in requirements]
+    lines = [check(requirement, resources, unavailable, reserved) for requirement in requirements]
     pools = {}
     for requirement, line in zip(requirements, lines):
-        pools.setdefault(_key(requirement.equipment_type), []).append((requirement, line))
+        pools.setdefault(match_key(requirement.equipment_type), []).append((requirement, line))
     for members in pools.values():
         if len(members) < 2:
             continue

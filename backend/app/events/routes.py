@@ -10,6 +10,7 @@ from .. import tasks
 from ..extensions import db
 from ..models import (
     EquipmentRequirement,
+    EquipmentReservation,
     EquipmentUnavailability,
     Event,
     EventClarification,
@@ -21,7 +22,7 @@ from ..models import (
     Venue,
 )
 from ..registrations.routes import REGISTERED, REGISTRABLE_STATUS, singapore_now
-from ..resources import availability
+from ..resources import availability, reservations as reserving
 from ..venues.scheduling import overlapping
 from . import equipment, suitability
 from .permissions import (
@@ -2374,10 +2375,13 @@ def _equipment_event(event_id, allowed, denied):
     return user, event
 
 
-def _event_requirement(event, requirement_id):
+def _event_requirement(event, requirement_id, lock=False):
     """The requirement, only if it belongs to this event. Checked after permission, so
-    people who may not see the event learn nothing about its requirements (A11)."""
-    requirement = (db.session.get(EquipmentRequirement, requirement_id)
+    people who may not see the event learn nothing about its requirements (A11).
+    With lock, the row is held until commit and refreshed, so a reservation for it
+    (SCRUM-44 A7) waits for this change or is seen by it."""
+    locking = {"with_for_update": True, "populate_existing": True} if lock else {}
+    requirement = (db.session.get(EquipmentRequirement, requirement_id, **locking)
                    if requirement_id <= DB_INTEGER_MAX else None)
     if requirement is None or requirement.event_id != event.id:
         raise _Rejected(REQUIREMENT_NOT_FOUND, 404)
@@ -2464,6 +2468,8 @@ def _equipment_page(user, event):
         "requirements": [_requirement_payload(r, users) for r in requirements],
         "can_edit": is_open and _is_current_coordinator(user, event),
         "can_update_arrangements": is_open and is_tech_staff(user),
+        # SCRUM-44: whether to offer reserving, by the same rules as reserving (A4).
+        "can_reserve": _can_reserve(user, event),
         "notice": None if is_open else _equipment_closed_notice(event),
         "message": None if requirements else NO_EQUIPMENT_REQUIREMENTS,
     }
@@ -2540,11 +2546,15 @@ def edit_equipment_requirement(event_id: int, requirement_id: int):
     try:
         user, event = _equipment_event(event_id, _is_current_coordinator,
                                        EQUIPMENT_COORDINATOR_ONLY)
-        requirement = _event_requirement(event, requirement_id)
+        # Locked first, so no reservation can be made between looking for them and
+        # saving the change that releases them (SCRUM-44 A10, review).
+        requirement = _event_requirement(event, requirement_id, lock=True)
         _require_equipment_open(event)
         values = _valid_requirement(event, _equipment_body("equipment requirement"),
                                     requirement.id)
         changed = any(getattr(requirement, name) != value for name, value in values.items())
+        # Read before anything changes: saving the change releases them (SCRUM-44 A10).
+        releases = changed and _holds_reservations(requirement)
         # Any arrangement was for the old details, so it starts again: the status goes
         # back to Requested and Technical Support's note and update are cleared (A8).
         reset = changed and (requirement.status != equipment.REQUESTED
@@ -2567,6 +2577,8 @@ def edit_equipment_requirement(event_id: int, requirement_id: int):
                        "the old details.")
         else:
             message = f"Updated {name}."
+        if releases:
+            message += f" {RESERVATIONS_RELEASED}"
         requirement_id = requirement.id
         db.session.commit()
     except _Rejected as rejected:
@@ -2584,9 +2596,10 @@ def remove_equipment_requirement(event_id: int, requirement_id: int):
     try:
         user, event = _equipment_event(event_id, _is_current_coordinator,
                                        EQUIPMENT_COORDINATOR_ONLY)
-        requirement = _event_requirement(event, requirement_id)
+        requirement = _event_requirement(event, requirement_id, lock=True)  # as when editing
         _require_equipment_open(event)
         name = equipment.describe(requirement.quantity, requirement.equipment_type)
+        releases = _holds_reservations(requirement)  # released on removal (SCRUM-44 A10)
         db.session.delete(requirement)
         db.session.commit()
     except _Rejected as rejected:
@@ -2595,7 +2608,8 @@ def remove_equipment_requirement(event_id: int, requirement_id: int):
         db.session.rollback()
         return _error(EQUIPMENT_NOT_REMOVED, 503, retryable=True)
 
-    return _saved_reply(user, event, f"Removed {name}.")
+    message = f"Removed {name}." + (f" {RESERVATIONS_RELEASED}" if releases else "")
+    return _saved_reply(user, event, message)
 
 
 @events_bp.patch("/<int:event_id>/equipment-requirements/<int:requirement_id>/arrangement")
@@ -2698,13 +2712,67 @@ def _missing_times(event):
             422, missing=missing)
 
 
+def _unavailable_periods(event, resource_ids):
+    """{item id: its recorded unavailable periods overlapping the event} (SCRUM-43 A5)."""
+    unavailable = {}
+    if resource_ids:
+        periods = overlapping(
+            EquipmentUnavailability.query.filter(
+                EquipmentUnavailability.resource_id.in_(resource_ids)),
+            EquipmentUnavailability, event.start_time, event.end_time).all()
+        for period in periods:
+            unavailable.setdefault(period.resource_id, []).append(period)
+    return unavailable
+
+
+def _reserved_by_other_events(event, resource_ids):
+    """{item id: quantity reserved for other events whose reservations overlap this one}.
+    Touching periods don't overlap, and released reservations hold nothing (SCRUM-44 A5)."""
+    if not resource_ids:
+        return {}
+    query = (db.session.query(EquipmentReservation.resource_id,
+                              func.sum(EquipmentReservation.quantity))
+             .filter(EquipmentReservation.resource_id.in_(resource_ids),
+                     EquipmentReservation.status == reserving.RESERVED,
+                     EquipmentReservation.event_id != event.id))
+    rows = (overlapping(query, EquipmentReservation, event.start_time, event.end_time)
+            .group_by(EquipmentReservation.resource_id).all())
+    return {resource_id: int(total) for resource_id, total in rows}
+
+
+def _suitable_resources(equipment_types, lock=False):
+    """The catalogue items suiting any of these equipment types, by name, or by id when
+    locked. Narrowed in SQL by the same key as availability.match_key (whitespace runs to
+    one space, trimmed, lower case), so the whole catalogue is never loaded; is_suitable
+    still decides (SCRUM-44 review)."""
+    if not equipment_types:
+        return []
+    key = func.lower(func.btrim(func.regexp_replace(Resource.category, r"\s+", " ", "g")))
+    query = Resource.query.filter(key.in_({availability.match_key(t) for t in equipment_types}))
+    if lock:
+        query = query.order_by(Resource.id).with_for_update().populate_existing()
+    else:
+        query = query.order_by(Resource.name, Resource.id)
+    return [r for r in query.all()
+            if any(availability.is_suitable(r, t) for t in equipment_types)]
+
+
+def _availability_inputs(event, requirements):
+    """The items suiting any requirement, with their overlapping unavailable periods and the
+    quantities other overlapping events have reserved (SCRUM-43, SCRUM-44)."""
+    resources = _suitable_resources([q.equipment_type for q in requirements])
+    suitable_ids = [r.id for r in resources]
+    return (resources, _unavailable_periods(event, suitable_ids),
+            _reserved_by_other_events(event, suitable_ids))
+
+
 @events_bp.get("/<int:event_id>/equipment-availability")
 @jwt_required()
 def check_equipment_availability(event_id: int):
     """Whether each recorded requirement can be met from the equipment catalogue over the
     event's period. Read-only: it reserves nothing (AC4)."""
     try:
-        _, event = _equipment_event(event_id, is_tech_staff, EQUIPMENT_CHECK_TECH_ONLY)
+        user, event = _equipment_event(event_id, is_tech_staff, EQUIPMENT_CHECK_TECH_ONLY)
         if event.status in EQUIPMENT_CLOSED_STATUSES:
             raise _Rejected(f"This event is {event.status}, so there is no equipment to arrange.",
                             409)
@@ -2712,19 +2780,9 @@ def check_equipment_availability(event_id: int):
 
         requirements = (EquipmentRequirement.query.filter_by(event_id=event.id)
                         .order_by(EquipmentRequirement.id).all())
-        resources = Resource.query.order_by(Resource.name, Resource.id).all() if requirements else []
-        suitable_ids = [r.id for r in resources
-                        if any(availability.is_suitable(r, q.equipment_type) for q in requirements)]
-        unavailable = {}
-        if suitable_ids:
-            periods = overlapping(
-                EquipmentUnavailability.query.filter(
-                    EquipmentUnavailability.resource_id.in_(suitable_ids)),
-                EquipmentUnavailability, event.start_time, event.end_time).all()
-            for period in periods:
-                unavailable.setdefault(period.resource_id, []).append(period)
+        resources, unavailable, reserved = _availability_inputs(event, requirements)
         # Requirements for the same equipment share its stock (review of PR #48).
-        checks = availability.check_all(requirements, resources, unavailable)
+        checks = availability.check_all(requirements, resources, unavailable, reserved)
     except _Rejected as rejected:
         return _error(rejected.message, rejected.status_code, **rejected.extra)
     except SQLAlchemyError:
@@ -2742,6 +2800,286 @@ def check_equipment_availability(event_id: int):
         "checks": checks,
         "summary": availability.summary(checks),
         "can_all_be_met": bool(checks) and all(c["result"] == availability.ENOUGH for c in checks),
+        "can_reserve": _can_reserve(user, event),  # SCRUM-44
         "notice": CHECK_DOES_NOT_RESERVE,
         "message": None if checks else NO_EQUIPMENT_REQUIREMENTS,
     })
+
+
+# ---------- Reserve equipment (SCRUM-44) ----------
+
+# Only approved events can have equipment reserved, as only they can have a venue booked
+# (A4, open question Q4).
+RESERVABLE_EVENT_STATUS = "approved"
+EQUIPMENT_RESERVED_NOTIFICATION = "equipment_reserved"
+RESERVATIONS_VIEW_DENIED = "You are not allowed to view this event's equipment reservations."
+RESERVE_TECH_ONLY = "Only Technical Support Staff can reserve equipment."
+RESERVATIONS_NOT_LOADED = "The equipment reservations could not be loaded. Please try again."
+# A failed save confirms nothing and leaves every reservation as it was (AC7).
+EQUIPMENT_NOT_RESERVED = ("The equipment was not reserved, and the existing reservations are "
+                          "unchanged. Please try again.")
+RESERVED_NOT_RELOADED = ("The equipment was reserved, but the updated page could not be "
+                         "loaded. Reload the page to see it.")
+RESERVATIONS_RELEASED = "Its reserved equipment was released."
+RESERVATION_REQUIREMENT_ID = "Choose the equipment requirement to reserve for."
+
+
+def _holds_reservations(requirement):
+    """Whether any equipment is reserved for the requirement now (SCRUM-44 A10)."""
+    return db.session.query(
+        EquipmentReservation.query.filter_by(requirement_id=requirement.id,
+                                             status=reserving.RESERVED).exists()).scalar()
+
+
+def _has_times(event):
+    return event.start_time is not None and event.end_time is not None
+
+
+def _not_reservable(event):
+    """Why nothing can be reserved for the event now, or None (A4)."""
+    if event.status in EQUIPMENT_CLOSED_STATUSES:
+        return f"This event is {event.status}, so equipment can't be reserved for it."
+    if event.status != RESERVABLE_EVENT_STATUS:
+        return (f"Equipment can only be reserved for approved events. "
+                f"This event is {event.status}.")
+    if not _has_times(event):
+        return ("The event's start or end time is not recorded, so equipment can't be "
+                "reserved for it.")
+    return None
+
+
+def _can_reserve(user, event):
+    return is_tech_staff(user) and _not_reservable(event) is None
+
+
+def _minutes(value):
+    return value.strftime("%Y-%m-%d %H:%M")
+
+
+def _reserved_for(reservations):
+    """{item id: quantity} of the reservations that still hold equipment."""
+    totals = {}
+    for reservation in reservations:
+        if reservation.status == reserving.RESERVED:
+            totals[reservation.resource_id] = (totals.get(reservation.resource_id, 0)
+                                               + reservation.quantity)
+    return totals
+
+
+def _reservation_payload(reservation, names, users):
+    reserver = users.get(reservation.reserved_by_id)
+    return {
+        "id": reservation.id,
+        "requirement_id": reservation.requirement_id,
+        "resource": {"id": reservation.resource_id, "name": names.get(reservation.resource_id)},
+        "quantity": reservation.quantity,
+        "start_time": _isoformat(reservation.start_time),
+        "end_time": _isoformat(reservation.end_time),
+        "status": reservation.status,
+        "reserved_by": _user_summary(reserver) if reserver else None,
+        "reserved_at": _isoformat(reservation.reserved_at),
+        "released_at": _isoformat(reservation.released_at),
+        "release_reason": reservation.release_reason,
+    }
+
+
+def _reservation_page(user, event):
+    """The event, its reservation period, and for each requirement what is reserved and
+    what can still be reserved (AC1), with the released reservations as history (AC9)."""
+    requirements = (EquipmentRequirement.query.filter_by(event_id=event.id)
+                    .order_by(EquipmentRequirement.id).all())
+    rows = (EquipmentReservation.query.filter_by(event_id=event.id)
+            .order_by(EquipmentReservation.id).all())
+    timed = _has_times(event)
+    resources, unavailable, reserved = (_availability_inputs(event, requirements) if timed
+                                        else ([], {}, {}))
+    reserved_here = _reserved_for(rows)
+    names = {r.id: r.name for r in resources}
+    unnamed = {r.resource_id for r in rows} - set(names)
+    if unnamed:
+        names.update({r.id: r.name for r in Resource.query.filter(Resource.id.in_(unnamed))})
+    users = _users_by_id([event.coordinator_id] + [r.reserved_by_id for r in rows])
+    coordinator = users.get(event.coordinator_id)
+    notice = _not_reservable(event)
+
+    lines = []
+    for requirement in requirements:
+        line = availability.check(requirement, resources, unavailable, reserved)
+        held = [r for r in rows
+                if r.requirement_id == requirement.id and r.status == reserving.RESERVED]
+        reserved_quantity = sum(r.quantity for r in held)
+        remaining = max(requirement.quantity - reserved_quantity, 0)
+        options = reserving.options(line, reserved_here)
+        available = sum(option["available_to_reserve"] for option in options)
+        # Agrees with the notice when the event can't be reserved for (SCRUM-44 review).
+        state = reserving.state(remaining, available, reservable=notice is None)
+        lines.append({
+            "id": requirement.id,
+            "equipment_type": requirement.equipment_type,
+            "quantity": requirement.quantity,
+            "technical_requirements": _recorded(requirement.technical_requirements),
+            "technical_note": line["technical_note"],
+            "reserved_quantity": reserved_quantity,
+            "remaining_quantity": remaining,
+            "available_to_reserve": available,
+            "state": state,
+            "state_label": reserving.STATE_LABELS[state],
+            "options": options,
+            "excluded": line["excluded"],
+            "reservations": [_reservation_payload(r, names, users) for r in held],
+        })
+
+    return {
+        "event": {
+            "id": event.id,
+            "title": event.title,
+            "status": event.status,
+            "start_time": _isoformat(event.start_time),
+            "end_time": _isoformat(event.end_time),
+            "coordinator": _user_summary(coordinator) if coordinator else None,
+        },
+        "reservation_period": ({"start_time": _isoformat(event.start_time),
+                                "end_time": _isoformat(event.end_time)} if timed else None),
+        "can_reserve": _can_reserve(user, event),
+        "notice": notice,
+        "requirements": lines,
+        "released": [_reservation_payload(r, names, users) for r in rows
+                     if r.status == reserving.RELEASED],
+        "message": None if requirements else NO_EQUIPMENT_REQUIREMENTS,
+    }
+
+
+@events_bp.get("/<int:event_id>/equipment-reservations")
+@jwt_required()
+def get_equipment_reservations(event_id: int):
+    try:
+        user, event = _equipment_event(event_id, can_view_equipment, RESERVATIONS_VIEW_DENIED)
+        payload = _reservation_page(user, event)
+    except _Rejected as rejected:
+        return _error(rejected.message, rejected.status_code, **rejected.extra)
+    except SQLAlchemyError:
+        db.session.rollback()
+        return _error(RESERVATIONS_NOT_LOADED, 503, retryable=True)
+    return jsonify(payload)
+
+
+def _queue_reservation_email(to_address, title, message, event_id):
+    """Tell the event's coordinator what was reserved (AC8)."""
+    return _queue_email(
+        to_address,
+        f"Equipment reserved for {title}",
+        f"{message}\n\nSign in to ConnectSphere to see the event's equipment.",
+        event_id,
+    )
+
+
+@events_bp.post("/<int:event_id>/equipment-reservations")
+@jwt_required()
+def reserve_equipment(event_id: int):
+    """Reserve items and quantities for one of the event's requirements (AC2, AC3).
+
+    Availability is worked out again from the saved data with the event, the requirement
+    and the suitable equipment locked, in that order, so two reservations (or a reservation
+    and a cancellation) can't both take the same units (A7). Everything is checked before
+    anything is saved, and the reservations and the coordinator's notification are saved
+    together, so a refusal or a failed save changes nothing (AC5-AC7)."""
+    try:
+        user, event = _equipment_event(event_id, is_tech_staff, RESERVE_TECH_ONLY)
+        body = _equipment_body("reservation")
+        requirement_id = body.get("requirement_id")
+        if not isinstance(requirement_id, int) or isinstance(requirement_id, bool):
+            raise _Rejected(EQUIPMENT_INVALID, 422,
+                            fields={"requirement_id": RESERVATION_REQUIREMENT_ID})
+        event = db.session.get(Event, event.id, with_for_update=True, populate_existing=True)
+        requirement = _event_requirement(event, requirement_id, lock=True)
+        refusal = _not_reservable(event)
+        if refusal and event.status == RESERVABLE_EVENT_STATUS:
+            _missing_times(event)  # 422 naming the times (A13)
+        if refusal:
+            raise _Rejected(refusal, 409)
+
+        # Stable from here: another reservation for this event waits for the event's lock.
+        own = EquipmentReservation.query.filter_by(event_id=event.id,
+                                                   status=reserving.RESERVED).all()
+        held = sum(r.quantity for r in own if r.requirement_id == requirement.id)
+        remaining = requirement.quantity - held
+        if remaining <= 0:
+            raise _Rejected(reserving.fully_reserved_message(requirement), 409)
+
+        selection, problems = reserving.parse_items(body.get("items"))
+        chosen = {}
+        if not problems:
+            ids = [resource_id for resource_id, _ in selection
+                   if 1 <= resource_id <= DB_INTEGER_MAX]
+            chosen = ({r.id: r for r in Resource.query.filter(Resource.id.in_(ids))}
+                      if ids else {})
+            problems = reserving.selection_problems(selection, chosen, requirement, remaining)
+        if problems:
+            raise _Rejected(EQUIPMENT_INVALID, 422, fields={"items": " ".join(problems)})
+
+        # Checked again now, with the suitable equipment locked (AC2, A7).
+        locked = _suitable_resources([requirement.equipment_type], lock=True)
+        suitable_ids = [r.id for r in locked]
+        line = availability.check(requirement, locked,
+                                  _unavailable_periods(event, suitable_ids),
+                                  _reserved_by_other_events(event, suitable_ids))
+        can_reserve = {option["id"]: option["available_to_reserve"]
+                       for option in reserving.options(line, _reserved_for(own))}
+        available = sum(can_reserve.values())
+        if available == 0:
+            raise _Rejected(reserving.none_available_message(requirement), 409,
+                            available_quantity=0)
+        shortfalls = reserving.shortfalls(selection, can_reserve,
+                                          {r.id: r.name for r in chosen.values()})
+        if shortfalls:
+            raise _Rejected(reserving.not_enough_message(shortfalls), 409,
+                            available_quantity=available, shortfalls=shortfalls)
+
+        now = datetime.utcnow()
+        rows = [EquipmentReservation(event_id=event.id, requirement_id=requirement.id,
+                                     resource_id=resource_id, quantity=quantity,
+                                     start_time=event.start_time, end_time=event.end_time,
+                                     status=reserving.RESERVED, reserved_by_id=user.id,
+                                     reserved_at=now)
+                 for resource_id, quantity in selection]
+        db.session.add_all(rows)
+        what = reserving.describe_items([(chosen[resource_id].name, quantity)
+                                         for resource_id, quantity in selection])
+        needed = equipment.describe(requirement.quantity, requirement.equipment_type)
+        period = f"{_minutes(event.start_time)} to {_minutes(event.end_time)}"
+        title = event.title
+        coordinator = db.session.get(User, event.coordinator_id) if event.coordinator_id else None
+        message = f"Technical Support reserved {what} for {needed} at {title}, {period}."
+        if coordinator:
+            db.session.add(Notification(recipient_id=coordinator.id,
+                                        kind=EQUIPMENT_RESERVED_NOTIFICATION,
+                                        message=message, event_id=event.id))
+        db.session.flush()  # The ids, read before the commit expires them.
+        reservation_ids = [row.id for row in rows]
+        to_address = coordinator.email if coordinator else None
+        db.session.commit()
+    except _Rejected as rejected:
+        db.session.rollback()  # Releases the locks taken above.
+        return _error(rejected.message, rejected.status_code, **rejected.extra)
+    except SQLAlchemyError:
+        db.session.rollback()
+        return _error(EQUIPMENT_NOT_RESERVED, 503, retryable=True)
+
+    # After the commit: a queue outage must not undo or hide the reservation (A9).
+    email_queued = (_queue_reservation_email(to_address, title, message, event_id)
+                    if to_address else False)
+    confirmation = f"Reserved {what} for {needed} at {title}, {period}."
+    if to_address:
+        confirmation += " The event's coordinator has been notified."
+    notification = {"in_app": to_address is not None, "email_queued": email_queued}
+    try:
+        page = _reservation_page(user, event)
+    except SQLAlchemyError:
+        db.session.rollback()
+        return jsonify({"confirmation": confirmation, "saved": True,
+                        "notification": notification,
+                        "refresh_error": RESERVED_NOT_RELOADED}), 201
+    made = [reservation for line in page["requirements"] for reservation in line["reservations"]
+            if reservation["id"] in reservation_ids]
+    return jsonify({"confirmation": confirmation, "saved": True, "reservations": made,
+                    "notification": notification, **page}), 201

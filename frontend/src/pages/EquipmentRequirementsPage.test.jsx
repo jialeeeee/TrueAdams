@@ -13,7 +13,8 @@ import EquipmentRequirementsPage from "./EquipmentRequirementsPage.jsx";
 //   PUT    /events/<id>/equipment-requirements/<rid> -> { confirmation, requirement, ...PAGE }
 //   DELETE /events/<id>/equipment-requirements/<rid> -> { confirmation, ...PAGE }
 //   PATCH  /events/<id>/equipment-requirements/<rid>/arrangement -> { confirmation, requirement, ...PAGE }
-//   PAGE = { event, organiser_note, requirements, can_edit, can_update_arrangements, notice, message }
+//   PAGE = { event, organiser_note, requirements, can_edit, can_update_arrangements, can_reserve,
+//     notice, message }
 
 vi.mock("../api/client.js", () => ({
   default: { get: vi.fn(), post: vi.fn(), put: vi.fn(), delete: vi.fn(), patch: vi.fn() },
@@ -56,11 +57,13 @@ const PAGE = {
   requirements: [MIC],
   can_edit: true,
   can_update_arrangements: false,
+  can_reserve: false,
   notice: null,
   message: null,
 };
 const EMPTY = { ...PAGE, requirements: [], message: "No equipment requirements have been recorded for this event." };
-const TECH_PAGE = { ...PAGE, requirements: [MIC, PROJECTOR], can_edit: false, can_update_arrangements: true };
+const TECH_PAGE = { ...PAGE, requirements: [MIC, PROJECTOR], can_edit: false, can_update_arrangements: true,
+                    can_reserve: true };
 
 const loaded = (overrides = {}) => ({ data: { ...PAGE, ...overrides } });
 const failed = (status, data) =>
@@ -264,6 +267,37 @@ describe("SCRUM-43 check availability from the equipment requirements", () => {
 
     await screen.findByRole("heading", { name: "Charity Gala" });
     expect(screen.queryByRole("link", { name: "Check availability" })).toBeNull();
+  });
+});
+
+// SCRUM-44 (TC-44-47): reserving starts from here; the coordinator can see what is reserved.
+describe("SCRUM-44 reserve equipment from the equipment requirements", () => {
+  it("links Technical Support Staff to reserving equipment", async () => {
+    apiClient.get.mockResolvedValue({ data: TECH_PAGE });
+    renderPage();
+
+    const link = await screen.findByRole("link", { name: "Reserve equipment" });
+    expect(link.getAttribute("href")).toBe("/events/7/equipment-reservations");
+    expect(screen.queryByRole("link", { name: "Reserved equipment" })).toBeNull();
+  });
+
+  it("links the coordinator to the reserved equipment", async () => {
+    apiClient.get.mockResolvedValue(loaded());
+    renderPage();
+
+    const link = await screen.findByRole("link", { name: "Reserved equipment" });
+    expect(link.getAttribute("href")).toBe("/events/7/equipment-reservations");
+    expect(screen.queryByRole("link", { name: "Reserve equipment" })).toBeNull();
+  });
+
+  // TC-44-53: e.g. a submitted event, or one without times (SCRUM-44 review).
+  it("offers Technical Support Staff a view link when the event can't be reserved for", async () => {
+    apiClient.get.mockResolvedValue({ data: { ...TECH_PAGE, can_reserve: false } });
+    renderPage();
+
+    const link = await screen.findByRole("link", { name: "Reserved equipment" });
+    expect(link.getAttribute("href")).toBe("/events/7/equipment-reservations");
+    expect(screen.queryByRole("link", { name: "Reserve equipment" })).toBeNull();
   });
 });
 

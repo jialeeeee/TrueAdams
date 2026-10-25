@@ -33,6 +33,7 @@ from sqlalchemy.exc import OperationalError
 from app.models import EquipmentRequirement, Event, Resource
 from tests import seed_data
 from tests.base import RUN_ID, AppTestCase
+from tests.payloads import texts
 
 SUFFIX = f" #{RUN_ID}"
 SESSION_EXPIRED = "Your session is no longer valid. Please log in again."
@@ -287,7 +288,8 @@ class NoReservationTests(AvailabilityTestCase):
         self.assertEqual(self.snapshot(), before)
         self.assertEqual(first, second)
         self.assertEqual(first["notice"], "Checking availability does not reserve any equipment.")
-        text = str({k: v for k, v in first.items() if k != "notice"}).lower()
+        # The text shown, not the field names (SCRUM-44 adds "reserved_for_other_events").
+        text = " ".join(texts({k: v for k, v in first.items() if k != "notice"})).lower()
         for word in ("reserved", "booked", "confirmed"):
             self.assertNotIn(word, text)
 

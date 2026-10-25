@@ -9,6 +9,8 @@ import unittest
 from datetime import datetime
 from types import SimpleNamespace
 
+from tests.payloads import texts
+
 
 def _rules():
     # Imported here so the tests fail on behaviour, not on import, until it exists.
@@ -155,9 +157,11 @@ class EquipmentAvailabilityRuleTests(unittest.TestCase):
                          "still to be checked.")
 
     def test_nothing_says_reserved_booked_or_confirmed(self):  # AC4
+        # The text shown, not the field names: since SCRUM-44 each item has a number
+        # under "reserved_for_other_events", which says nothing was reserved here.
         for requirement in (need("Wireless microphone", 3), need("Hologram projector", 1),
                             need("Wireless microphone", 1, technical="Lapel")):
-            text = str(self.check(requirement)).lower()
+            text = " ".join(texts(self.check(requirement))).lower()
             for word in ("reserved", "booked", "confirmed"):
                 self.assertNotIn(word, text)
 

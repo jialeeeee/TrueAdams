@@ -9,7 +9,7 @@ import EquipmentAvailabilityPage from "./EquipmentAvailabilityPage.jsx";
 // The API is covered by backend/tests/test_equipment_availability.py; responses mirror
 // its contract:
 //   GET /events/<id>/equipment-availability -> { event, checks: [LINE], summary,
-//     can_all_be_met, notice, message }
+//     can_all_be_met, can_reserve, notice, message }
 //   LINE = { requirement_id, equipment_type, requested_quantity, technical_requirements,
 //     technical_note, available_quantity, result, result_label, suitable, excluded }
 
@@ -27,9 +27,12 @@ const MICS = {
   available_quantity: 4, result: "enough_by_category",
   result_label: "Enough by category; technical requirements still to be checked",
   shared_with: [], shared_requested_quantity: 3, shared_note: null,
+  // SCRUM-44: what other overlapping events have reserved is deducted per item.
   suitable: [
-    { id: 1, name: "Shure SLX-D", category: "Wireless microphone", quantity_available: 2 },
-    { id: 2, name: "Sennheiser EW-D", category: "wireless  MICROPHONE", quantity_available: 2 },
+    { id: 1, name: "Shure SLX-D", category: "Wireless microphone", quantity_available: 2,
+      reserved_for_other_events: 0, available_quantity: 2 },
+    { id: 2, name: "Sennheiser EW-D", category: "wireless  MICROPHONE", quantity_available: 2,
+      reserved_for_other_events: 0, available_quantity: 2 },
   ],
   excluded: [],
 };
@@ -37,7 +40,8 @@ const PROJECTOR = {
   requirement_id: 12, equipment_type: "Projector", requested_quantity: 1,
   technical_requirements: null, technical_note: null,
   available_quantity: 2, result: "enough", result_label: "Enough available",
-  suitable: [{ id: 4, name: "BenQ LU935", category: "Projector", quantity_available: 2 }],
+  suitable: [{ id: 4, name: "BenQ LU935", category: "Projector", quantity_available: 2,
+               reserved_for_other_events: 0, available_quantity: 2 }],
   excluded: [{ id: 3, name: "Epson EB-L", reason: "unavailable",
                detail: "Unavailable 2026-12-05 17:00 to 2026-12-05 19:00: Lamp replacement" }],
 };
@@ -52,6 +56,7 @@ const RESULT = {
   checks: [MICS, PROJECTOR, HOLOGRAM],
   summary: "2 of 3 equipment requirements can be met from available equipment.",
   can_all_be_met: false,
+  can_reserve: true,
   notice: "Checking availability does not reserve any equipment.",
   message: null,
 };
@@ -187,6 +192,40 @@ function later() {
   const promise = new Promise((done) => { resolve = done; });
   return { promise, resolve };
 }
+
+// SCRUM-44: reservations for other overlapping events are deducted (TC-44-48), and
+// reserving starts from the check.
+describe("SCRUM-44 reservations in the availability check", () => {
+  it("shows how much of each item other events have reserved", async () => {
+    const taken = {
+      ...MICS, available_quantity: 2,
+      suitable: [{ ...MICS.suitable[0], reserved_for_other_events: 2, available_quantity: 0 }, MICS.suitable[1]],
+    };
+    apiClient.get.mockResolvedValue({ data: { ...RESULT, checks: [taken] } });
+    renderPage();
+
+    await screen.findByRole("heading", { name: "Equipment availability" });
+    expect(lines()[0].textContent).toContain(
+      "Counted: Shure SLX-D (0 of 2; 2 reserved for other events at this time), Sennheiser EW-D (2)");
+  });
+
+  it("links to reserving the equipment", async () => {
+    apiClient.get.mockResolvedValue({ data: RESULT });
+    renderPage();
+
+    const link = await screen.findByRole("link", { name: "Reserve equipment" });
+    expect(link.getAttribute("href")).toBe("/events/7/equipment-reservations");
+  });
+
+  // TC-44-53: e.g. a submitted event (SCRUM-44 review).
+  it("does not offer reserving when the event can't be reserved for", async () => {
+    apiClient.get.mockResolvedValue({ data: { ...RESULT, can_reserve: false } });
+    renderPage();
+
+    await screen.findByText(RESULT.summary);
+    expect(screen.queryByRole("link", { name: "Reserve equipment" })).toBeNull();
+  });
+});
 
 // Review of PR #48: requirements for the same equipment share its stock.
 describe("SCRUM-43 shared stock", () => {

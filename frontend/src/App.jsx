@@ -6,6 +6,7 @@ import DraftEventPage from "./pages/DraftEventPage.jsx";
 import EquipmentAvailabilityPage from "./pages/EquipmentAvailabilityPage.jsx";
 import EquipmentRequestsPage from "./pages/EquipmentRequestsPage.jsx";
 import EquipmentRequirementsPage from "./pages/EquipmentRequirementsPage.jsx";
+import EquipmentReservationPage from "./pages/EquipmentReservationPage.jsx";
 import EventDetailsPage from "./pages/EventDetailsPage.jsx";
 import EventPlanningPage from "./pages/EventPlanningPage.jsx";
 import EventRegistrationPage from "./pages/EventRegistrationPage.jsx";
@@ -100,6 +101,7 @@ export default function App() {
           <Route path="/events/:eventId/venue-suitability" element={<VenueSuitabilityPage />} />
           <Route path="/events/:eventId/equipment" element={<EquipmentRequirementsPage />} />
           <Route path="/events/:eventId/equipment-availability" element={<EquipmentAvailabilityPage />} />
+          <Route path="/events/:eventId/equipment-reservations" element={<EquipmentReservationPage />} />
           <Route path="/events/:eventId/reassign" element={<ReassignmentRequestPage />} />
           <Route path="/events/:eventId/assign" element={<AssignCoordinatorPage />} />
           <Route path="/events/:eventId/change-coordinator" element={<ReassignCoordinatorPage />} />

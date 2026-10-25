@@ -1,0 +1,11 @@
+PASS E2E-01 Technical Support open the event's reservations: requirements and period (AC1)
+PASS E2E-02 Reserving 2 Shure + 1 Sennheiser records them and confirms (AC2, AC3)
+PASS E2E-03 The overlapping concert can no longer have what the gala reserved (AC4)
+PASS E2E-04 Asking for more than is available is refused with the available quantity (AC5)
+PASS E2E-05 No suitable equipment: the hologram projector can't be reserved (AC6)
+PASS E2E-06 A failed save says so, keeps the entry and changes nothing (AC7)
+PASS E2E-07 The coordinator is notified and can see, not make, the reservations (AC8)
+PASS E2E-08 Changing the requirement releases its reservation; the units are free again (AC9)
+PASS E2E-09 Cancelling the event releases its reservations (AC9)
+
+9/9 passed

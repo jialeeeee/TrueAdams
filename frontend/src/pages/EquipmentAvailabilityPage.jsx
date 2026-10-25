@@ -10,8 +10,12 @@ import singaporeTime from "../utils/singaporeTime.js";
 // GET /api/events/<id>/equipment-availability. Read-only: it reserves nothing (AC4).
 const NOT_CHECKED = "The equipment availability check could not be completed. Check your connection and try again.";
 
-const counted = (line) =>
-  line.suitable.map((item) => `${item.name} (${item.quantity_available})`).join(", ");
+// SCRUM-44: what other overlapping events have reserved is not available (AC4).
+const countedItem = (item) => (item.reserved_for_other_events
+  ? `${item.name} (${item.available_quantity} of ${item.quantity_available}; ${item.reserved_for_other_events} reserved for other events at this time)`
+  : `${item.name} (${item.available_quantity})`);
+
+const counted = (line) => line.suitable.map(countedItem).join(", ");
 
 function Line({ line }) {
   return (
@@ -66,6 +70,9 @@ function EventAvailability({ eventId }) {
           <h2>{result.event.title}</h2>
           <p>{`For: ${singaporeTime(result.event.start_time)} to ${singaporeTime(result.event.end_time)}`}</p>
           <p>{result.notice}</p>
+          {result.can_reserve && (
+            <Link to={`/events/${eventId}/equipment-reservations`}>Reserve equipment</Link>
+          )}
           {result.checks.length > 0 ? (
             <>
               <p>{result.summary}</p>
