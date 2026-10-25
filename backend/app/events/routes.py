@@ -21,7 +21,7 @@ from ..models import (
     User,
     Venue,
 )
-from ..registrations.routes import REGISTERED, REGISTRABLE_STATUS, singapore_now
+from ..registrations.routes import REGISTERED, REGISTRABLE_STATUS, WITHDRAWN, singapore_now
 from ..resources import availability, reservations as reserving
 from ..venues.scheduling import overlapping
 from . import equipment, suitability
@@ -1415,7 +1415,8 @@ def _registration_summary(event, registered):
     }
 
 
-def _organised_event_payload(event, registered):
+def _event_with_registration_summary(event, registered):
+    # The organiser's (SCRUM-54) and the coordinator's (SCRUM-72) lists show events alike.
     # A blank name is sent as null, so the page shows "Not recorded".
     return {
         "id": event.id,
@@ -1469,7 +1470,8 @@ def list_organised():
             .all()
         )
         counts = _registered_counts([event.id for event in events])
-        items = [_organised_event_payload(event, counts.get(event.id, 0)) for event in events]
+        items = [_event_with_registration_summary(event, counts.get(event.id, 0))
+                 for event in events]
     except SQLAlchemyError:
         db.session.rollback()
         return _error(
@@ -1503,7 +1505,7 @@ def get_event_registrations(event_id: int):
             for registration, attendee in _event_registrations(event)
         ]
         payload = {
-            "event": _organised_event_payload(event, registered),
+            "event": _event_with_registration_summary(event, registered),
             "registrations": registrations,
             "message": None if registrations else NO_REGISTRATIONS,
         }
@@ -1514,6 +1516,120 @@ def get_event_registrations(event_id: int):
             "Please try again.",
             503, retryable=True,
         )
+
+    return jsonify(payload)
+
+
+# ---------- Registration information for the coordinator (SCRUM-72) ----------
+
+# Shown to users verbatim (AC4, AC5).
+COORDINATORS_ONLY = ("Only event coordinators can view registration information for their "
+                     "assigned events.")
+NOT_ASSIGNED_TO_YOU = "You can only view registration information for events assigned to you."
+NO_ASSIGNED_EVENTS = "You have no events assigned to you yet."
+# Registration.status for a registration the event cancelled; the attendee's own
+# leaving is WITHDRAWN (SCRUM-68).
+CANCELLED_REGISTRATION = "cancelled"
+
+
+def _registration_counts_by_status(event):
+    """How many of the event's registrations have each status; statuses with none are
+    left out, so an empty result means nobody has ever registered (A5)."""
+    rows = (
+        db.session.query(Registration.status, func.count(Registration.id))
+        .filter(Registration.event_id == event.id)
+        .group_by(Registration.status)
+        .all()
+    )
+    return dict(rows)
+
+
+def _coordination_event_payload(event, venue):
+    """The event as the coordinator plans around it: when, where and how many are
+    expected (A4)."""
+    return {
+        "id": event.id,
+        "title": _recorded(event.title),
+        "start_time": _isoformat(event.start_time),
+        "end_time": _isoformat(event.end_time),
+        "status": event.status,
+        "expected_attendance": event.expected_attendance,
+        "venue": {"name": venue.name, "capacity": venue.capacity} if venue else None,
+    }
+
+
+def _registration_overview_payload(event, counts):
+    """The registration figures for coordination, with no attendee's identity (A4, open
+    question Q3): places as on the list (A3), who left, and the registration period."""
+    return {
+        **_registration_summary(event, counts.get(REGISTERED, 0)),
+        "withdrawn_count": counts.get(WITHDRAWN, 0),
+        "cancelled_count": counts.get(CANCELLED_REGISTRATION, 0),
+        "opens_at": _isoformat(event.registration_opens_at),
+        "closes_at": _isoformat(event.registration_closes_at),
+    }
+
+
+@events_bp.get("/managed/registrations")
+@jwt_required()
+def list_managed_registrations():
+    """The caller's assigned events with their registration summary (AC1).
+
+    The same events as SCRUM-62's managed list (A1, A2), soonest proposed date first,
+    undated last (A6). Nothing is sent unless every event and its count loaded (AC6).
+    """
+    try:
+        user = _current_user()
+        if user is None:
+            return _error("Your session is no longer valid. Please log in again.", 401)
+        if user.role != COORDINATOR_ROLE:
+            return _error(COORDINATORS_ONLY, 403)
+        events = (
+            Event.query.filter_by(coordinator_id=user.id)
+            .order_by(Event.start_time.asc().nulls_last(), Event.id)
+            .all()
+        )
+        counts = _registered_counts([event.id for event in events])
+        items = [_event_with_registration_summary(event, counts.get(event.id, 0))
+                 for event in events]
+    except SQLAlchemyError:
+        db.session.rollback()
+        return _error(
+            "The registration information for your events could not be loaded. "
+            "Please try again.", 503, retryable=True)
+
+    return jsonify({"events": items, "message": None if items else NO_ASSIGNED_EVENTS})
+
+
+@events_bp.get("/<int:event_id>/registration-overview")
+@jwt_required()
+def get_registration_overview(event_id: int):
+    """One assigned event's registration figures, for its current coordinator only (AC2,
+    AC4).
+
+    Checked 401, 404, then 403 (A7); the refusal names nothing about the event. Nothing
+    is sent unless the event, its venue and its counts all loaded (AC6).
+    """
+    try:
+        user = _current_user()
+        if user is None:
+            return _error("Your session is no longer valid. Please log in again.", 401)
+        event = db.session.get(Event, event_id) if event_id <= DB_INTEGER_MAX else None
+        if event is None:
+            return _error(EVENT_NOT_FOUND, 404)
+        if not _is_current_coordinator(user, event):
+            return _error(NOT_ASSIGNED_TO_YOU, 403)
+        counts = _registration_counts_by_status(event)
+        payload = {
+            "event": _coordination_event_payload(event, _event_venue(event)),
+            "registration": _registration_overview_payload(event, counts),
+            "message": None if counts else NO_REGISTRATIONS,
+        }
+    except SQLAlchemyError:
+        db.session.rollback()
+        return _error(
+            "The registration information for this event could not be loaded. "
+            "Please try again.", 503, retryable=True)
 
     return jsonify(payload)
 
