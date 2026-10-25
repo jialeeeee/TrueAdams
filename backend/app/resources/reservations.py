@@ -17,10 +17,14 @@ RELEASED = "released"
 CAN_RESERVE = "can_reserve"
 FULLY_RESERVED = "fully_reserved"
 NONE_AVAILABLE = "none_available"
+# The event can't be reserved for now (A4): not approved, or its times aren't recorded.
+# The page's notice says why (SCRUM-44 review).
+NOT_RESERVABLE = "not_reservable"
 STATE_LABELS = {
     CAN_RESERVE: "Equipment can be reserved",
     FULLY_RESERVED: "Fully reserved",
     NONE_AVAILABLE: "No suitable equipment is available to reserve",
+    NOT_RESERVABLE: "Equipment can't be reserved for this event now",
 }
 
 # One item's quantity can be no more than one requirement can ask for (SCRUM-42 A5).
@@ -46,10 +50,13 @@ def options(line, reserved_here):
     return items
 
 
-def state(remaining, available):
-    """Fully reserved once nothing more is needed; otherwise whether anything can be."""
+def state(remaining, available, reservable=True):
+    """Fully reserved once nothing more is needed; otherwise whether anything can be. When
+    the event can't be reserved for, that is the reason, whatever is available."""
     if remaining <= 0:
         return FULLY_RESERVED
+    if not reservable:
+        return NOT_RESERVABLE
     return NONE_AVAILABLE if available <= 0 else CAN_RESERVE
 
 

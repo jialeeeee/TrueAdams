@@ -2,7 +2,7 @@
 
 **User story:** As a Technical Support Staff member, I want to reserve available equipment for an event so that its equipment needs are secured without overallocation of equipment.
 
-**Created:** 23 Oct 2026 · **Status of all cases:** automated cases pass (23 Oct 2026, local PostgreSQL as in CI + Vitest; Supabase once `db/equipment_reservations.sql` is run); end-to-end check passed in the browser, see [the DoD evidence](../evidence/SCRUM-44-dod-evidence.md) · **Automated tests:** `backend/tests/test_equipment_reservation.py` (through the API), `backend/tests/test_equipment_reservation_unit.py` (the rules, no database), `frontend/src/pages/EquipmentReservationPage.test.jsx` (+ the links in `EquipmentRequirementsPage.test.jsx` and the reserved quantities in `EquipmentAvailabilityPage.test.jsx`) · **Endpoints:** `GET` and `POST /api/events/<id>/equipment-reservations` · **Related:** SCRUM-42 (the requirements reserved for; changing one releases its reservation), SCRUM-43 (the availability check, which now deducts reservations), SCRUM-46 (change requests; an accepted change goes through the same release rule)
+**Created:** 23 Oct 2026 · **Updated:** 25 Oct 2026 (review fixes, TC-44-49 to 56) · **Status of all cases:** automated cases pass (25 Oct 2026, local PostgreSQL + Vitest; Supabase once `db/equipment_reservations.sql` is run); end-to-end check passed in the browser, see [the DoD evidence](../evidence/SCRUM-44-dod-evidence.md) · **Automated tests:** `backend/tests/test_equipment_reservation.py` (through the API), `backend/tests/test_equipment_reservation_unit.py` (the rules, no database), `frontend/src/pages/EquipmentReservationPage.test.jsx` (+ the links in `EquipmentRequirementsPage.test.jsx` and the reserved quantities in `EquipmentAvailabilityPage.test.jsx`) · **Endpoints:** `GET` and `POST /api/events/<id>/equipment-reservations` · **Related:** SCRUM-42 (the requirements reserved for; changing one releases its reservation), SCRUM-43 (the availability check, which now deducts reservations), SCRUM-46 (change requests; an accepted change goes through the same release rule)
 
 ## Acceptance criteria
 
@@ -23,13 +23,13 @@
 - **A1 — What is reserved:** items from the equipment catalogue (`resources`) for one of the event's recorded equipment requirements (SCRUM-42) at a time. An item is suitable when its category matches the requirement's equipment type, ignoring case and spacing, as in SCRUM-43 A2. One reservation may use several items, e.g. 2 × Shure SLX-D and 1 × Sennheiser EW-D for 3 × Wireless microphone; each item and quantity is recorded as its own row of the new `equipment_reservations` table (`db/equipment_reservations.sql`). *(Q1)*
 - **A2 — Reservation period:** the event's start and end time (Singapore time, half-open `[start, end)`), with no setup or return time (SCRUM-43 A6). It is recorded on the reservation. *(Q2)*
 - **A3 — Who:** Technical Support Staff (`tech_staff`) reserve. The event's coordinator can view the reservations but not reserve. Everyone else gets HTTP 403 without the event's details. *(Q3)*
-- **A4 — Which events:** only **approved** events can have equipment reserved, as only approved events can have a venue booked (SCRUM-39). Other events can be viewed; the page says why nothing can be reserved, and reserving is refused with 409. *(Q4)*
+- **A4 — Which events:** only **approved** events can have equipment reserved, as only approved events can have a venue booked (SCRUM-39). Other events can be viewed; the page says why nothing can be reserved, each requirement still needing equipment says "Equipment can't be reserved for this event now" (*not reservable*) rather than whether any is available, and reserving is refused with 409. The same holds for an approved event without times. The equipment requirements page and the availability check offer "Reserve equipment" only when reserving is possible (`can_reserve`). *(Q4)*
 - **A5 — What can be reserved:** for each suitable item, its recorded quantity, less what is reserved for **other events whose reservation periods overlap** this one (the "incompatible overlapping events"), less what this event has already reserved of it for any of its requirements. Periods that only touch don't overlap. An item recorded as unavailable during the period (SCRUM-43 A5), or with no quantity recorded (SCRUM-43 A4), has nothing to reserve. Released reservations are not counted. *(Q5)*
 - **A6 — Part of a requirement:** a reservation may be for fewer than the requirement needs (for example when only 1 of 2 speakers is available); the rest can be reserved later. A requirement's reservations together can never be for more than its quantity, and a fully reserved requirement can't be reserved for again. *(Q6)*
 - **A7 — Checked again when reserving:** the page shows what was available when it was loaded; reserving works it out again from the saved data, with the event, the requirement and the chosen items locked (`SELECT … FOR UPDATE`), so two staff members can't reserve the same units at once.
 - **A8 — Technical requirements:** shown, not matched (SCRUM-43 A3). Choosing items and reserving them is the staff member's confirmation that they meet the technical requirements. *(Q7)*
 - **A9 — Notification:** the event's coordinator gets an in-app notification (`equipment_reserved`) saved with the reservation, then an email. If the email can't be queued the reservation still stands and the reply says so (`email_queued: false`).
-- **A10 — Release:** a reservation is **released**, not deleted: its status becomes `released`, with when and why, and it is kept as history. That happens when the event becomes cancelled or rejected; when one of its requirements' type, quantity or technical requirements change (today through SCRUM-42's edit; an accepted change request (SCRUM-46) will go through the same rule), only for that requirement; when a requirement is removed; and when the event's start or end time changes, because the reservation was for the old period. It is a rule applied whenever these changes are saved, whichever screen saves them, because there is no "cancel event" feature yet. Saving a requirement without changing it releases nothing. Nobody is notified of a release. *(Q8, Q9)*
+- **A10 — Release:** a reservation is **released**, not deleted: its status becomes `released`, with when and why, and it is kept as history. That happens when the event becomes cancelled or rejected; when one of its requirements' type, quantity or technical requirements change (today through SCRUM-42's edit; an accepted change request (SCRUM-46) will go through the same rule), only for that requirement; when a requirement is removed; and when the event's start or end time changes, because the reservation was for the old period. It is a rule applied whenever these changes are saved, whichever screen saves them, because there is no "cancel event" feature yet. Saving a requirement or the event's times without changing them releases nothing, even when the old value wasn't loaded (it is compared with the saved row). Editing or removing a requirement locks it before looking for its reservations, so the reply always says when it released some. Nobody is notified of a release. *(Q8, Q9)*
 - **A11 — The availability check (SCRUM-43):** now deducts what other overlapping events have reserved, and shows how much of each item is reserved for them. An event's own reservations still count as available to it.
 - **A12 — Arrangement status:** reserving doesn't change SCRUM-42's arrangement status (Requested, Being arranged, Suitable equipment unavailable); how much is reserved is shown on the reservation page. *(Q10)*
 - **A13 — Errors, first failure wins:** 401 (no valid user) → 404 (no such event) → 403 (not Technical Support) → 400 (the body isn't a JSON object) → 422 (`requirement_id` missing or not a whole number) → 404 (no such requirement for this event) → 409 (event not approved) → 422 (times not recorded, `missing`) → 409 (requirement already fully reserved) → 422 (the items: `fields.items`) → 409 (no suitable equipment available, `available_quantity: 0`) → 409 (more than available: `available_quantity` and `shortfalls`) → 503 (not saved: `retryable: true`).
@@ -77,8 +77,20 @@ Expected for R1 with nothing reserved: microphones 4 can be reserved (2 Shure, 2
 **TC-44-04 · Events that aren't approved can be viewed, not reserved for**
 - **Traces to:** AC1 · **Type:** Negative · **Depends on:** A4
 - **Steps:** As hana, open R4 (submitted) and R5 (cancelled).
-- **Expected result:** `can_reserve: false`, with a notice saying equipment can only be reserved for approved events and naming the event's status.
+- **Expected result:** `can_reserve: false`, with a notice saying equipment can only be reserved for approved events and naming the event's status. Each one's microphones are *not reservable*, "Equipment can't be reserved for this event now", not "Equipment can be reserved".
 - **Automated:** `test_tc_44_04_events_that_are_not_approved_can_be_viewed_but_not_reserved`
+
+**TC-44-49 · An approved event without times says why, not that nothing is available**
+- **Traces to:** AC1 · **Type:** Negative · **Depends on:** A4
+- **Steps:** As hana, open an approved event with no start or end time and 1 × Wireless microphone.
+- **Expected result:** `can_reserve: false`, a notice that the times are not recorded, and the microphones *not reservable* (not *none available*).
+- **Automated:** `test_tc_44_49_an_approved_event_without_times_says_why_not_that_nothing_is_available`
+
+**TC-44-50 · The other equipment pages say whether reserving is possible**
+- **Traces to:** AC1 · **Type:** Positive · **Depends on:** A3, A4
+- **Steps:** Open the equipment requirements of R1 as hana and alice, and of R4 as hana; check availability for R1 and R4 as hana.
+- **Expected result:** `can_reserve` is true only for hana on R1 (both pages); false for R4 (submitted) and for alice.
+- **Automated:** `test_tc_44_50_the_other_equipment_pages_say_whether_reserving_is_possible`
 
 **TC-44-05 · Who may view, and in what order**
 - **Traces to:** AC1 · **Type:** Negative (authorisation) · **Depends on:** A3, A13
@@ -280,6 +292,18 @@ Each case starts with R1 holding 2 × Shure and 1 × Sennheiser (microphones) an
 - **Expected result:** All three are still reserved.
 - **Automated:** `test_tc_44_35_other_changes_to_the_event_release_nothing`
 
+**TC-44-51 · Editing or removing a requirement locks it before looking for its reservations**
+- **Traces to:** AC9 · **Type:** Business rule (concurrency) · **Depends on:** A7, A10
+- **Steps:** As alice, change R1's microphones to 4, then remove them, recording the SQL sent each time.
+- **Expected result:** Each time the requirement is read `FOR UPDATE` before the reservations are looked for, so a reservation can't be made in between and released without the reply saying so.
+- **Automated:** `test_tc_44_51_editing_or_removing_locks_the_requirement_before_looking_for_reservations`
+
+**TC-44-52 · Saving the same times or quantity after a commit releases nothing**
+- **Traces to:** AC9 · **Type:** Negative · **Depends on:** A10
+- **Steps:** With R1's values no longer loaded, set its start and end time and its microphones' quantity to the values they already have, and save.
+- **Expected result:** All three are still reserved.
+- **Automated:** `test_tc_44_52_saving_the_same_times_or_quantity_after_a_commit_releases_nothing`
+
 ## Who may reserve, and in what order
 
 **TC-44-36 · Who may reserve, and in what order**
@@ -296,11 +320,11 @@ Each case starts with R1 holding 2 × Shure and 1 × Sennheiser (microphones) an
 
 ## The rules without a database (`test_equipment_reservation_unit.py`)
 
-The same rules on plain objects: the availability check deducts other events' reservations from each item and never goes below 0 (A5, A11); an event's own reservations are taken off what it can still reserve (A5); a requirement is *fully reserved* when nothing more is needed, otherwise *none available* when nothing can be reserved, otherwise *can reserve* (A6); a selection needs whole quantities from 1 to 1000, items that exist and suit the requirement, each once, and no more than the requirement still needs (A6); only items asked for beyond what is available are shortfalls, and the message shows the available quantity (AC5). **Automated:** `DeductionRuleTests`, `OptionRuleTests`, `SelectionRuleTests`.
+The same rules on plain objects: the availability check deducts other events' reservations from each item and never goes below 0 (A5, A11); an event's own reservations are taken off what it can still reserve (A5); a requirement is *fully reserved* when nothing more is needed, otherwise *not reservable* when the event can't be reserved for (A4), otherwise *none available* when nothing can be reserved, otherwise *can reserve* (A6); a selection needs whole quantities from 1 to 1000, items that exist and suit the requirement, each once, and no more than the requirement still needs (A6); only items asked for beyond what is available are shortfalls, and the message shows the available quantity (AC5). **Automated:** `DeductionRuleTests`, `OptionRuleTests`, `SelectionRuleTests`.
 
 ## Frontend
 
-`EquipmentReservationPage` (`/events/:eventId/equipment-reservations`), linked from the equipment requirements page ("Reserve equipment" for Technical Support Staff, "Reserved equipment" for the coordinator) and from the availability check.
+`EquipmentReservationPage` (`/events/:eventId/equipment-reservations`), linked from the equipment requirements page ("Reserve equipment" when the user can reserve for the event, otherwise "Reserved equipment") and, when reserving is possible, from the availability check.
 
 **TC-44-38 · The page shows the reservation period, each requirement and what can be reserved** — AC1 · `shows the reservation period and what can be reserved for each requirement`
 
@@ -324,6 +348,14 @@ The same rules on plain objects: the availability check deducts other events' re
 
 **TC-44-48 · The availability check shows what other events have reserved** — AC4 · `EquipmentAvailabilityPage` "shows how much of each item other events have reserved"
 
+**TC-44-53 · "Reserve equipment" is offered only when reserving is possible** — AC1 · `EquipmentRequirementsPage` "offers Technical Support Staff a view link when the event can't be reserved for"; `EquipmentAvailabilityPage` "does not offer reserving when the event can't be reserved for"
+
+**TC-44-54 · Saved but the page can't be loaded again: it says so and offers Retry** — AC3, AC7 · `says so, and offers Retry, when the page can't be loaded again after reserving`
+
+**TC-44-55 · After a refusal the page shows what can be reserved now** — AC5 · `loads the page again after a refusal, keeping the refusal and the selection`
+
+**TC-44-56 · Reserving clears earlier refusals under other requirements** — AC2 · `clears an earlier refusal under another requirement once something is reserved`
+
 Also: `explains a failed load and offers Retry`.
 
 ---
@@ -332,15 +364,15 @@ Also: `explains a failed load and offers Retry`.
 
 | AC | Test cases |
 |----|------------|
-| AC1 | 01, 02, 03, 04, 05, 06, 07, 36, 37, 38, 43, 45, 46, 47 |
-| AC2 | 02, 08, 10, 11, 12, 13, 14, 15, 16, 36, 39 |
-| AC3 | 08, 09, 39 |
+| AC1 | 01, 02, 03, 04, 05, 06, 07, 36, 37, 38, 43, 45, 46, 47, 49, 50, 53 |
+| AC2 | 02, 08, 10, 11, 12, 13, 14, 15, 16, 36, 39, 56 |
+| AC3 | 08, 09, 39, 54 |
 | AC4 | 17, 18, 19, 20, 21, 48 |
-| AC5 | 10, 15, 20, 22, 23, 24, 40 |
+| AC5 | 10, 15, 20, 22, 23, 24, 40, 55 |
 | AC6 | 25, 26, 41 |
-| AC7 | 27, 42 |
+| AC7 | 27, 42, 54 |
 | AC8 | 28, 29, 43 |
-| AC9 | 30, 31, 32, 33, 34, 35, 44 |
+| AC9 | 30, 31, 32, 33, 34, 35, 44, 51, 52 |
 
 ## Open questions for the customer
 

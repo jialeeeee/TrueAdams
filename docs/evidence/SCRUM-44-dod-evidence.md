@@ -7,7 +7,7 @@
 | # | Definition of Done item | Result |
 |---|---|---|
 | 1 | Acceptance criteria satisfied | ✅ All 9 ACs met, each shown by automated tests and in the running app ([§1](#1-acceptance-criteria-satisfied)) |
-| 2 | All test cases pass | ✅ SCRUM-44 backend 51/51 and frontend 20/20; whole backend suite 927 pass (3 skipped, not SCRUM-44's); whole frontend suite 428/429, and the 1 failure is SCRUM-84's and fails on `main` too (§3d); end-to-end 9/9 ([§2](#2-all-test-cases-pass)) |
+| 2 | All test cases pass | ✅ After the review fixes ([§5](#5-review-fixes-25-oct-2026)): SCRUM-44 backend 56/56 and frontend 25/25; whole frontend suite 448/449, and the 1 failure is SCRUM-84's and fails on `main` too (§3d). Before them: whole backend suite 927 pass (3 skipped, not SCRUM-44's); end-to-end 9/9 ([§2](#2-all-test-cases-pass)) |
 | 3 | Test cases are correct and the code does what it says | ✅ Written test-first (red, then green); 48/48 deliberate breakages caught; behaviour confirmed in a real browser ([§3](#3-test-cases-are-correct-and-the-code-does-what-it-says)) |
 | 4 | Evidence of checks documented | ✅ This document, 8 screenshots, the scripts that produced them and the raw results ([§4](#4-evidence-documented)) |
 
@@ -21,7 +21,7 @@
   - The rules in `backend/app/resources/reservations.py`, free of Flask and the database like SCRUM-43's `availability.py`.
   - `backend/app/resources/release.py`, a rule that runs before every save. It releases reservations when an event becomes cancelled or rejected or its times change, and when a requirement is changed or removed. It works whichever code makes the change, which matters because there is no "cancel event" feature yet.
   - SCRUM-43's check (`availability.py`) now deducts what other overlapping events have reserved. SCRUM-42's edit and remove now say when they released reserved equipment.
-- **Frontend:** the Equipment reservations page (`/events/:id/equipment-reservations`). The equipment requirements page links to it ("Reserve equipment" for Technical Support Staff, "Reserved equipment" for the coordinator), and so does the availability check. The availability check also shows how much of each item other events have reserved.
+- **Frontend:** the Equipment reservations page (`/events/:id/equipment-reservations`). The equipment requirements page links to it ("Reserve equipment" when the user can reserve for the event, otherwise "Reserved equipment"), and so does the availability check when reserving is possible. The availability check also shows how much of each item other events have reserved.
 - **Docs:** assumption A8 in the SCRUM-42 and SCRUM-43 test-case documents now says what SCRUM-44 changed for them. The C4 container diagram lists equipment reservations among the stored entities.
 - **Not used:** the old stub `POST /api/resources/<id>/reservations` still returns 501 ([§3d](#d-findings-for-the-team-not-part-of-scrum-44)).
 
@@ -56,11 +56,12 @@
 
 | Suite | Command | Result |
 |-------|---------|--------|
-| Backend, SCRUM-44 through the API | `python -m unittest tests.test_equipment_reservation` (from `backend/`) | **37/37 pass** (TC-44-01 to 37) |
-| Backend, SCRUM-44 rules (no database) | `python -m unittest tests.test_equipment_reservation_unit` | **14/14 pass** |
-| Backend, whole suite | `python -m unittest discover` | **Ran 927 tests: OK, 3 skipped.** The 3 skips are SCRUM-36/37 tests waiting on customer answers. This includes every SCRUM-42 and SCRUM-43 test, after the two SCRUM-43 tests were adjusted (§3a). |
-| Frontend, SCRUM-44 | `npx vitest run` on the three files below | **20/20 pass**: `EquipmentReservationPage.test.jsx` 16, the links in `EquipmentRequirementsPage.test.jsx` 2, and `EquipmentAvailabilityPage.test.jsx` 2 (53/53 across the three files) |
-| Frontend, whole suite | `npm test` (from `frontend/`) | **428/429 pass.** The one failure is SCRUM-84's `VenueSetupTurnaround.test.jsx`. It fails the same way with this story's changes removed (§3d). |
+| Backend, SCRUM-44 through the API | `python -m unittest tests.test_equipment_reservation` (from `backend/`) | **41/41 pass** (TC-44-01 to 37, 49 to 52; after the review fixes, §5) |
+| Backend, SCRUM-44 rules (no database) | `python -m unittest tests.test_equipment_reservation_unit` | **15/15 pass** |
+| Backend, every equipment test (SCRUM-42, 43, 44) | `python -m unittest tests.test_equipment_reservation tests.test_equipment_reservation_unit tests.test_equipment_availability tests.test_equipment_availability_unit tests.test_equipment_requirements` | **120/120 pass** (25 Oct 2026) |
+| Backend, whole suite | `python -m unittest discover` | Before the review: **Ran 927 tests: OK, 3 skipped.** After the review fixes (25 Oct 2026): **Ran 935: all pass except 4 that check the test login itself** (three in `test_app_factory` and `test_venue_booking_rejection`'s `setUpClass`). They fail because that run used the local database's owner login, not `connectsphere_test` (§5). The 3 skips are SCRUM-36/37 tests waiting on customer answers. |
+| Frontend, SCRUM-44 | `npx vitest run` on the three files below | **25/25 pass**: `EquipmentReservationPage.test.jsx` 19, the links in `EquipmentRequirementsPage.test.jsx` 3, and `EquipmentAvailabilityPage.test.jsx` 3 (58/58 across the three files) |
+| Frontend, whole suite | `npm test` (from `frontend/`) | **448/449 pass.** The one failure is SCRUM-84's `VenueSetupTurnaround.test.jsx`. It fails the same way with this story's changes removed (§3d; checked again 25 Oct 2026). |
 | End-to-end in a real browser | [scripts/e2e_check.mjs](SCRUM-44/scripts/e2e_check.mjs) | **9/9 pass** (§3c), [raw result](SCRUM-44/e2e-results.txt) |
 
 ## 3. Test cases are correct and the code does what it says
@@ -168,3 +169,22 @@ Demo data: microphones "[Demo] Shure SLX-D 44" (2) and "[Demo] Sennheiser EW-D 4
 - This document, and the test-case document with its traceability matrix and open questions.
 - [SCRUM-44/](SCRUM-44/): screenshots `01`–`08`; `scripts/` (seed script, browser check, mutations); `mutation-results-backend.txt`, `mutation-results-frontend.txt`, `e2e-results.txt`.
 - Commits: `f0b71f8` (TDD, red) and the TDD-green commit that follows it on this branch.
+
+## 5. Review fixes (25 Oct 2026)
+
+Every point in the code review was checked against the code and found to be accurate. Each was fixed test-first: the new tests (TC-44-49 to 56, plus a unit rule) failed before the fix and pass after it.
+
+| Review point | Fix | Tests |
+|---|---|---|
+| A failed reload after reserving was never shown | The page shows the load error, with Retry, even when it still has the old page | TC-44-54 |
+| Wrong requirement labels when the event can't be reserved for | New state *not reservable*, "Equipment can't be reserved for this event now", used whenever the page has a notice (not approved, or no times) | TC-44-04, 49; unit rule |
+| Coordinator not told about a release made in a race | Editing and removing a requirement lock it before looking for its reservations | TC-44-51 |
+| Old numbers after a refusal; stale errors under other requirements | A 409 reloads the page, keeping the refusal and the quantities typed; a successful reservation clears every earlier refusal | TC-44-55, 56 |
+| Setting the same value after a commit released reservations | `release._changed` compares with the saved row when the old value wasn't loaded | TC-44-52 |
+| "Reserve equipment" links where nothing can be reserved | Both pages return `can_reserve` (same rule as reserving); the requirements page shows "Reserved equipment" otherwise, and the availability check shows no link | TC-44-50, 53 |
+| Catalogue loaded repeatedly | `_suitable_resources` narrows the catalogue in SQL by the same key as `availability.match_key`; `is_suitable` still decides | Existing TC-44-02, 16, 19, 25 |
+| Extra SUM query | The requirement's reserved total comes from the event's reservations, which are loaded anyway | Existing TC-44-11, 12 |
+| Copied lookup | `_event_requirement(..., lock=True)`, as `_own_draft`; `_locked_requirement` removed | Existing TC-44-14, 16 |
+| Test helper imported from a test module | `texts` moved to `tests/payloads.py` | SCRUM-43 tests |
+
+**How it was run.** The backend tests used the local PostgreSQL 17, logged in as its owner, because the password set for the local `connectsphere_test` role wasn't recorded. Four tests check the login itself and fail for that reason alone (§2). CI's `unittest` job runs as `connectsphere_test` and covers them. **Not re-run after the fixes:** the mutation check (§3b) and the browser check (§3c).

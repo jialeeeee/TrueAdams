@@ -70,7 +70,9 @@ function EventAvailability({ eventId }) {
           <h2>{result.event.title}</h2>
           <p>{`For: ${singaporeTime(result.event.start_time)} to ${singaporeTime(result.event.end_time)}`}</p>
           <p>{result.notice}</p>
-          <Link to={`/events/${eventId}/equipment-reservations`}>Reserve equipment</Link>
+          {result.can_reserve && (
+            <Link to={`/events/${eventId}/equipment-reservations`}>Reserve equipment</Link>
+          )}
           {result.checks.length > 0 ? (
             <>
               <p>{result.summary}</p>

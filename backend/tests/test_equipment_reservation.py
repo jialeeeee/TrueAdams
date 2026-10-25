@@ -18,7 +18,8 @@ Endpoints (JWT required, else 401; the User row is loaded on every request)
                     "requirements": [REQ, ...], "released": [RES, ...]}
         REQ = {"id", "equipment_type", "quantity", "technical_requirements", "technical_note",
                "reserved_quantity", "remaining_quantity", "available_to_reserve",
-               "state": "can_reserve" | "fully_reserved" | "none_available", "state_label",
+               "state": "can_reserve" | "fully_reserved" | "none_available" | "not_reservable",
+               "state_label",
                "options": [{"id", "name", "category", "quantity_available",
                             "reserved_for_other_events", "reserved_for_this_event",
                             "available_to_reserve"}],
@@ -260,6 +261,41 @@ class ViewTests(ReservationTestCase):
         self.assertIn("submitted", submitted["notice"])
         self.assertIs(cancelled["can_reserve"], False)
         self.assertIn("cancelled", cancelled["notice"])
+        # The requirements agree with the notice (SCRUM-44 review).
+        for page in (submitted, cancelled):
+            microphones = self.requirement(page, "Wireless microphone")
+            self.assertEqual((microphones["state"], microphones["state_label"]),
+                             ("not_reservable", "Equipment can't be reserved for this event now"))
+
+    # TC-44-49 · AC1
+    def test_tc_44_49_an_approved_event_without_times_says_why_not_that_nothing_is_available(self):
+        event = self.make_event(organiser=self.users["dana"], status="approved",
+                                coordinator_id=self.users["alice"].id)
+        event.start_time = event.end_time = None
+        self.db.session.add(EquipmentRequirement(event_id=event.id,
+                                                 equipment_type="Wireless microphone" + SUFFIX,
+                                                 quantity=1, recorded_by_id=self.users["alice"].id))
+        self.db.session.commit()
+
+        page = self.page(event.id)
+
+        self.assertIs(page["can_reserve"], False)
+        self.assertIn("not recorded", page["notice"])
+        self.assertEqual(page["requirements"][0]["state"], "not_reservable")
+
+    # TC-44-50 · AC1
+    def test_tc_44_50_the_other_equipment_pages_say_whether_reserving_is_possible(self):
+        def can_reserve(path, event, user="hana"):
+            response = self.client.get(f"/api/events/{self.events[event].id}/{path}",
+                                       headers=self.headers(user))
+            self.assertEqual(response.status_code, 200, response.get_json())
+            return response.get_json()["can_reserve"]
+
+        self.assertIs(can_reserve("equipment-requirements", "R1"), True)
+        self.assertIs(can_reserve("equipment-requirements", "R4"), False)
+        self.assertIs(can_reserve("equipment-requirements", "R1", user="alice"), False)
+        self.assertIs(can_reserve("equipment-availability", "R1"), True)
+        self.assertIs(can_reserve("equipment-availability", "R4"), False)
 
     # TC-44-05 · AC1
     def test_tc_44_05_who_may_view_and_in_what_order(self):
@@ -776,6 +812,53 @@ class ReleaseTests(ReservationTestCase):
     def test_tc_44_35_other_changes_to_the_event_release_nothing(self):
         self.events["R1"].title = "Charity Gala 2026"
         self.events["R1"].description = "Black tie"
+        self.db.session.commit()
+
+        self.assertEqual({r.status for r in self.rows("R1")}, {"reserved"})
+
+    # TC-44-51 · AC9
+    def test_tc_44_51_editing_or_removing_locks_the_requirement_before_looking_for_reservations(self):
+        # Otherwise a reservation made in between is released without the reply saying so.
+        microphones = self.requirements[("R1", "Wireless microphone")]
+        url = f"/api/events/{self.events['R1'].id}/equipment-requirements/{microphones.id}"
+        calls = {
+            "edit": lambda: self.client.put(url, json={"equipment_type": microphones.equipment_type,
+                                                       "quantity": 4,
+                                                       "technical_requirements": "Lapel"},
+                                            headers=self.headers("alice")),
+            "remove": lambda: self.client.delete(url, headers=self.headers("alice")),
+        }
+        for case, call in calls.items():  # in this order: the edit, then the removal
+            statements = []
+
+            def record(conn, cursor, statement, parameters, context, executemany):
+                statements.append(statement)
+
+            self.db.session.expire_all()
+            sa_event.listen(self.db.engine, "before_cursor_execute", record)
+            try:
+                response = call()
+            finally:
+                sa_event.remove(self.db.engine, "before_cursor_execute", record)
+
+            with self.subTest(case=case):
+                self.assertEqual(response.status_code, 200, response.get_json())
+                lock = next(i for i, s in enumerate(statements)
+                            if "FROM equipment_requirements" in s and "FOR UPDATE" in s)
+                look = next(i for i, s in enumerate(statements)
+                            if "FROM equipment_reservations" in s)
+                self.assertLess(lock, look)
+
+    # TC-44-52 · AC9
+    def test_tc_44_52_saving_the_same_times_or_quantity_after_a_commit_releases_nothing(self):
+        # After a commit the old value isn't loaded, so setting it again looks like a change
+        # unless it is compared with what is saved (SCRUM-44 review; SCRUM-46 may do this).
+        gala = self.events["R1"]
+        microphones = self.requirements[("R1", "Wireless microphone")]
+        self.db.session.expire_all()
+        gala.start_time = datetime(2026, 12, 5, 18, 0)
+        gala.end_time = datetime(2026, 12, 5, 23, 0)
+        microphones.quantity = 3
         self.db.session.commit()
 
         self.assertEqual({r.status for r in self.rows("R1")}, {"reserved"})

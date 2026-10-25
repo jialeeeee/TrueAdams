@@ -115,11 +115,16 @@ function EventReservations({ eventId }) {
       });
       setConfirmation(response.data.confirmation);
       setQuantities((all) => ({ ...all, [requirement.id]: {} }));
+      // The page is redrawn from what is now saved, so earlier refusals no longer apply.
+      setFailures({});
       // Saved, but the page couldn't be sent back: load it rather than show the old one.
       if (response.data.refresh_error) await load();
       else setPage(response.data);
     } catch (error) {
       setFailures((all) => ({ ...all, [requirement.id]: explain(error, NOT_RESERVED) }));
+      // A refusal (409) means availability changed since the page was loaded (AC5):
+      // show what can be reserved now, keeping the refusal and the quantities typed.
+      if (error.response?.status === 409) await load();
     } finally {
       setBusy(null);
     }
@@ -152,6 +157,13 @@ function EventReservations({ eventId }) {
       )}
       {page.notice && <p>{page.notice}</p>}
       {confirmation && <p role="status">{confirmation}</p>}
+      {/* Loading again failed: the numbers below are out of date, so say so (review). */}
+      {loadError && (
+        <>
+          <p role="alert">{loadError.message}</p>
+          {loadError.retryable && <button type="button" onClick={load}>Retry</button>}
+        </>
+      )}
       {page.requirements.length > 0 ? (
         <ul aria-label="Equipment requirements">
           {page.requirements.map((requirement) => (

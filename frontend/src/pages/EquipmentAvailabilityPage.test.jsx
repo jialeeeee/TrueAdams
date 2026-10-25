@@ -9,7 +9,7 @@ import EquipmentAvailabilityPage from "./EquipmentAvailabilityPage.jsx";
 // The API is covered by backend/tests/test_equipment_availability.py; responses mirror
 // its contract:
 //   GET /events/<id>/equipment-availability -> { event, checks: [LINE], summary,
-//     can_all_be_met, notice, message }
+//     can_all_be_met, can_reserve, notice, message }
 //   LINE = { requirement_id, equipment_type, requested_quantity, technical_requirements,
 //     technical_note, available_quantity, result, result_label, suitable, excluded }
 
@@ -56,6 +56,7 @@ const RESULT = {
   checks: [MICS, PROJECTOR, HOLOGRAM],
   summary: "2 of 3 equipment requirements can be met from available equipment.",
   can_all_be_met: false,
+  can_reserve: true,
   notice: "Checking availability does not reserve any equipment.",
   message: null,
 };
@@ -214,6 +215,15 @@ describe("SCRUM-44 reservations in the availability check", () => {
 
     const link = await screen.findByRole("link", { name: "Reserve equipment" });
     expect(link.getAttribute("href")).toBe("/events/7/equipment-reservations");
+  });
+
+  // TC-44-53: e.g. a submitted event (SCRUM-44 review).
+  it("does not offer reserving when the event can't be reserved for", async () => {
+    apiClient.get.mockResolvedValue({ data: { ...RESULT, can_reserve: false } });
+    renderPage();
+
+    await screen.findByText(RESULT.summary);
+    expect(screen.queryByRole("link", { name: "Reserve equipment" })).toBeNull();
   });
 });
 

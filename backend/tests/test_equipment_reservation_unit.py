@@ -86,6 +86,14 @@ class OptionRuleTests(unittest.TestCase):
         self.assertEqual(state(remaining=2, available=0), "none_available")
         self.assertEqual(state(remaining=2, available=1), "can_reserve")
 
+    def test_an_event_that_cannot_be_reserved_for_says_so_whatever_is_available(self):
+        # SCRUM-44 review: a submitted event said "can be reserved", an undated one
+        # "no suitable equipment".
+        state = _reservations().state
+        self.assertEqual(state(remaining=2, available=1, reservable=False), "not_reservable")
+        self.assertEqual(state(remaining=2, available=0, reservable=False), "not_reservable")
+        self.assertEqual(state(remaining=0, available=0, reservable=False), "fully_reserved")
+
 
 class SelectionRuleTests(unittest.TestCase):
     def parse(self, items):

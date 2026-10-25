@@ -33,7 +33,7 @@ from sqlalchemy.exc import OperationalError
 from app.models import EquipmentRequirement, Event, Resource
 from tests import seed_data
 from tests.base import RUN_ID, AppTestCase
-from tests.test_equipment_availability_unit import texts
+from tests.payloads import texts
 
 SUFFIX = f" #{RUN_ID}"
 SESSION_EXPIRED = "Your session is no longer valid. Please log in again."

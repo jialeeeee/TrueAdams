@@ -29,18 +29,37 @@ REQUIREMENT_CHANGED = "The equipment requirement was changed."
 REQUIREMENT_REMOVED = "The equipment requirement was removed."
 
 
-def _changed(obj, names):
-    """Whether any of these attributes is being saved with a new value. Setting one to
-    the value it already had records no change, so saving unchanged releases nothing."""
-    return any(inspect(obj).attrs[name].history.added for name in names)
+def _changed(session, obj, names):
+    """Whether any of these attributes is being saved with a new value, so saving
+    unchanged releases nothing. When the old value wasn't loaded (after a commit expired
+    it), SQLAlchemy records any value set as added, so it is compared with the saved row
+    (SCRUM-44 review: SCRUM-46 may set an event's times to the ones it already has)."""
+    unknown = []
+    for name in names:
+        history = inspect(obj).attrs[name].history
+        if not history.added:
+            continue
+        if history.deleted:
+            if history.added[0] != history.deleted[0]:
+                return True
+        else:
+            unknown.append(name)
+    if not unknown:
+        return False
+    model = type(obj)
+    saved = (session.query(*[getattr(model, name) for name in unknown])
+             .filter(model.id == obj.id).one_or_none())
+    if saved is None:
+        return True
+    return any(getattr(obj, name) != value for name, value in zip(unknown, saved))
 
 
-def _event_reason(obj):
+def _event_reason(session, obj):
     added = inspect(obj).attrs.status.history.added
     status = added[0] if added else None
     if status in RELEASING_EVENT_STATUSES:
         return f"The event was {status}."
-    if _changed(obj, EVENT_PERIOD_FIELDS):
+    if _changed(session, obj, EVENT_PERIOD_FIELDS):
         return EVENT_TIMES_CHANGED
     return None
 
@@ -63,10 +82,11 @@ def release_changed_reservations(session, flush_context, instances):
     with session.no_autoflush:
         for obj in list(session.dirty):
             if isinstance(obj, Event):
-                reason = _event_reason(obj)
+                reason = _event_reason(session, obj)
                 if reason:
                     _release(session, Event, obj.id, EquipmentReservation.event_id, reason, now)
-            elif isinstance(obj, EquipmentRequirement) and _changed(obj, REQUIREMENT_FIELDS):
+            elif (isinstance(obj, EquipmentRequirement)
+                  and _changed(session, obj, REQUIREMENT_FIELDS)):
                 _release(session, EquipmentRequirement, obj.id,
                          EquipmentReservation.requirement_id, REQUIREMENT_CHANGED, now)
         for obj in list(session.deleted):

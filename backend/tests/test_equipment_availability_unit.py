@@ -9,6 +9,8 @@ import unittest
 from datetime import datetime
 from types import SimpleNamespace
 
+from tests.payloads import texts
+
 
 def _rules():
     # Imported here so the tests fail on behaviour, not on import, until it exists.
@@ -162,17 +164,6 @@ class EquipmentAvailabilityRuleTests(unittest.TestCase):
             text = " ".join(texts(self.check(requirement))).lower()
             for word in ("reserved", "booked", "confirmed"):
                 self.assertNotIn(word, text)
-
-
-def texts(value):
-    """Every piece of text in a result, at any depth, without the field names."""
-    if isinstance(value, str):
-        return [value]
-    if isinstance(value, dict):
-        return [text for item in value.values() for text in texts(item)]
-    if isinstance(value, (list, tuple)):
-        return [text for item in value for text in texts(item)]
-    return []
 
 
 if __name__ == "__main__":

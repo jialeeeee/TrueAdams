@@ -5,7 +5,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import apiClient from "../api/client.js";
 import EquipmentReservationPage from "./EquipmentReservationPage.jsx";
 
-// Frontend cases TC-44-38 to TC-44-46 in docs/test-cases/SCRUM-44-reserve-equipment.md.
+// Frontend cases TC-44-38 to TC-44-46 and TC-44-54 to TC-44-56 in
+// docs/test-cases/SCRUM-44-reserve-equipment.md.
 // The API is covered by backend/tests/test_equipment_reservation.py; responses mirror
 // its contract:
 //   GET  /events/<id>/equipment-reservations -> PAGE = { event, reservation_period,
@@ -249,6 +250,69 @@ describe("SCRUM-44 Technical Support reserve equipment for an event", () => {
     expect((await screen.findByRole("status")).textContent).toContain(confirmation);
     expect(await screen.findByText("1 × BenQ LU935 reserved by hana@example.com")).toBeTruthy();
     expect(apiClient.get).toHaveBeenCalledTimes(2);
+  });
+
+  // TC-44-54 (SCRUM-44 review): the old numbers must not pass for the new ones.
+  it("says so, and offers Retry, when the page can't be loaded again after reserving", async () => {
+    const reserved = { ...PROJECTOR, reserved_quantity: 1, remaining_quantity: 0, state: "fully_reserved",
+                       state_label: "Fully reserved", reservations: [reservation(5, "BenQ LU935", 1)] };
+    apiClient.get
+      .mockResolvedValueOnce({ data: PAGE })
+      .mockRejectedValueOnce(failed(503, { error: "The equipment reservations could not be loaded. Please try again.", retryable: true }))
+      .mockResolvedValueOnce({ data: { ...PAGE, requirements: [MICS, reserved, HOLOGRAM] } });
+    apiClient.post.mockResolvedValue({ data: {
+      confirmation: "Reserved 1 × BenQ LU935 for 1 × Projector at Charity Gala.", saved: true,
+      refresh_error: "The equipment was reserved, but the updated page could not be loaded. Reload the page to see it.",
+    } });
+    const user = renderPage();
+
+    await user.type(await screen.findByLabelText("Quantity of BenQ LU935"), "1");
+    await user.click(reserveButton("1 × Projector"));
+
+    expect((await screen.findByRole("alert")).textContent).toContain("could not be loaded");
+    expect(screen.getByRole("status").textContent).toContain("Reserved 1 × BenQ LU935");
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+
+    expect(await screen.findByText("1 × BenQ LU935 reserved by hana@example.com")).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  // TC-44-55 (SCRUM-44 review): a refusal means the page is out of date.
+  it("loads the page again after a refusal, keeping the refusal and the selection", async () => {
+    const error = "Only 1 × Shure SLX-D is available for this event's period, not 2. Nothing was reserved.";
+    const now = { ...MICS, options: [option(1, "Shure SLX-D", 2, { reserved_for_other_events: 1, available_to_reserve: 1 }),
+                                     option(2, "Sennheiser EW-D", 2)] };
+    apiClient.get
+      .mockResolvedValueOnce({ data: PAGE })
+      .mockResolvedValueOnce({ data: { ...PAGE, requirements: [now, PROJECTOR, HOLOGRAM] } });
+    apiClient.post.mockRejectedValue(failed(409, { error, available_quantity: 3 }));
+    const user = renderPage();
+
+    await user.type(await screen.findByLabelText("Quantity of Shure SLX-D"), "2");
+    await user.click(reserveButton("3 × Wireless microphone"));
+
+    expect(await screen.findByText(/Shure SLX-D: 1 available to reserve/)).toBeTruthy();
+    expect(within(items()[0]).getByRole("alert").textContent).toContain(error);
+    expect(quantity("Shure SLX-D").value).toBe("2");
+  });
+
+  // TC-44-56 (SCRUM-44 review)
+  it("clears an earlier refusal under another requirement once something is reserved", async () => {
+    const error = "The equipment was not reserved, and the existing reservations are unchanged. Please try again.";
+    apiClient.get.mockResolvedValue({ data: PAGE });
+    apiClient.post
+      .mockRejectedValueOnce(failed(503, { error, retryable: true }))
+      .mockResolvedValueOnce({ data: { ...PAGE, confirmation: "Reserved 2 × Sennheiser EW-D.", saved: true } });
+    const user = renderPage();
+
+    await user.type(await screen.findByLabelText("Quantity of BenQ LU935"), "1");
+    await user.click(reserveButton("1 × Projector"));
+    expect((await within(items()[1]).findByRole("alert")).textContent).toContain(error);
+    await user.type(quantity("Sennheiser EW-D"), "2");
+    await user.click(reserveButton("3 × Wireless microphone"));
+
+    expect((await screen.findByRole("status")).textContent).toContain("Reserved 2 × Sennheiser EW-D.");
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 
   // TC-44-43 · AC1, AC8

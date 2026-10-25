@@ -24,14 +24,16 @@ UNAVAILABLE = "unavailable"
 QUANTITY_NOT_RECORDED = "quantity_not_recorded"
 
 
-def _key(text):
+def match_key(text):
+    """A category or equipment type without case or extra spacing. The route narrows the
+    catalogue in SQL by the same key (SCRUM-44 review), then is_suitable decides."""
     return " ".join(text.split()).lower()
 
 
 def is_suitable(resource, equipment_type):
     """An item suits a requirement when its category matches the requirement's equipment
     type, ignoring case and spacing (A2, open question Q1)."""
-    return bool(resource.category) and _key(resource.category) == _key(equipment_type)
+    return bool(resource.category) and match_key(resource.category) == match_key(equipment_type)
 
 
 def _time(value):
@@ -117,7 +119,7 @@ def check_all(requirements, resources, unavailable, reserved=None):
     lines = [check(requirement, resources, unavailable, reserved) for requirement in requirements]
     pools = {}
     for requirement, line in zip(requirements, lines):
-        pools.setdefault(_key(requirement.equipment_type), []).append((requirement, line))
+        pools.setdefault(match_key(requirement.equipment_type), []).append((requirement, line))
     for members in pools.values():
         if len(members) < 2:
             continue
