@@ -1518,6 +1518,87 @@ def get_event_registrations(event_id: int):
     return jsonify(payload)
 
 
+# ---------- Registration information for the coordinator (SCRUM-72) ----------
+
+
+@events_bp.get("/managed/registrations")
+@jwt_required()
+def list_managed_registrations():
+    try:
+        user = _current_user()
+        if user is None:
+            return _error("Your session is no longer valid. Please log in again.", 401)
+        if user.role != COORDINATOR_ROLE:
+            return _error(
+                "Only event coordinators can view registration information for their "
+                "assigned events.", 403)
+        events = (
+            Event.query.filter_by(coordinator_id=user.id)
+            .order_by(Event.start_time.asc().nulls_last(), Event.id)
+            .all()
+        )
+        counts = _registered_counts([e.id for e in events])
+        items = [_organised_event_payload(e, counts.get(e.id, 0)) for e in events]
+    except SQLAlchemyError:
+        db.session.rollback()
+        return _error(
+            "The registration information for your events could not be loaded. "
+            "Please try again.", 503, retryable=True)
+
+    return jsonify({
+        "events": items,
+        "message": None if items else "You have no events assigned to you yet.",
+    })
+
+
+@events_bp.get("/<int:event_id>/registration-overview")
+@jwt_required()
+def get_registration_overview(event_id: int):
+    try:
+        user = _current_user()
+        if user is None:
+            return _error("Your session is no longer valid. Please log in again.", 401)
+        event = db.session.get(Event, event_id) if event_id <= DB_INTEGER_MAX else None
+        if event is None:
+            return _error(EVENT_NOT_FOUND, 404)
+        if not _is_current_coordinator(user, event):
+            return _error(
+                "You can only view registration information for events assigned to you.", 403)
+        rows = (
+            db.session.query(Registration.status, func.count(Registration.id))
+            .filter(Registration.event_id == event.id)
+            .group_by(Registration.status)
+            .all()
+        )
+        by_status = dict(rows)
+        venue = db.session.get(Venue, event.venue_id) if event.venue_id else None
+        registration = _registration_summary(event, by_status.get(REGISTERED, 0))
+        registration["withdrawn_count"] = by_status.get("withdrawn", 0)
+        registration["cancelled_count"] = by_status.get("cancelled", 0)
+        registration["opens_at"] = _isoformat(event.registration_opens_at)
+        registration["closes_at"] = _isoformat(event.registration_closes_at)
+        payload = {
+            "event": {
+                "id": event.id,
+                "title": _recorded(event.title),
+                "start_time": _isoformat(event.start_time),
+                "end_time": _isoformat(event.end_time),
+                "status": event.status,
+                "expected_attendance": event.expected_attendance,
+                "venue": {"name": venue.name, "capacity": venue.capacity} if venue else None,
+            },
+            "registration": registration,
+            "message": None if by_status else "No one has registered for this event yet.",
+        }
+    except SQLAlchemyError:
+        db.session.rollback()
+        return _error(
+            "The registration information for this event could not be loaded. "
+            "Please try again.", 503, retryable=True)
+
+    return jsonify(payload)
+
+
 # ---------- The events a Coordinator Lead assigned (SCRUM-83) ----------
 
 # Events still being worked on, so a Lead can supervise them (A3, open question Q2).

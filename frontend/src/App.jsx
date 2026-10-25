@@ -15,6 +15,7 @@ import EventsPage from "./pages/EventsPage.jsx";
 import LeadAssignedEventsPage from "./pages/LeadAssignedEventsPage.jsx";
 import LoginPage from "./pages/LoginPage.jsx";
 import ManagedEventsPage from "./pages/ManagedEventsPage.jsx";
+import ManagedRegistrationsPage from "./pages/ManagedRegistrationsPage.jsx";
 import MyDraftsPage from "./pages/MyDraftsPage.jsx";
 import MyEventRequestsPage from "./pages/MyEventRequestsPage.jsx";
 import MyRegistrationsPage from "./pages/MyRegistrationsPage.jsx";
@@ -23,6 +24,7 @@ import OrganisedEventsPage from "./pages/OrganisedEventsPage.jsx";
 import ResourcesPage from "./pages/ResourcesPage.jsx";
 import ReassignCoordinatorPage from "./pages/ReassignCoordinatorPage.jsx";
 import ReassignmentRequestPage from "./pages/ReassignmentRequestPage.jsx";
+import RegistrationOverviewPage from "./pages/RegistrationOverviewPage.jsx";
 import RegistrationSettingsPage from "./pages/RegistrationSettingsPage.jsx";
 import ReviewRequestPage from "./pages/ReviewRequestPage.jsx";
 import ReviewRequestsPage from "./pages/ReviewRequestsPage.jsx";
@@ -63,6 +65,7 @@ export default function App() {
         <Link to="/events/requests">My requests</Link>
         <Link to="/events/organised">Registrations for my events</Link>
         <Link to="/events/managed">My managed events</Link>
+        <Link to="/events/managed/registrations">Registrations for my managed events</Link>
         <Link to="/events/queue">Waiting events</Link>
         <Link to="/events/supervised">Events I assigned</Link>
         <Link to="/events/review-requests">Requests for review</Link>
@@ -86,6 +89,7 @@ export default function App() {
           <Route path="/events/requests" element={<MyRequestsPage />} />
           <Route path="/events/mine" element={<MyEventRequestsPage />} />
           <Route path="/events/managed" element={<ManagedEventsPage />} />
+          <Route path="/events/managed/registrations" element={<ManagedRegistrationsPage />} />
           <Route path="/events/organised" element={<OrganisedEventsPage />} />
           <Route path="/events/supervised" element={<LeadAssignedEventsPage />} />
           <Route path="/events/queue" element={<UnassignedQueuePage />} />
@@ -96,6 +100,7 @@ export default function App() {
           <Route path="/events/:eventId/clarifications" element={<ClarificationPage />} />
           <Route path="/events/:eventId/register" element={<EventRegistrationPage />} />
           <Route path="/events/:eventId/registrations" element={<EventRegistrationsPage />} />
+          <Route path="/events/:eventId/registration-overview" element={<RegistrationOverviewPage />} />
           <Route path="/events/:eventId/registration-settings" element={<RegistrationSettingsPage />} />
           <Route path="/events/:eventId/venue-request" element={<VenueBookingRequestPage />} />
           <Route path="/events/:eventId/venue-suitability" element={<VenueSuitabilityPage />} />
