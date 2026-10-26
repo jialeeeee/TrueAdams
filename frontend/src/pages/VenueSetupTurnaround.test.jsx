@@ -66,7 +66,15 @@ describe("venue request form (TC6, TC10)", () => {
   it("sends the setup and turnaround and shows the labelled conflict, keeping the entries", async () => {
     apiClient.get.mockImplementation(async (url) => {
       if (url === "/events/7/planning") return { data: planning };
-      return { data: { venues: [{ id: 3, name: "Aurora Ballroom", location: "L3", capacity: 400 }], message: null } };
+      if (url === "/venues/") {
+        return { data: { venues: [{ id: 3, name: "Aurora Ballroom", location: "L3", capacity: 400 }], message: null } };
+      }
+      // SCRUM-69: the page also loads the event's earlier venue requests. As
+      // GET /api/venues/bookings?event_id= replies when there are none.
+      if (url === "/venues/bookings") {
+        return { data: { bookings: [], message: "There are no venue requests for this event." } };
+      }
+      throw new Error(`Unexpected API read: ${url}`);
     });
     apiClient.post.mockRejectedValue(httpFailure(409, {
       error: "This booking can't be requested because it clashes with other arrangements at Aurora Ballroom.",
