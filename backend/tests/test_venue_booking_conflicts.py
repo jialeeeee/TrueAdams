@@ -41,6 +41,8 @@ VENUE_LOCK = ("locking the venue", lambda s: "FROM venues" in s and "FOR UPDATE"
 CONFIRMED_BOOKINGS = ("reading confirmed bookings",
                       lambda s: "FROM venue_bookings" in s and "FOR UPDATE" not in s)
 BLOCKS = ("reading blocks", lambda s: "FROM venue_blocks" in s)
+# Only the unexpired-holds query filters on the expiry (AC1 since reopening; SCRUM-87).
+HOLDS = ("reading unexpired holds", lambda s: "hold_expires_at >" in s)
 
 
 class ConflictCheckTestCase(ApprovalTestCase):
@@ -222,6 +224,38 @@ class UnverifiedAvailabilityTests(ConflictCheckTestCase):
     def test_list_reports_unverified_availability(self):
         headers = self.auth_headers(self.users["gus"])
         with self.statements_fail(BLOCKS[1]):
+            response = self.listed(headers)
+
+        body = self.assert_error(response, 503)
+        self.assertIs(body.get("retryable"), True)
+        self.assertRegex(body["error"].lower(), UNVERIFIED)
+        self.assertNotIn("bookings", body)
+
+
+# ---------- Reopened 26 Oct 2026: AC1 adds unexpired tentative holds ----------
+#
+# Holds already conflict through SCRUM-87 (TC-87-13 to 18 cover AC1-AC6 for them);
+# these close the gap for AC7, when the holds part of the check fails.
+
+
+class UnverifiedHoldsTests(ConflictCheckTestCase):
+    # TC-41-18 · AC1, AC7 — approving when the holds can't be read.
+    def test_unreadable_holds_prevent_approval(self):
+        booking_id = self.bookings["P1"].id
+        headers = self.auth_headers(self.users["gus"])
+        with self.statements_fail(HOLDS[1]):
+            response = self.approve(booking_id, headers=headers)
+
+        body = self.assert_error(response, 503)
+        self.assertIs(body.get("retryable"), True)
+        self.assertRegex(body["error"].lower(), UNVERIFIED)
+        self.assert_nothing_decided()
+        self.assertEqual(self.approve("P1").status_code, 200)
+
+    # TC-41-19 · AC1, AC7 — the pending list when the holds can't be read.
+    def test_list_with_unreadable_holds_reports_unverified_availability(self):
+        headers = self.auth_headers(self.users["gus"])
+        with self.statements_fail(HOLDS[1]):
             response = self.listed(headers)
 
         body = self.assert_error(response, 503)
