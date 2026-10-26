@@ -174,6 +174,22 @@ def list_events():
 SAFETY_CHECK_VIEWER_ROLES = {"safety_officer"}
 
 
+def _safety_schedule_covered(event, bookings):
+    """PR #58: confirmed booked periods must cover the current event without gaps.
+
+    Venues may cover different phases; setup/turnaround are not event activities.
+    This cannot establish unrecorded requirements for particular venues (A6/Q6).
+    """
+    covered_until = event.start_time
+    for booking in sorted(bookings, key=lambda row: row.start_time):
+        if booking.start_time > covered_until:
+            break
+        covered_until = max(covered_until, booking.end_time)
+        if covered_until >= event.end_time:
+            return True
+    return False
+
+
 def _safety_check_payload(event, venues, equipment_lines):
     return {
         "id": event.id,
@@ -197,11 +213,20 @@ def list_safety_checks():
         if user.role not in SAFETY_CHECK_VIEWER_ROLES:
             return _error("Only Safety Officers can view events awaiting a safety check.", 403)
 
-        bookings = VenueBooking.query.filter_by(status=BLOCKING_BOOKING_STATUS).all()
-        event_ids = {booking.event_id for booking in bookings if booking.event_id is not None}
+        # PR #58: closed events and events ending now or earlier need no safety check.
+        events = Event.query.filter(
+            Event.end_time > singapore_now(),
+            *[Event.status != status for status in EQUIPMENT_CLOSED_STATUSES]).all()
+        events = [event for event in events if event.start_time is not None]
+        event_ids = {event.id for event in events}
         items = []
         if event_ids:
-            events = Event.query.filter(Event.id.in_(event_ids)).all()
+            # Read only confirmed bookings for current candidates and their date range.
+            # Use booked times here: setup/turnaround do not cover event activities.
+            bookings = VenueBooking.query.filter_by(status=BLOCKING_BOOKING_STATUS).filter(
+                VenueBooking.event_id.in_(event_ids),
+                VenueBooking.start_time < max(event.end_time for event in events),
+                VenueBooking.end_time > min(event.start_time for event in events)).all()
             requirements = EquipmentRequirement.query.filter(
                 EquipmentRequirement.event_id.in_(event_ids)).all()
             reservations = EquipmentReservation.query.filter_by(status=reserving.RESERVED).filter(
@@ -210,7 +235,9 @@ def list_safety_checks():
             venues = {venue.id: venue for venue in Venue.query.filter(Venue.id.in_(venue_ids)).all()}
 
             event_venues = {}
+            event_bookings = {}
             for booking in bookings:
+                event_bookings.setdefault(booking.event_id, []).append(booking)
                 venue = venues[booking.venue_id]
                 event_venues.setdefault(booking.event_id, {})[venue.id] = {
                     "id": venue.id, "name": venue.name,
@@ -224,6 +251,8 @@ def list_safety_checks():
                 reserved[key] = reserved.get(key, 0) + reservation.quantity
 
             for event in events:
+                if not _safety_schedule_covered(event, event_bookings.get(event.id, [])):
+                    continue
                 needed = event_requirements.get(event.id, [])
                 # SCRUM-90 A1/Q1: an unprocessed organiser note is not "no equipment".
                 if not needed and (event.equipment_requirements or "").strip():

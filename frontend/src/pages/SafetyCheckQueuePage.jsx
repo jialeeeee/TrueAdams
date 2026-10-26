@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import apiClient from "../api/client.js";
 import canRetry from "../utils/canRetry.js";
 import explain from "../utils/explain.js";
@@ -10,15 +10,19 @@ const NOT_RECORDED = "Not recorded";
 export default function SafetyCheckQueuePage() {
   const [result, setResult] = useState(null);
   const [loadError, setLoadError] = useState(null);
+  const loadAttempt = useRef(0);
 
   const load = useCallback(async () => {
+    const attempt = ++loadAttempt.current;
     // SCRUM-90 AC4: an earlier list must not remain visible during a failed reload.
     setResult(null);
     setLoadError(null);
     try {
       const response = await apiClient.get("/events/safety-checks");
+      if (attempt !== loadAttempt.current) return;
       setResult(response.data);
     } catch (failure) {
+      if (attempt !== loadAttempt.current) return;
       setLoadError({ message: explain(failure, NOT_LOADED), retryable: canRetry(failure) });
     }
   }, []);

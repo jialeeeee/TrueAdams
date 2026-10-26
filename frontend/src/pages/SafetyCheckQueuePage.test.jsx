@@ -1,7 +1,8 @@
 // SCRUM-90 TC-90-05..07: docs/test-cases/SCRUM-90-safety-check-queue.md and
 // backend/tests/test_safety_check_queue_unit.py. Proposed route/payload contract.
 // Render App so RED detects missing functionality without importing a missing page.
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { StrictMode } from "react";
+import { act, cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -22,13 +23,14 @@ const EMPTY = "There are no events awaiting a safety check.";
 const DENIED = "Only Safety Officers can view events awaiting a safety check.";
 const LOAD_FAILED = "The safety check list could not be loaded. Please try again.";
 
-function openPage() {
+function openPage(strict = false) {
   sessionStorage.setItem("access_token", "scrum-90-test-token");
-  render(
+  const page = (
     <MemoryRouter initialEntries={["/events/safety-checks"]} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
       <App />
-    </MemoryRouter>,
+    </MemoryRouter>
   );
+  render(strict ? <StrictMode>{page}</StrictMode> : page);
   return userEvent.setup();
 }
 
@@ -94,5 +96,34 @@ describe("SCRUM-90 safety check queue", () => {
     openPage();
     expect((await screen.findByRole("alert")).textContent).toBe(LOAD_FAILED);
     expect(screen.queryByText(WORKSHOP.title)).toBeNull();
+  });
+
+  // TC-90-08 / AC4: main.jsx's StrictMode can leave an initial request pending
+  // while a later load succeeds and the user refreshes the queue.
+  it("ignores older results and errors after a newer refresh", async () => {
+    for (const outcome of ["success", "failure"]) {
+      let resolveOlder;
+      let rejectOlder;
+      const older = new Promise((resolve, reject) => {
+        resolveOlder = resolve;
+        rejectOlder = reject;
+      });
+      apiClient.get.mockReset();
+      apiClient.get.mockReturnValueOnce(older)
+        .mockResolvedValueOnce({ data: LIST })
+        .mockResolvedValueOnce({ data: { events: [], message: EMPTY } });
+      const user = openPage(true);
+      await screen.findByText(WORKSHOP.title);
+      await user.click(screen.getByRole("button", { name: /refresh/i }));
+      await screen.findByText(EMPTY);
+      await act(async () => {
+        if (outcome === "success") resolveOlder({ data: LIST });
+        else rejectOlder({ response: { status: 503, data: { error: LOAD_FAILED } } });
+      });
+      expect(screen.getByText(EMPTY)).toBeTruthy();
+      expect(screen.queryByText(WORKSHOP.title)).toBeNull();
+      expect(screen.queryByRole("alert")).toBeNull();
+      cleanup();
+    }
   });
 });

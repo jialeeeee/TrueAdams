@@ -7,7 +7,7 @@ records, rather than mocking a ready-made eligible list. It does not execute SQL
 
 import socket
 import unittest
-from datetime import datetime
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 from unittest import mock
 
@@ -39,6 +39,9 @@ class SafetyCheckQueueUnitTests(unittest.TestCase):
         self.user = SimpleNamespace(id=90, role="safety_officer")
         self.start = datetime(2026, 12, 12, 17)
         self.end = datetime(2026, 12, 12, 20)
+        clock = mock.patch.object(routes, "singapore_now", return_value=self.start - timedelta(hours=1))
+        clock.start()
+        self.addCleanup(clock.stop)
         self.rows = {
             Event: [self.event(1, "Reserved workshop", "Microphones and projector"),
                     self.event(2, "No equipment meeting"),
@@ -64,6 +67,31 @@ class SafetyCheckQueueUnitTests(unittest.TestCase):
                                    self.reservation(5, 4, 105, 1, status="released"),
                                    self.reservation(6, 6, 106, 1)],
         }
+        # PR #58: closed/past events and a rescheduled event with its old booking.
+        for record_id, status in ((8, "cancelled"), (9, "rejected")):
+            self.rows[Event].append(self.event(record_id, status, status=status))
+            self.rows[VenueBooking].append(self.booking(record_id, record_id))
+        for record_id, end in ((10, self.start - timedelta(days=1)),
+                               (11, self.start - timedelta(hours=1))):
+            start = end - timedelta(hours=2)
+            self.rows[Event].append(self.event(record_id, "Ended event", start_time=start, end_time=end))
+            self.rows[VenueBooking].append(self.booking(record_id, record_id, start=start, end=end))
+        self.rows[Event].append(self.event(12, "Rescheduled event", start_time=self.start + timedelta(hours=1),
+                                          end_time=self.end + timedelta(hours=1)))
+        self.rows[VenueBooking].append(self.booking(12, 12))
+        # A wider booking and a different venue's shorter booking remain legitimate.
+        self.rows[VenueBooking][0].start_time -= timedelta(hours=1)
+        self.rows[VenueBooking][0].end_time += timedelta(hours=1)
+        self.rows[VenueBooking][1].start_time += timedelta(minutes=30)
+        self.rows[VenueBooking][1].end_time -= timedelta(minutes=30)
+        # Distinct venue phases can touch; a gap between them is not coverage.
+        for record_id, second_start in ((13, self.start + timedelta(hours=1)),
+                                        (14, self.start + timedelta(hours=1, minutes=1))):
+            self.rows[Event].append(self.event(record_id, "Venue phases"))
+            self.rows[VenueBooking].extend([
+                self.booking(record_id * 2, record_id, end=self.start + timedelta(hours=1)),
+                self.booking(record_id * 2 + 1, record_id, venue_id=11, start=second_start),
+            ])
         self.session = mock.MagicMock()
         self.session.get.side_effect = self.load
         self.session.query.side_effect = lambda model: _ReadQuery(self.rows[model])
@@ -77,16 +105,17 @@ class SafetyCheckQueueUnitTests(unittest.TestCase):
             self.queries[model] = patcher.start()
             self.addCleanup(patcher.stop)
 
-    def event(self, record_id, title, note=None):
+    def event(self, record_id, title, note=None, **changes):
         values = {column.name: None for column in Event.__table__.columns}
         values.update(id=record_id, title=title, status="approved", organiser_id=80,
                       venue_id=10, start_time=self.start, end_time=self.end,
                       expected_attendance=60, equipment_requirements=note)
+        values.update(changes)
         return SimpleNamespace(**values)
 
-    def booking(self, record_id, event_id, venue_id=10, status="confirmed"):
+    def booking(self, record_id, event_id, venue_id=10, status="confirmed", start=None, end=None):
         return SimpleNamespace(id=record_id, event_id=event_id, venue_id=venue_id,
-                               status=status, start_time=self.start, end_time=self.end)
+                               status=status, start_time=start or self.start, end_time=end or self.end)
 
     @staticmethod
     def requirement(record_id, event_id, equipment_type, quantity):
@@ -115,7 +144,7 @@ class SafetyCheckQueueUnitTests(unittest.TestCase):
     def test_eligibility_uses_confirmed_bookings_and_complete_active_quantities(self):
         response = self.listing()
         self.assertEqual(response.status_code, 200, response.get_json())
-        self.assertCountEqual([row["id"] for row in response.get_json()["events"]], [1, 2])
+        self.assertCountEqual([row["id"] for row in response.get_json()["events"]], [1, 2, 13])
         self.session.commit.assert_not_called()
 
     # TC-90-02 / AC2: one event row even when two confirmed bookings exist.
