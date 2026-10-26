@@ -1038,21 +1038,24 @@ def _request_payload(event):
     for field in DRAFT_FIELDS:
         value = getattr(event, field)
         fields[field] = _isoformat(value) if field in DRAFT_TIME_FIELDS else value
-    decided_by = db.session.get(User, event.decided_by_id) if event.decided_by_id else None
-    reviewer = (db.session.get(User, event.review_started_by_id)
-                if event.review_started_by_id else None)
     return {
         "id": event.id,
         "status": event.status,
         **fields,
         "submitted_at": _isoformat(event.submitted_at),
         "decided_at": _isoformat(event.decided_at),
-        "decided_by": _user_summary(decided_by) if decided_by else None,
+        "decided_by": _recorded_user(event.decided_by_id),
         "decision_note": event.decision_note,
         # SCRUM-31 (reopened): who started the review and when (A11).
         "review_started_at": _isoformat(event.review_started_at),
-        "review_started_by": _user_summary(reviewer) if reviewer else None,
+        "review_started_by": _recorded_user(event.review_started_by_id),
     }
+
+
+def _recorded_user(user_id):
+    """The summary of the user an event records, or None if none is recorded."""
+    user = db.session.get(User, user_id) if user_id else None
+    return _user_summary(user) if user else None
 
 
 def _decider_summaries(events):

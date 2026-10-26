@@ -13,6 +13,9 @@ const MAX_WORDS = 1000;
 const VISIBLE = /[^\s\p{C}\p{Z}]/u;
 // Must match REASON_REQUIRED in backend/app/events/routes.py.
 const REASON_REQUIRED = "A reason is required to reject this request.";
+// Statuses whose request can be approved or rejected; under review since SCRUM-31 was
+// reopened (its A13). Must match DECIDABLE_STATUSES in backend/app/events/routes.py.
+const DECIDABLE = ["submitted", "under_review"];
 
 // The organiser's request fields (SCRUM-29), in display order.
 const DETAILS = [
@@ -177,8 +180,7 @@ function ReviewRequest({ eventId }) {
 
   if (!request) return <p>Loading…</p>;
 
-  // A request under review can still be decided (SCRUM-31 A13).
-  const undecided = request.status === "submitted" || request.status === "under_review";
+  const undecided = DECIDABLE.includes(request.status);
 
   return (
     <section>
