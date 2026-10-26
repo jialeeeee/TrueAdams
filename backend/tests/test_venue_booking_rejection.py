@@ -2,8 +2,8 @@
 
 AC1 reuses SCRUM-39 tests.
 Guard/validation tests use Flask/JWT with mocked persistence and no network.
-Persistence/transaction tests reuse SCRUM-40 fixtures, but refuse any database
-except the explicitly authorised local Docker target before opening a connection.
+Persistence/transaction tests reuse SCRUM-40 fixtures, but are skipped on any database
+that is not on this machine (a local copy or CI's service), before opening a connection.
 No schema changes or real email are performed by this module.
 """
 
@@ -31,11 +31,9 @@ REASON = "The required stage power cannot be provided for this arrangement."
 REJECT_URL = "/api/venues/bookings/{}/reject"
 # AC3 specifies characters, unlike the event decision's separate word limit.
 MAX_REASON_LENGTH = 500
-# Exact local Docker target and the existing throwaway CI service; never Supabase.
-LOCAL_TEST_TARGETS = {
-    ("127.0.0.1", 5433, "postgres", "connectsphere_test"),
-    ("localhost", 5432, "postgres", "connectsphere_test"),
-}
+# The persistence tests only run on a database on this machine: a local copy (Docker, or
+# ci/build_test_database.py on any free port) or CI's throwaway service; never Supabase.
+LOCAL_HOSTS = {"localhost", "127.0.0.1"}
 
 
 class RejectionGuardUnitTests(unittest.TestCase):
@@ -190,10 +188,12 @@ class RejectionPersistenceTests(ApprovalTestCase):
 
     @classmethod
     def setUpClass(cls):
-        url = make_url(TestConfig.SQLALCHEMY_DATABASE_URI or "postgresql://")
-        actual = (url.host, url.port, url.database, url.username)
-        if actual not in LOCAL_TEST_TARGETS:
-            raise RuntimeError(f"UNSAFE DATABASE TARGET: {actual}; expected local Docker or CI")
+        # Skipped, not failed, elsewhere: a run against Supabase is a normal run, and CI
+        # (whose database is local) still runs these tests every time.
+        host = make_url(TestConfig.SQLALCHEMY_DATABASE_URI or "postgresql://").host
+        if host not in LOCAL_HOSTS:
+            raise unittest.SkipTest(
+                f"SCRUM-69 persistence tests run only on a local or CI database, not {host}.")
         super().setUpClass()
 
     def reject(self, reason=REASON, booking="P1"):
