@@ -48,25 +48,27 @@ class RejectTestCase(DecisionTestCase):
 
 
 class OnlySubmittedTests(RejectTestCase):
-    # TC-78-01 · AC1 (A1) — a request under review cannot be rejected.
-    def test_a_request_under_review_cannot_be_rejected(self):
-        before = self.stored("R8")
+    # TC-78-01 · AC1 (A1) — a request under review can be rejected. Changed when SCRUM-31
+    # was reopened (its A13): starting a review must not block the decision.
+    def test_a_request_under_review_can_be_rejected(self):
+        response = self.decide("R8", "reject", reason=REASON)
 
-        body = self.assert_error(self.decide("R8", "reject", reason=REASON), 409)
+        self.assertEqual(response.status_code, 200, response.get_json())
+        stored = self.stored("R8")
+        self.assertEqual((stored["status"], stored["decision_note"]), ("rejected", REASON))
+        self.assertEqual(len(self.notifications_for("dana")), 1)
 
-        self.assertIn("under_review", body["error"])
-        self.assert_nothing_decided("R8", before)
-
-    # TC-78-02 · AC1, AC4 — of all the statuses, only submitted becomes rejected.
-    def test_only_a_submitted_request_becomes_rejected(self):
+    # TC-78-02 · AC1, AC4 — of all the statuses, only submitted and under review become
+    # rejected (SCRUM-31 A13).
+    def test_only_submitted_and_under_review_requests_become_rejected(self):
         results = {key: self.decide(key, "reject", reason=REASON).status_code
                    for key in ("R1", "R4", "R5", "R6", "R7", "R8")}
 
         self.assertEqual(results, {"R1": 200, "R4": 409, "R5": 409, "R6": 409,
-                                   "R7": 409, "R8": 409})
+                                   "R7": 409, "R8": 200})
         self.assertEqual({key: self.stored(key)["status"] for key in results}, {
             "R1": "rejected", "R4": "draft", "R5": "approved", "R6": "rejected",
-            "R7": "cancelled", "R8": "under_review",
+            "R7": "cancelled", "R8": "rejected",
         })
         # The earlier rejection of R6 keeps its own reason.
         self.assertEqual(self.stored("R6")["decision_note"], "No licensed venue is available")

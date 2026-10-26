@@ -44,25 +44,28 @@ class ApproveTestCase(DecisionTestCase):
 
 
 class OnlySubmittedTests(ApproveTestCase):
-    # TC-77-01 · AC1 (A1) — a request under review cannot be approved.
-    def test_a_request_under_review_cannot_be_approved(self):
-        before = self.stored("R8")
+    # TC-77-01 · AC1 (A1) — a request under review can be approved. Changed when SCRUM-31
+    # was reopened (its A13): starting a review must not block the decision.
+    def test_a_request_under_review_can_be_approved(self):
+        response = self.decide("R8", "approve")
 
-        body = self.assert_error(self.decide("R8", "approve"), 409)
+        self.assertEqual(response.status_code, 200, response.get_json())
+        stored = self.stored("R8")
+        self.assertEqual((stored["status"], stored["decided_by_id"]),
+                         ("approved", self.users["alice"].id))
+        self.assertEqual(len(self.notifications_for("dana")), 1)
 
-        self.assertIn("under_review", body["error"])
-        self.assert_nothing_decided("R8", before)
-
-    # TC-77-02 · AC1, AC3 — of all the statuses, only submitted becomes approved.
-    def test_only_a_submitted_request_becomes_approved(self):
+    # TC-77-02 · AC1, AC3 — of all the statuses, only submitted and under review become
+    # approved (SCRUM-31 A13).
+    def test_only_submitted_and_under_review_requests_become_approved(self):
         results = {key: self.decide(key, "approve").status_code
                    for key in ("R1", "R4", "R5", "R6", "R7", "R8")}
 
         self.assertEqual(results, {"R1": 200, "R4": 409, "R5": 409, "R6": 409,
-                                   "R7": 409, "R8": 409})
+                                   "R7": 409, "R8": 200})
         self.assertEqual({key: self.stored(key)["status"] for key in results}, {
             "R1": "approved", "R4": "draft", "R5": "approved", "R6": "rejected",
-            "R7": "cancelled", "R8": "under_review",
+            "R7": "cancelled", "R8": "approved",
         })
 
 

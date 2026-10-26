@@ -17,7 +17,7 @@
 
 SCRUM-32 already implements approving. This story re-checks it against the ACs above and closes the gaps in its tests. The SCRUM-32 assumptions still apply. The ones these ACs depend on are:
 
-- **A1 — Submitted only:** every other status is refused with HTTP 409 and nothing changes. The other statuses are `draft`, `under_review`, `approved`, `rejected` and `cancelled`. "Under review" is refused because the AC says Submitted only. SCRUM-32 tested every status except this one. *(SCRUM-32 Q5)*
+- **A1 — Submitted or under review:** a request that is Submitted or Under Review can be approved. Every other status (`draft`, `approved`, `rejected`, `cancelled`) is refused with HTTP 409, and nothing changes. Until SCRUM-31 was reopened, "under review" was refused too, because the AC says Submitted only. *Changed by SCRUM-31's reopening (26 Oct 2026): starting a review moves a request to Under Review, so the team decided it can still be decided (SCRUM-31 A13, Q7).* *(SCRUM-32 Q5)*
 - **A2 — Which coordinator:** only the event's *assigned* coordinator, while their role is still `coordinator` (SCRUM-32 A1). This is stricter than the AC's wording: every other role is refused, and so is a coordinator who is not assigned to the event. *(Q1)*
 - **A3 — Where the organiser sees it:** the status shows on both of the organiser's lists, "My requests" (SCRUM-32) and "My event requests" (SCRUM-59). It comes with the decision time and who decided (SCRUM-60), and the approval note if there is one. The organiser is also notified in-app and by email (SCRUM-32 AC5).
 
@@ -42,16 +42,16 @@ DC-SEED from [SCRUM-32](SCRUM-32-approve-reject-event-request.md#seed-data-dc-se
 
 ## AC1 — Only a submitted request can be approved
 
-**TC-77-01 · A request under review cannot be approved**
+**TC-77-01 · A request under review can be approved** (changed by SCRUM-31)
 - **Traces to:** AC1 · **Type:** Negative (business rule) · **Depends on:** A1
 - **Steps:** As alice, approve R8.
-- **Expected result:** HTTP 409 naming the status `under_review`. R8 is unchanged, and nobody is notified or emailed.
+- **Expected result:** HTTP 200. R8 becomes `approved`, with the decision recorded, and the organiser is notified. (Before SCRUM-31's reopening: HTTP 409.)
 - **Automated:** `test_a_request_under_review_cannot_be_approved`
 
-**TC-77-02 · Of all the statuses, only Submitted becomes Approved**
+**TC-77-02 · Of all the statuses, only Submitted and Under Review become Approved** (changed by SCRUM-31)
 - **Traces to:** AC1, AC3 · **Type:** Boundary
 - **Steps:** As alice, approve R1 (submitted), R4 (draft), R5 (approved), R6 (rejected), R7 (cancelled) and R8 (under review).
-- **Expected result:** R1 → HTTP 200 and status `approved`. Every other request → HTTP 409, with its status unchanged.
+- **Expected result:** R1 and R8 → HTTP 200 and status `approved`. Every other request → HTTP 409, with its status unchanged.
 - **Automated:** `test_only_a_submitted_request_becomes_approved`
 
 ## AC2 — Only an Event Coordinator can approve
@@ -84,9 +84,9 @@ DC-SEED from [SCRUM-32](SCRUM-32-approve-reject-event-request.md#seed-data-dc-se
 
 ## Frontend
 
-**TC-77-07 · No Approve button unless the request is Submitted**
+**TC-77-07 · No Approve button unless the request is Submitted or Under Review** (changed by SCRUM-31)
 - **Traces to:** AC1 · **Type:** Frontend
-- **Expected result:** The review page for a request that is under review, approved, a draft or cancelled shows its status and no Approve or Reject button.
+- **Expected result:** The review page for a request that is approved, a draft or cancelled shows its status and no Approve or Reject button. A request under review offers both (SCRUM-31 TC-31-42).
 - **Automated:** `ReviewRequestPage.test.jsx`, "offers no Approve button for a … request"
 
 **TC-77-08 · A refusal from the server is shown**
@@ -111,4 +111,4 @@ DC-SEED from [SCRUM-32](SCRUM-32-approve-reject-event-request.md#seed-data-dc-se
 | # | Question | Affects |
 |---|----------|---------|
 | Q1 | The AC says "an Event Coordinator". Should any coordinator be able to approve, or only the one assigned to the event (as built)? | A2, TC-77-03, TC-32-02 |
-| Q2 | Should requests "under review" be approvable too? Assumed not, as the AC says Submitted only. | A1, TC-77-01 |
+| Q2 | Should requests "under review" be approvable too? Assumed not at first, as the AC says Submitted only. The team decided yes when SCRUM-31 was reopened (26 Oct 2026); still to be confirmed with the customer. | A1, TC-77-01 |

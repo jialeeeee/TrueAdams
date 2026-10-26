@@ -13,6 +13,9 @@ const MAX_WORDS = 1000;
 const VISIBLE = /[^\s\p{C}\p{Z}]/u;
 // Must match REASON_REQUIRED in backend/app/events/routes.py.
 const REASON_REQUIRED = "A reason is required to reject this request.";
+// Statuses whose request can be approved or rejected; under review since SCRUM-31 was
+// reopened (its A13). Must match DECIDABLE_STATUSES in backend/app/events/routes.py.
+const DECIDABLE = ["submitted", "under_review"];
 
 // The organiser's request fields (SCRUM-29), in display order.
 const DETAILS = [
@@ -100,6 +103,9 @@ function ReviewRequest({ eventId }) {
   const [reasonInvalid, setReasonInvalid] = useState(false);
   const [confirmation, setConfirmation] = useState("");
   const [emailNote, setEmailNote] = useState("");
+  // SCRUM-31 (reopened): starting the review of a submitted request.
+  const [started, setStarted] = useState("");
+  const [startError, setStartError] = useState("");
 
   const load = useCallback(async () => {
     setLoadError("");
@@ -117,6 +123,18 @@ function ReviewRequest({ eventId }) {
 
   const words = countWords(text);
   const over = words - MAX_WORDS;
+
+  const startReview = async () => {
+    setStartError("");
+    try {
+      const response = await apiClient.post(`/events/${eventId}/review`);
+      setRequest(response.data.request);
+      setStarted(response.data.message);
+    } catch (failure) {
+      // The request stays submitted, so the review can be started again (AC10).
+      setStartError(explain(failure, "The review was not started. Check your connection and try again."));
+    }
+  };
 
   const decide = async (decision) => {
     const reason = VISIBLE.test(text) ? text.trim() : "";
@@ -162,12 +180,22 @@ function ReviewRequest({ eventId }) {
 
   if (!request) return <p>Loading…</p>;
 
-  const undecided = request.status === "submitted";
+  const undecided = DECIDABLE.includes(request.status);
 
   return (
     <section>
       <h1>Review: {request.title}</h1>
       <p>{`Status: ${statusLabel(request.status)}`}</p>
+      {request.review_started_by && (
+        <p>
+          {`Review started by ${request.review_started_by.email} on ${formatSavedAt(request.review_started_at)}`}
+        </p>
+      )}
+      {started && <p role="status">{started}</p>}
+      {startError && <p role="alert">{startError}</p>}
+      {request.status === "submitted" && (
+        <button type="button" onClick={startReview}>Start review</button>
+      )}
       {request.decision_note && (
         <p>{`${request.status === "rejected" ? "Reason" : "Note"}: ${request.decision_note}`}</p>
       )}

@@ -19,7 +19,7 @@
 
 SCRUM-32 already implements rejecting, and SCRUM-60 tightened the reason rules. This story re-checks them against the ACs above and closes the gaps in their tests. The assumptions these ACs depend on are:
 
-- **A1 — Submitted only:** every other status is refused with HTTP 409 and nothing changes. The other statuses are `draft`, `under_review`, `approved`, `rejected` and `cancelled`. "Under review" is refused because the AC says Submitted only. *(SCRUM-32 Q5, as in SCRUM-77)*
+- **A1 — Submitted or under review:** a request that is Submitted or Under Review can be rejected. Every other status (`draft`, `approved`, `rejected`, `cancelled`) is refused with HTTP 409, and nothing changes. Until SCRUM-31 was reopened, "under review" was refused too. *Changed by SCRUM-31's reopening (26 Oct 2026): starting a review moves a request to Under Review, so the team decided it can still be decided (SCRUM-31 A13, Q7).* *(SCRUM-32 Q5, as in SCRUM-77)*
 - **A2 — Which coordinator:** only the event's *assigned* coordinator, while their role is still `coordinator` (SCRUM-32 A1). This is stricter than the AC's wording. Permission is checked before the reason (401 → 404 → 403 → 400 → 409), so a user who may not reject is told so, not asked for a reason. *(Q1)*
 - **A3 — Non-empty reason:** a reason with at least one visible character, at most 1,000 words. Empty text, spaces of any kind (including invisible ones) and a missing reason are refused with HTTP 400 and "A reason is required to reject this request." The page refuses a blank reason before sending it. *(SCRUM-32 A3, SCRUM-60 A3)*
 - **A4 — Saved with the request:** the trimmed reason is stored in `Event.decision_note` together with the status, the decision time and who decided, in one commit. *(SCRUM-32 A4)*
@@ -44,16 +44,16 @@ DC-SEED from [SCRUM-32](SCRUM-32-approve-reject-event-request.md#seed-data-dc-se
 
 ## AC1 — Only a submitted request can be rejected
 
-**TC-78-01 · A request under review cannot be rejected**
+**TC-78-01 · A request under review can be rejected** (changed by SCRUM-31)
 - **Traces to:** AC1 · **Type:** Negative (business rule) · **Depends on:** A1
 - **Steps:** As alice, reject R8 with a reason.
-- **Expected result:** HTTP 409 naming `under_review`. R8 is unchanged, and nobody is notified or emailed.
+- **Expected result:** HTTP 200. R8 becomes `rejected` with the reason, and the organiser is notified. (Before SCRUM-31's reopening: HTTP 409.)
 - **Automated:** `test_a_request_under_review_cannot_be_rejected`
 
-**TC-78-02 · Of all the statuses, only Submitted becomes Rejected**
+**TC-78-02 · Of all the statuses, only Submitted and Under Review become Rejected** (changed by SCRUM-31)
 - **Traces to:** AC1, AC4 · **Type:** Boundary
 - **Steps:** As alice, reject R1, R4, R5, R6, R7 and R8 with a reason.
-- **Expected result:** R1 → HTTP 200 and `rejected`. Every other request → HTTP 409, with its status unchanged. R6 (already rejected) keeps its original reason.
+- **Expected result:** R1 and R8 → HTTP 200 and `rejected`. Every other request → HTTP 409, with its status unchanged. R6 (already rejected) keeps its original reason.
 - **Automated:** `test_only_a_submitted_request_becomes_rejected`
 
 ## AC2 — Only an Event Coordinator can reject
@@ -128,5 +128,5 @@ No new frontend cases are needed. Each rejection-related behaviour of the pages 
 | # | Question | Affects |
 |---|----------|---------|
 | Q1 | The AC says "an Event Coordinator". Should any coordinator be able to reject, or only the one assigned to the event (as built)? | A2, TC-78-03 |
-| Q2 | Should requests "under review" be rejectable too? Assumed not, as the AC says Submitted only. | A1, TC-78-01 |
+| Q2 | Should requests "under review" be rejectable too? Assumed not at first, as the AC says Submitted only. The team decided yes when SCRUM-31 was reopened (26 Oct 2026); still to be confirmed with the customer. | A1, TC-78-01 |
 | Q3 | Is 1,000 words the right limit for a reason? (SCRUM-32 Q3) | A3 |

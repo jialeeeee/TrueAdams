@@ -71,10 +71,15 @@ CLARIFICATION_NOTIFICATION = "clarification_requested"
 ORGANISER_ROLE = "organiser"
 DRAFT_STATUS = "draft"
 SUBMITTED_STATUS = "submitted"
+# Where starting a review moves a submitted request (SCRUM-31, reopened: AC8).
+UNDER_REVIEW_STATUS = "under_review"
 # SCRUM-55 confirmed queue eligibility; decision eligibility remains separate.
 REVIEW_QUEUE_STATUSES = {"submitted", "under_review"}
 # A coordinator's decision on a submitted request, and the status it leads to (SCRUM-32).
 DECISION_STATUSES = {"approve": "approved", "reject": "rejected"}
+# Requests that can be approved or rejected. Under review was added when SCRUM-31 was
+# reopened, so starting a review never blocks the decision (its A13, open question Q7).
+DECIDABLE_STATUSES = {SUBMITTED_STATUS, UNDER_REVIEW_STATUS}
 MAX_DECISION_WORDS = 1000
 # Shown when a rejection reason has no visible character (SCRUM-60 A3).
 REASON_REQUIRED = "A reason is required to reject this request."
@@ -1033,16 +1038,24 @@ def _request_payload(event):
     for field in DRAFT_FIELDS:
         value = getattr(event, field)
         fields[field] = _isoformat(value) if field in DRAFT_TIME_FIELDS else value
-    decided_by = db.session.get(User, event.decided_by_id) if event.decided_by_id else None
     return {
         "id": event.id,
         "status": event.status,
         **fields,
         "submitted_at": _isoformat(event.submitted_at),
         "decided_at": _isoformat(event.decided_at),
-        "decided_by": _user_summary(decided_by) if decided_by else None,
+        "decided_by": _recorded_user(event.decided_by_id),
         "decision_note": event.decision_note,
+        # SCRUM-31 (reopened): who started the review and when (A11).
+        "review_started_at": _isoformat(event.review_started_at),
+        "review_started_by": _recorded_user(event.review_started_by_id),
     }
+
+
+def _recorded_user(user_id):
+    """The summary of the user an event records, or None if none is recorded."""
+    user = db.session.get(User, user_id) if user_id else None
+    return _user_summary(user) if user else None
 
 
 def _decider_summaries(events):
@@ -1205,6 +1218,46 @@ def review_request(event_id: int):
     return jsonify({"request": payload})
 
 
+@events_bp.post("/<int:event_id>/review")
+@jwt_required()
+def start_review(event_id: int):
+    """SCRUM-31 (reopened): the assigned coordinator starts reviewing a submitted request.
+
+    The row is read afresh and locked, so a second start at the same moment waits, then
+    finds the request already under review and is refused (A15).
+    """
+    try:
+        user, event = _assigned_request(
+            event_id,
+            "Only the event's assigned coordinator can start reviewing this request.",
+            lock=True,
+        )
+        if event.status != SUBMITTED_STATUS:
+            raise _Rejected(
+                f"This request is {event.status}; only a submitted request can be put "
+                "under review.",
+                409,
+            )
+
+        event.status = UNDER_REVIEW_STATUS
+        event.review_started_at = datetime.utcnow()
+        event.review_started_by_id = user.id
+        payload = _request_payload(event)
+        title = event.title
+        db.session.commit()
+    except _Rejected as rejected:
+        return _error(rejected.message, rejected.status_code, **rejected.extra)
+    except SQLAlchemyError:
+        db.session.rollback()
+        return _error(
+            "The review was not started, so the request is still submitted. Please try again.",
+            503,
+            retryable=True,
+        )
+
+    return jsonify({"message": f'You started reviewing "{title}".', "request": payload})
+
+
 @events_bp.post("/<int:event_id>/decision")
 @jwt_required()
 def decide_request(event_id: int):
@@ -1215,10 +1268,10 @@ def decide_request(event_id: int):
             lock=True,
         )
         status, note = _parse_decision(request.get_json(silent=True))
-        if event.status != SUBMITTED_STATUS:
+        if event.status not in DECIDABLE_STATUSES:
             raise _Rejected(
-                f"This request is {event.status}; only submitted requests can be "
-                "approved or rejected.",
+                f"This request is {event.status}; only submitted requests or those under "
+                "review can be approved or rejected.",
                 409,
             )
 
@@ -1250,7 +1303,7 @@ def decide_request(event_id: int):
     except SQLAlchemyError:
         db.session.rollback()
         return _error(
-            "The decision was not saved, so the request is still submitted. Please try again.",
+            "The decision was not saved, so the request is unchanged. Please try again.",
             503,
             retryable=True,
         )
