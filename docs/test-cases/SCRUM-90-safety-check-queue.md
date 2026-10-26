@@ -2,9 +2,9 @@
 
 **User story:** As a Safety Officer, I want to see the events waiting for my safety check, so that I know which events I must review.
 
-**Created:** 27 Oct 2026 · **Status:** PR #58 corrections verified: 4 backend unit methods, 1 dedicated local PostgreSQL test and 4 frontend tests pass. Original RED/GREEN evidence is retained below.
+**Created:** 27 Oct 2026 · **Status:** latest minimal PR corrections verified: normal focused backend discovery runs 5 tests (including PostgreSQL), with no skips/errors; 4 frontend tests pass. Original RED/GREEN evidence is retained below.
 **Requirements source:** Jira wording supplied by the user; no Jira URL supplied.
-**Automated tests:** [backend unit tests](../../backend/tests/test_safety_check_queue_unit.py), [one opt-in local PostgreSQL test](../../backend/tests/test_safety_check_queue_local.py), [frontend tests](../../frontend/src/pages/SafetyCheckQueuePage.test.jsx).
+**Automated tests:** [backend unit tests](../../backend/tests/test_safety_check_queue_unit.py), [one configured local/CI PostgreSQL test](../../backend/tests/test_safety_check_queue_local.py), [frontend tests](../../frontend/src/pages/SafetyCheckQueuePage.test.jsx).
 **Related:** [SCRUM-40](SCRUM-40-approve-venue-booking.md), [SCRUM-42](SCRUM-42-equipment-requirements.md), [SCRUM-44](SCRUM-44-reserve-equipment.md). SCRUM-91/92 decisions and lifecycle changes are outside this story.
 
 ## Acceptance criteria
@@ -54,15 +54,15 @@ The frontend uses E1 with one venue plus E2, or an empty response. Backend eligi
 - **Steps:** GET the proposed queue against the complete mixed fixture set.
 - **Expected result:** HTTP 200; event IDs exactly E1/E2/E13, each once. Split active quantities satisfy E1; pending/missing booking, incomplete quantities, released equipment, note-only requirements, cancelled/rejected or ended events, a stale booking and a booking gap exclude E3–E12/E14.
 - **Automated:** `SafetyCheckQueueUnitTests.test_eligibility_uses_confirmed_bookings_and_complete_active_quantities`.
-- **Local SQL regression (TC-90-01/02):** `SafetyCheckQueueLocalTests.test_current_schedule_and_equipment_readiness_through_postgresql` uses `AppTestCase` with the guarded dedicated local database. Its single fixture checks ready/full quantities, cancelled/rejected, ended, stale schedule, touching multi-venue phases and a gap. It asserts only about its own event IDs; all inserted rows are rolled back.
+- **Local/CI SQL regression (TC-90-01/02):** `SafetyCheckQueueLocalTests.test_current_schedule_and_equipment_readiness_through_postgresql` uses `AppTestCase` with the configured `TEST_DATABASE_URL`, guarded to local/CI hosts. Its single fixture checks ready/full quantities, cancelled/rejected, ended, stale schedule, touching multi-venue phases and a gap. It asserts only about its own event IDs; all inserted rows are rolled back.
 
 ## AC2 — List contents
 
 **TC-90-02 · Complete display information without duplicate events**
 
 - **Traces to:** AC2 (supports AC1) · **Type:** Positive/boundary · **Preconditions:** SC-SEED.
-- **Steps:** GET the queue as Safety Officer; inspect E1 and E2.
-- **Expected result:** E1 occurs once, with title, both confirmed venues, event start/end, attendance 60 and both equipment types with required/reserved quantities. E2 has empty equipment. Nonempty response has `message: null`.
+- **Steps:** GET the queue as Safety Officer; inspect E1 and E2. The focused outdated-venue regression adds an earlier ongoing event that widens the batch query range, and a former venue booking for E1 ending exactly at E1's current start.
+- **Expected result:** E1 occurs once, with title, both current confirmed venues (excluding the former venue), event start/end, attendance 60 and both equipment types with required/reserved quantities. E2 has empty equipment. Nonempty response has `message: null`.
 - **Automated:** `SafetyCheckQueueUnitTests.test_list_contains_the_required_information_without_duplicate_events`.
 
 ## AC3 — Access
@@ -270,3 +270,30 @@ All four original ACs and the original seven cases/mappings are preserved. Only 
 No Supabase or remote/shared database access occurred. Only the dedicated local test database received rolled-back test fixtures; no development/production records or schema were altered. Only the three focused SCRUM-90 test files were executed; no full suite or CI claim is made. No commits, pushes or PR modifications were performed.
 
 `SCRUM-76-authorised-access.md` was left untouched. It should be excluded from PR #58 and submitted separately as a documentation-only change. **READY FOR REVIEW**; the collective-coverage question is resolved.
+
+## Latest minimal PR corrections — 27 Oct 2026
+
+- **AC2 venue display:** the batch date range spans multiple events, so it could include a rescheduled event's obsolete venue. Before grouping bookings for display/coverage, compare each booked activity period with its own event's current half-open interval. Non-overlapping bookings (including one ending exactly at the event start) are excluded. Existing collective, gap-free multi-venue coverage is unchanged.
+- **PostgreSQL setup:** the earlier custom opt-in variable is not supplied by CI, so the test skipped there. Its temporary `TestConfig` override and developer-specific cached-app URL check also conflicted with normal shared-app setup. Remove those overrides, the custom opt-in and dotenv suppression; use normal `AppTestCase` configuration/rollback and standard imports. As in SCRUM-69, skip remote targets before connecting; localhost/127.0.0.1 local or CI databases run without a developer-specific database/port requirement. The original opt-in execution evidence above is historical and superseded by this setup.
+- **Regression:** extend only existing TC-90-02 with the former-venue scenario. Before the production fix, its existing exact venue assertion failed with the unwanted `Former venue`; 3 other unit methods passed (4 run, 1 failure, 0.069 seconds; exit 1). No integration or frontend tests were added.
+
+Before database execution, Docker inventory confirmed `trueadams-test-pg` bound to `127.0.0.1:5433`. The effective `TestConfig` URL was parsed and asserted to be exactly host `127.0.0.1`, port `5433`, database `trueadams_s90_fresh`, role `connectsphere_test`; only those non-secret target fields were printed. The database name is a local execution choice, not hardcoded into the test.
+
+From `backend/`, using the configured local test database:
+
+```powershell
+$env:TEST_DATABASE_URL='postgresql://connectsphere_test:ci-only@127.0.0.1:5433/trueadams_s90_fresh'
+.\.venv\Scripts\python.exe -B -m unittest discover -v -s tests -t . -p 'test_safety_check_queue*.py'
+```
+
+**Actual:** 5 tests passed (4 isolated unit methods and the single PostgreSQL method), 0 skipped, 0 failures/errors, 0.317 seconds; exit 0. Normal unittest discovery selected only the two SCRUM-90 backend files. No custom opt-in variable, app configuration patch or app-cache reset was needed. Existing test JWT/timestamp warnings remain unchanged.
+
+From `frontend/`:
+
+```powershell
+npm.cmd test -- src/pages/SafetyCheckQueuePage.test.jsx --reporter=dot
+```
+
+**Actual:** 1 file, 4 tests passed, 0 failed; test time 378 ms, total duration 1.76 seconds; exit 0. Frontend production/test files were unchanged in this correction.
+
+All four Jira ACs remain verbatim. No additional eligibility/status rule, booking workflow change, shared test infrastructure change, schema/migration, dependency or feature was introduced. No Supabase/remote/shared database access occurred. PostgreSQL fixture rows were rolled back. The full suite and CI were not run; the CI workflow's standard `TEST_DATABASE_URL` now supplies the test without the old opt-in skip. No commit, push or PR was created. **No known remaining SCRUM-90 AC issue.**

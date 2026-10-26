@@ -236,7 +236,13 @@ def list_safety_checks():
 
             event_venues = {}
             event_bookings = {}
+            events_by_id = {event.id: event for event in events}
             for booking in bookings:
+                event = events_by_id[booking.event_id]
+                # The batch date range can include another event's obsolete periods.
+                # Only booked activities overlapping this event belong in its row.
+                if booking.end_time <= event.start_time or booking.start_time >= event.end_time:
+                    continue
                 event_bookings.setdefault(booking.event_id, []).append(booking)
                 venue = venues[booking.venue_id]
                 event_venues.setdefault(booking.event_id, {})[venue.id] = {

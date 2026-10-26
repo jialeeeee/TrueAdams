@@ -149,6 +149,13 @@ class SafetyCheckQueueUnitTests(unittest.TestCase):
 
     # TC-90-02 / AC2: one event row even when two confirmed bookings exist.
     def test_list_contains_the_required_information_without_duplicate_events(self):
+        # Another ongoing event widens the batch query's range. A former venue
+        # ending exactly at this event's start must still stay out of its row.
+        self.rows[Event].append(self.event(15, "Earlier ongoing event",
+                                          start_time=self.start - timedelta(hours=2)))
+        self.rows[Venue].append(SimpleNamespace(id=12, name="Former venue"))
+        self.rows[VenueBooking].append(self.booking(30, 1, venue_id=12,
+            start=self.start - timedelta(hours=2), end=self.start))
         response = self.listing()
         self.assertEqual(response.status_code, 200, response.get_json())
         body = response.get_json()

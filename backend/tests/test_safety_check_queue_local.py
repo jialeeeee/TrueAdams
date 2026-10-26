@@ -1,34 +1,25 @@
-"""SCRUM-90 PR #58: one opt-in PostgreSQL check, restricted to a local test DB."""
+"""SCRUM-90 PR #58: one PostgreSQL check using the configured local/CI test DB."""
 
-import os
 import unittest
 from datetime import datetime, timedelta
 from unittest import mock
 
 from sqlalchemy.engine import make_url
 
-with mock.patch("dotenv.load_dotenv", return_value=False):
-    from app.config import TestConfig
-    from app.events import routes
-    from app.models import EquipmentRequirement, EquipmentReservation, VenueBooking
-    from tests import base
+from app.config import TestConfig
+from app.events import routes
+from app.models import EquipmentRequirement, EquipmentReservation, VenueBooking
+from tests.base import AppTestCase
 
 
-@unittest.skipUnless(os.environ.get("SCRUM90_LOCAL_TEST_DATABASE_URL"),
-                     "Requires the explicitly selected dedicated local SCRUM-90 database")
-class SafetyCheckQueueLocalTests(base.AppTestCase):
+class SafetyCheckQueueLocalTests(AppTestCase):
     @classmethod
     def setUpClass(cls):
-        target = os.environ["SCRUM90_LOCAL_TEST_DATABASE_URL"]
-        url = make_url(target)
-        expected = ("127.0.0.1", 5433, "trueadams_s90_fresh", "connectsphere_test")
-        if (url.host, url.port, url.database, url.username) != expected:
-            raise RuntimeError("Refusing any target except the dedicated local SCRUM-90 test database.")
-        if base._app is not None and base._app.config["SQLALCHEMY_DATABASE_URI"] != target:
-            raise RuntimeError("Refusing a cached app configured for another database.")
-        config = mock.patch.object(TestConfig, "SQLALCHEMY_DATABASE_URI", target)
-        config.start()
-        cls.addClassCleanup(config.stop)
+        # As in SCRUM-69, permit local Docker/CI and skip remote targets before
+        # AppTestCase opens a connection. Reuse its configured app and rollback.
+        url = make_url(TestConfig.SQLALCHEMY_DATABASE_URI or "postgresql://")
+        if url.host not in {"localhost", "127.0.0.1"}:
+            raise unittest.SkipTest("Requires a local/CI test database; remote databases are never used.")
         super().setUpClass()
 
     # TC-90-01/02: actual SQL filtering plus grouped venues and reservation totals.
