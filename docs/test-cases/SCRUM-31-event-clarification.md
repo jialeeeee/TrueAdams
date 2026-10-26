@@ -2,7 +2,7 @@
 
 **User story:** As an Event Coordinator, I want to review and send clarification questions to an Event Organiser about their submitted event request so that I can obtain the information needed to continue planning the event.
 
-**Created:** 28 Sep 2026 · **Reopened:** 26 Oct 2026 with AC7–AC10 (starting a review) · **Status of all cases:** TC-31-01 to 25 pass (28 Sep 2026, local PostgreSQL + Vitest); TC-31-14, 15, 18, 21 also to be checked manually in the browser. TC-31-26 to 42: not yet run · **Automated tests:** `backend/tests/test_event_clarifications.py`, `backend/tests/test_event_review_start.py`, `frontend/src/pages/ClarificationPage.test.jsx`, `frontend/src/pages/ReviewRequestPage.test.jsx`
+**Created:** 28 Sep 2026 · **Reopened:** 26 Oct 2026 with AC7–AC10 (starting a review) · **Status of all cases:** TC-31-01 to 25 pass (28 Sep 2026, local PostgreSQL + Vitest); TC-31-14, 15, 18, 21 also to be checked manually in the browser. TC-31-26 to 42 pass (26 Oct 2026, local PostgreSQL built by `ci/build_test_database.py` with `db/event_review_start.sql` applied + Vitest); TC-31-40 to 42 also to be checked manually in the browser · **Automated tests:** `backend/tests/test_event_clarifications.py`, `backend/tests/test_event_review_start.py`, `frontend/src/pages/ClarificationPage.test.jsx`, `frontend/src/pages/ReviewRequestPage.test.jsx`
 
 ## Acceptance criteria
 
