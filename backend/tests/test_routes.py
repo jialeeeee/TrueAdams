@@ -63,7 +63,8 @@ ALL_ROUTES = [
 UNIMPLEMENTED_ROUTES = [
     ("POST", "/api/auth/register"),
     ("POST", "/api/events/"),
-    ("POST", "/api/events/1/change-requests"),
+    # POST /api/events/<id>/change-requests is no longer a stub (SCRUM-46): see
+    # test_change_requests.py.
     ("POST", "/api/resources/1/reservations"),
 ]
 

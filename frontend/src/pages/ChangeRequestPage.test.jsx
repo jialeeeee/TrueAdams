@@ -39,7 +39,7 @@ const FORM = {
 const REQUEST = {
   id: 31, event_id: 7, status: "pending_review", status_label: "Pending Review",
   changes: [
-    { field: "start_time", label: "Start", from: "2026-12-05T18:00:00", to: "2026-12-06T18:00:00" },
+    { field: "start_time", label: "Start", from: "2026-12-05T18:00:00", to: "2026-12-05T17:00:00" },
     { field: "expected_attendance", label: "Expected attendance", from: 200, to: 250 },
   ],
   requested_by: { id: 4, email: "dana@example.com" }, requested_at: "2026-10-26T02:00:00",
@@ -98,18 +98,18 @@ describe("SCRUM-46 an organiser requests a change to their approved event", () =
     const user = renderPage();
 
     await screen.findByRole("heading", { name: "Charity Gala" });
-    await replace(user, "Start", "2026-12-06T18:00");
+    await replace(user, "Start", "2026-12-05T17:00");
     await replace(user, "Expected attendance", "250");
     await user.click(submitButton());
 
     expect(apiClient.post).toHaveBeenCalledWith("/events/7/change-requests", {
-      start_time: "2026-12-06T18:00", expected_attendance: 250,
+      start_time: "2026-12-05T17:00", expected_attendance: 250,
     });
     expect((await screen.findByRole("status")).textContent).toContain(CONFIRMATION);
     expect(screen.getByText("Status: Pending Review")).toBeTruthy();
     const changes = within(screen.getByRole("list", { name: "Requested changes" })).getAllByRole("listitem");
     expect(changes.map((item) => item.textContent)).toEqual([
-      "Start: 2026-12-05 18:00 → 2026-12-06 18:00",
+      "Start: 2026-12-05 18:00 → 2026-12-05 17:00",
       "Expected attendance: 200 → 250",
     ]);
     expect(screen.queryByRole("button", { name: "Submit change request" })).toBeNull();

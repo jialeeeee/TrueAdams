@@ -1,0 +1,13 @@
+baseline: all frontend tests pass
+F1 | Every field is sent, not just the changed ones | AC2 | CAUGHT | does not send a request that changes nothing, sends only the changed fields and shows the confirmation
+F2 | Attendance is sent as text | AC2 | CAUGHT | sends only the changed fields and shows the confirmation
+F3 | The reason for each refused field isn't shown | AC4 | CAUGHT | shows why each field was refused and keeps the entries
+F4 | The entries are lost after a refusal | AC4, AC8 | CAUGHT | keeps the entries after a failed save so it can be tried again, shows why each field was refused and keeps the entries
+F5 | The form is offered when no change can be requested | AC1, AC5 | CAUGHT | explains why no change can be requested, shows the pending request instead of the form
+F6 | Why no change can be requested isn't shown | AC1, AC5 | CAUGHT | explains why no change can be requested, shows the pending request instead of the form
+F7 | No confirmation | AC6 | CAUGHT | keeps the entries after a failed save so it can be tried again, sends only the changed fields and shows the confirmation
+F8 | The pending request isn't shown | AC6 | CAUGHT | sends only the changed fields and shows the confirmation, shows the pending request instead of the form
+F9 | A request that changes nothing is sent | AC4 | CAUGHT | does not send a request that changes nothing
+F10 | No Retry after a failed load | AC8 | CAUGHT | explains a failed load and offers Retry
+F11 | Every submitted request offers a change | AC1 | CAUGHT | offers a change request only for approved requests, opens drafts in the editor but never links submitted requests to it
+after restore: all pass

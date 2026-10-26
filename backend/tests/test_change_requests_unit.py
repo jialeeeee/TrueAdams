@@ -111,22 +111,22 @@ class ProposalRuleTests(unittest.TestCase):
         self.assertEqual(set(problems), {"expected_attendance", "venue_requirements", "title"})
 
     def test_changes_are_stored_as_json(self):  # A7
-        changes, _ = self.parse({"start_time": "2026-12-06T18:00", "expected_attendance": 250})
+        changes, _ = self.parse({"start_time": "2026-12-05T17:00", "expected_attendance": 250})
 
         self.assertEqual(_rules().as_json(changes), {
-            "start_time": {"from": "2026-12-05T18:00:00", "to": "2026-12-06T18:00:00"},
+            "start_time": {"from": "2026-12-05T18:00:00", "to": "2026-12-05T17:00:00"},
             "expected_attendance": {"from": 200, "to": 250}})
 
 
 class DescriptionRuleTests(unittest.TestCase):
     def test_the_changes_are_described_with_labels_and_both_values(self):  # A8
         rules = _rules()
-        changes, _ = rules.parse_proposal(gala(), {"start_time": "2026-12-06T18:00",
+        changes, _ = rules.parse_proposal(gala(), {"start_time": "2026-12-05T17:00",
                                                    "expected_attendance": 250,
                                                    "equipment_requirements": ""})
 
         self.assertEqual(rules.describe(changes),
-                         "Start: 2026-12-05 18:00 → 2026-12-06 18:00; "
+                         "Start: 2026-12-05 18:00 → 2026-12-05 17:00; "
                          "Expected attendance: 200 → 250; "
                          "Equipment requirements: 2 wireless microphones → none")
 

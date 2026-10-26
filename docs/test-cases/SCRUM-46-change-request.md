@@ -2,7 +2,7 @@
 
 **User story:** As an Event Organiser, I want to request a change to an event I have submitted so that ConnectSphere can assess my updated needs before existing arrangements are altered.
 
-**Created:** 26 Oct 2026 · **Status of all cases:** not yet run · **Automated tests:** `backend/tests/test_change_requests.py` (through the API), `backend/tests/test_change_requests_unit.py` (the rules, no database), `frontend/src/pages/ChangeRequestPage.test.jsx` (+ the link in `MyEventRequestsPage.test.jsx`) · **Endpoints:** `GET` and `POST /api/events/<id>/change-requests` · **Related:** SCRUM-52 (restricted fields; its `requires_review.next_step` points here), SCRUM-29 (the organiser's request fields and their rules), SCRUM-42/44 (equipment; an *accepted* change goes through SCRUM-44's release rule, not built here)
+**Created:** 26 Oct 2026 · **Status of all cases:** automated cases pass (27 Oct 2026, local PostgreSQL as in CI + Vitest; Supabase once `db/event_change_requests.sql` is run); end-to-end check passed in the browser, see [the DoD evidence](../evidence/SCRUM-46-dod-evidence.md) · **Automated tests:** `backend/tests/test_change_requests.py` (through the API), `backend/tests/test_change_requests_unit.py` (the rules, no database), `frontend/src/pages/ChangeRequestPage.test.jsx` (+ the link in `MyEventRequestsPage.test.jsx`) · **Endpoints:** `GET` and `POST /api/events/<id>/change-requests` · **Related:** SCRUM-52 (restricted fields; its `requires_review.next_step` points here), SCRUM-29 (the organiser's request fields and their rules), SCRUM-42/44 (equipment; an *accepted* change goes through SCRUM-44's release rule, not built here)
 
 ## Acceptance criteria
 
@@ -89,8 +89,8 @@ Users: `USERS` from `backend/tests/seed_data.py` (dana and evan are organisers; 
 
 **TC-46-07 · The request is recorded with the event, fields, current and proposed values, who and when**
 - **Traces to:** AC3 · **Type:** Positive · **Depends on:** A7
-- **Steps:** Propose for C1 start 2026-12-06 18:00 and attendance 250.
-- **Expected result:** One `event_change_requests` row for C1, requested by dana with a time, status `pending_review`, changes `{"start_time": {"from": "2026-12-05T18:00:00", "to": "2026-12-06T18:00:00"}, "expected_attendance": {"from": 200, "to": 250}}`. The reply's request matches it.
+- **Steps:** Propose for C1 start 2026-12-05 17:00 and attendance 250.
+- **Expected result:** One `event_change_requests` row for C1, requested by dana with a time, status `pending_review`, changes `{"start_time": {"from": "2026-12-05T18:00:00", "to": "2026-12-05T17:00:00"}, "expected_attendance": {"from": 200, "to": 250}}`. The reply's request matches it.
 - **Automated:** `test_tc_46_07_the_request_records_the_event_fields_and_values`
 
 ## AC4 — Disallowed or invalid changes are blocked, with the reason
@@ -173,8 +173,8 @@ Users: `USERS` from `backend/tests/seed_data.py` (dana and evan are organisers; 
 
 **TC-46-19 · The coordinator is told the proposed changes**
 - **Traces to:** AC9 · **Type:** Positive · **Depends on:** A8
-- **Steps:** Propose start 2026-12-06 18:00 and attendance 250 for C1.
-- **Expected result:** alice has one `change_requested` notification for C1 naming Charity Gala, "Start" 2026-12-05 18:00 → 2026-12-06 18:00 and "Expected attendance" 200 → 250; one email is queued to alice with the same details; `notification: {"in_app": true, "email_queued": true}`. dana gets nothing.
+- **Steps:** Propose start 2026-12-05 17:00 and attendance 250 for C1.
+- **Expected result:** alice has one `change_requested` notification for C1 naming Charity Gala, "Start" 2026-12-05 18:00 → 2026-12-05 17:00 and "Expected attendance" 200 → 250; one email is queued to alice with the same details; `notification: {"in_app": true, "email_queued": true}`. dana gets nothing.
 - **Automated:** `test_tc_46_19_the_coordinator_is_told_the_proposed_changes`
 
 **TC-46-20 · An email queue failure doesn't undo the request**

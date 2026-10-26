@@ -234,14 +234,14 @@ class ProposalTests(ChangeRequestTestCase):
 
     # TC-46-07 · AC3
     def test_tc_46_07_the_request_records_the_event_fields_and_values(self):
-        result = self.submitted({"start_time": "2026-12-06T18:00", "expected_attendance": 250})
+        result = self.submitted({"start_time": "2026-12-05T17:00", "expected_attendance": 250})
 
         [row] = self.requests()
         self.assertEqual((row.event_id, row.requested_by_id, row.status),
                          (self.events["C1"].id, self.users["dana"].id, "pending_review"))
         self.assertIsNotNone(row.requested_at)
         self.assertEqual(row.changes, {
-            "start_time": {"from": "2026-12-05T18:00:00", "to": "2026-12-06T18:00:00"},
+            "start_time": {"from": "2026-12-05T18:00:00", "to": "2026-12-05T17:00:00"},
             "expected_attendance": {"from": 200, "to": 250}})
         request = result["request"]
         self.assertEqual((request["id"], request["event_id"], request["requested_by"]["id"]),
@@ -443,12 +443,12 @@ class FailureTests(ChangeRequestTestCase):
 class NotificationTests(ChangeRequestTestCase):
     # TC-46-19 · AC9
     def test_tc_46_19_the_coordinator_is_told_the_proposed_changes(self):
-        result = self.submitted({"start_time": "2026-12-06T18:00", "expected_attendance": 250})
+        result = self.submitted({"start_time": "2026-12-05T17:00", "expected_attendance": 250})
 
         [notification] = self.notifications("alice")
         self.assertEqual((notification.kind, notification.event_id),
                          ("change_requested", self.events["C1"].id))
-        for text in ("Charity Gala", "Start: 2026-12-05 18:00 → 2026-12-06 18:00",
+        for text in ("Charity Gala", "Start: 2026-12-05 18:00 → 2026-12-05 17:00",
                      "Expected attendance: 200 → 250"):
             self.assertIn(text, notification.message)
         self.email.assert_called_once()
