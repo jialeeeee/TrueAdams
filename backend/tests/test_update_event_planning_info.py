@@ -61,6 +61,9 @@ SYSTEM_FIELD_CHANGES = {
     "equipment_requirements": "Two projectors.",
     "decision_note": "Approved.",
     "submitted_at": "2026-09-01T09:00:00",
+    # SCRUM-31 (reopened): who started the review, and when, are records, not edits.
+    "review_started_at": "2026-10-26T10:00:00",
+    "review_started_by_id": 1,
 }
 
 NON_COORDINATOR_USERS = {

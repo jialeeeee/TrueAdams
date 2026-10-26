@@ -201,7 +201,7 @@ For every case in this section: the response is HTTP 422 with a `fields` entry n
 
 **TC-53-20 · Unknown and system fields**
 - **Traces to:** AC3 · **Type:** Negative · **Depends on:** R3
-- **Test data:** each of `colour`, `status`, `organiser_id`, `coordinator_id`, `coordinator_assigned_at`, `created_at`, `id`, `equipment_requirements`, `decision_note`, `submitted_at`.
+- **Test data:** each of `colour`, `status`, `organiser_id`, `coordinator_id`, `coordinator_assigned_at`, `created_at`, `id`, `equipment_requirements`, `decision_note`, `submitted_at`, `review_started_at` and `review_started_by_id` (SCRUM-31).
 - **Expected result:** Rejected with a `fields` entry saying the field can't be changed here.
 - **Automated:** `test_unknown_and_system_fields_are_rejected`
 

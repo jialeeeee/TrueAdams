@@ -424,8 +424,8 @@ describe("SCRUM-60 who decided and when, blank reasons and failed saves", () => 
 // Frontend cases TC-77-07 and TC-77-08 in docs/test-cases/SCRUM-77-approve-event-request.md.
 // The API side is backend/tests/test_approve_event_request.py.
 describe("SCRUM-77 only a submitted request can be approved", () => {
+  // A request under review now offers the decision too (SCRUM-31 A13, TC-31-42).
   it.each([
-    ["under_review", "Under review"],
     ["approved", "Approved"],
     ["draft", "Draft"],
     ["cancelled", "Cancelled"],
@@ -445,5 +445,63 @@ describe("SCRUM-77 only a submitted request can be approved", () => {
 
     expect((await screen.findByRole("alert")).textContent).toContain(refusal);
     expect(screen.getByText("Status: Submitted")).toBeTruthy();
+  });
+});
+
+// SCRUM-31 (reopened): the assigned coordinator starts reviewing a submitted request.
+// Frontend cases TC-31-40 to 42 in docs/test-cases/SCRUM-31-event-clarification.md;
+// the API contract mirrors backend/tests/test_event_review_start.py.
+describe("SCRUM-31 start reviewing a request", () => {
+  const localTime = (iso) => new Date(`${iso}Z`).toLocaleString();
+  const ALICE = { id: 2, email: "alice.coordinator@connectsphere.test" };
+  const UNDER_REVIEW = request({
+    status: "under_review", review_started_at: "2026-10-26T02:00:00", review_started_by: ALICE,
+  });
+
+  // TC-31-40 · AC8
+  it("starts the review and keeps the decision available", async () => {
+    apiClient.post.mockResolvedValue({
+      data: { message: 'You started reviewing "Harbour Lights Festival".', request: UNDER_REVIEW },
+    });
+    const user = await renderPage();
+
+    await user.click(button("Start review"));
+
+    expect(apiClient.post).toHaveBeenCalledWith("/events/7/review");
+    expect(await screen.findByText("Status: Under review")).toBeTruthy();
+    expect(screen.getByRole("status").textContent).toContain('You started reviewing "Harbour Lights Festival".');
+    expect(screen.getByText(`Review started by ${ALICE.email} on ${localTime("2026-10-26T02:00:00")}`)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Start review" })).toBeNull();
+    expect(button("Approve")).toBeTruthy();
+    expect(button("Reject")).toBeTruthy();
+  });
+
+  // TC-31-41 · AC7, AC9, AC10
+  it.each([
+    ["not submitted", httpFailure(409, { error: "This request is approved; only a submitted request can be put under review." }), "only a submitted request"],
+    ["not the coordinator", httpFailure(403, { error: "Only the event's assigned coordinator can start reviewing this request." }), "assigned coordinator"],
+    ["a save failure", httpFailure(503, { error: "The review was not started, so the request is still submitted. Please try again.", retryable: true }), "not started"],
+    ["no network", new Error("Network Error"), "Check your connection and try again"],
+  ])("explains why the review could not be started (%s)", async (_label, failure, message) => {
+    apiClient.post.mockRejectedValue(failure);
+    const user = await renderPage();
+
+    await user.click(button("Start review"));
+
+    expect((await screen.findByRole("alert")).textContent).toContain(message);
+    expect(screen.getByText("Status: Submitted")).toBeTruthy();
+    expect(button("Start review")).toBeTruthy();
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+
+  // TC-31-42 · AC8, AC9 (Q7)
+  it("shows who started the review and offers the decision", async () => {
+    await renderPage(UNDER_REVIEW);
+
+    expect(screen.getByText("Status: Under review")).toBeTruthy();
+    expect(screen.getByText(`Review started by ${ALICE.email} on ${localTime("2026-10-26T02:00:00")}`)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Start review" })).toBeNull();
+    expect(button("Approve")).toBeTruthy();
+    expect(button("Reject")).toBeTruthy();
   });
 });
