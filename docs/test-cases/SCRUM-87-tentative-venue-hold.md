@@ -248,7 +248,7 @@ SCRUM-40's VA-SEED, reset before **every** test case:
 
 **TC-87-17 · Placing a hold is refused by the same conflicts as approving**
 - **Traces to:** AC4 · **Type:** Negative (conflict)
-- **Steps:** Place a hold on P1 when Aurora Ballroom has an overlapping confirmed booking, then an overlapping block. Then try again when E1 already has a confirmed venue.
+- **Steps:** Place a hold on P1 when Aurora Ballroom has an overlapping confirmed booking, then an overlapping block. (E1 having a confirmed venue elsewhere is no longer a clash since [SCRUM-85](SCRUM-85-several-venues-for-one-event.md), TC-85-10.)
 - **Expected result:** HTTP 409 `conflict` each time, listing the clash. P1 stays pending.
 - **Automated:** `test_placing_a_hold_checks_the_usual_conflicts`
 

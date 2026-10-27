@@ -25,7 +25,7 @@ These are the team's current reading of the story, agreed with the scrum lead on
   - Periods are half-open, so touching periods do not overlap.
   - Pending, rejected and cancelled bookings do not conflict.
   - Operating hours, capacity and the "not currently bookable" flag are suitability, a separate core feature, and do not block approval. *(Q2)*
-- **A3 — One confirmed venue per event:** approving a request for an event that already has a confirmed booking (at any venue) is a conflict. Changing an event's venue goes through change requests (SCRUM-52 treats the venue as a restricted field). *(Q3)*
+- **A3 — One confirmed venue per event:** approving a request for an event that already has a confirmed booking (at any venue) is a conflict. Changing an event's venue goes through change requests (SCRUM-52 treats the venue as a restricted field). *(Q3)* **Replaced by [SCRUM-85](SCRUM-85-several-venues-for-one-event.md) A3–A4:** an event can have several confirmed venues; each booking is checked only at its own venue, and the first confirmed venue stays the event's venue.
 - **A4 — The event must still be able to proceed:** approval is refused if the event is no longer `approved` (for example, it was cancelled after the request), or if the requested start has already passed (Singapore time). *(Q4)*
 - **A5 — What approval records:**
   - The booking becomes `confirmed`, with the decision time (naive UTC) and the approving Venue Staff member.
@@ -55,7 +55,7 @@ These are the team's current reading of the story, agreed with the scrum lead on
 - **A conflict** is one of:
   - `{"type": "booking", "id", "start", "end", "event": {"id", "title"} | null}`, another confirmed booking at the venue;
   - `{"type": "block", "id", "start", "end", "reason"}`, a recorded block at the venue;
-  - `{"type": "event_booking", "id", "start", "end", "venue": {"id", "name"}}`, the event's existing confirmed booking.
+  - ~~`{"type": "event_booking", …}`, the event's existing confirmed booking.~~ No longer produced since [SCRUM-85](SCRUM-85-several-venues-for-one-event.md).
 
   They are listed in order of start time.
 - `booking` is SCRUM-39's booking payload.
@@ -155,10 +155,7 @@ Further confirmed, rejected or cancelled bookings and blocks are added by the ca
 - **Steps:** Approve P2 (Civic Hall on a Saturday, outside its Mon–Fri hours). Separately, approve a request for E1 (attendance 250) at Civic Hall (capacity 80), and one at Dockside Studio (not currently bookable).
 - **Expected result:** Each is approved. These are suitability matters, not prohibited conflicts.
 
-**TC-40-15 · An event can have only one confirmed venue**
-- **Traces to:** AC3, AC5 · **Type:** Negative (conflict) · **Depends on:** Q3
-- **Preconditions:** E1 already has a confirmed booking at Civic Hall (12 Mar 2027 16:00–22:30).
-- **Expected result:** Approving P1 gives HTTP 409 (`conflict`). `conflicts` includes an `event_booking` entry naming Civic Hall and its times.
+**TC-40-15 · An event can have only one confirmed venue** — *replaced by [SCRUM-85](SCRUM-85-several-venues-for-one-event.md) TC-85-07 and 09: a second venue is approved; the event's own booking at the same venue still clashes.*
 
 **TC-40-16 · Decisions on the same venue are made one at a time**
 - **Traces to:** AC3 · **Type:** Concurrency · **Depends on:** A7
@@ -213,7 +210,7 @@ Further confirmed, rejected or cancelled bookings and blocks are added by the ca
 
 **TC-40-24 · Frontend: the coordinator's request page shows the confirmed venue**
 - **Traces to:** AC4 · **Type:** Happy path (frontend) · **Depends on:** Q3
-- **Expected result:** When the event already has a venue, the request page shows "Venue confirmed:" with the venue and location, and says changes need a change request. It offers no request form. If the venue's location is not recorded, only the venue's name is shown.
+- **Expected result:** When the event already has a venue, the request page shows "Venue confirmed:" with the venue and location, and says changes need a change request. If the venue's location is not recorded, only the venue's name is shown. Since [SCRUM-85](SCRUM-85-several-venues-for-one-event.md) (TC-85-26) the request form is offered too, so the event can ask for more venues.
 
 ## AC5 — A blocked approval leaves the request unapproved
 
@@ -290,7 +287,7 @@ Further confirmed, rejected or cancelled bookings and blocks are added by the ca
 |---|----------|---------|
 | Q1 | May only Venue Staff approve (assumed), or also admins? Are venues assigned to particular staff? | A1, TC-40-05 |
 | Q2 | Is a conflict only an overlap with a confirmed booking or a block (assumed)? Should operating hours or capacity also block approval? | A2, TC-40-12, 14 |
-| Q3 | Can an event hold more than one confirmed venue (e.g. a main hall and a breakout room)? Assumed not. | A3, TC-40-15, 24 |
+| Q3 | Can an event hold more than one confirmed venue (e.g. a main hall and a breakout room)? Assumed not. **Answered: yes** (Week 7 customer change 3, [SCRUM-85](SCRUM-85-several-venues-for-one-event.md)). | A3, TC-40-15, 24 |
 | Q4 | Should approval be refused for cancelled events, and for periods that have already started (assumed)? | A4, TC-40-30, 31 |
 | Q5 | Should approving one request automatically reject other pending requests that now clash? Assumed not: they stay pending. | A5 |
 | Q6 | Is an in-app notification plus an email the right way to tell the coordinator (assumed)? Should the organiser also be told? | A6, TC-40-20, 21 |

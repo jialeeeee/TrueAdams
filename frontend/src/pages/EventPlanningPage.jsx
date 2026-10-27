@@ -56,6 +56,41 @@ function display(field, value) {
   }
 }
 
+// Booking times are Singapore time without a time zone: show them as recorded.
+const asText = (value) => value.slice(0, 16).replace("T", " ");
+
+// An expired hold blocks nothing (SCRUM-87), so it is not shown as a live hold.
+function bookingStatus(booking) {
+  if (booking.hold_expired) return `Hold expired on ${asText(booking.hold_expires_at)}`;
+  if (booking.hold_expires_at) return `${statusLabel(booking.status)}, held until ${asText(booking.hold_expires_at)}`;
+  return statusLabel(booking.status);
+}
+
+// SCRUM-85: every venue booking of the event, with the status of each (AC4).
+function VenueBookings({ bookings }) {
+  return (
+    <section aria-label="Venue bookings">
+      <h2>Venue bookings</h2>
+      {bookings.length === 0 ? (
+        <p>No venue bookings yet.</p>
+      ) : (
+        <ul>
+          {bookings.map((booking) => (
+            <li key={booking.id}>
+              <p>{display("venue", booking.venue)}</p>
+              <p>{`${asText(booking.start_time)} to ${asText(booking.end_time)}`}</p>
+              {(booking.setup_minutes > 0 || booking.turnaround_minutes > 0) && (
+                <p>{`Setup ${booking.setup_minutes} min before, turnaround ${booking.turnaround_minutes} min after`}</p>
+              )}
+              <p>{`Status: ${bookingStatus(booking)}`}</p>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
 export default function EventPlanningPage() {
   const { eventId } = useParams();
   const [event, setEvent] = useState(null);
@@ -119,6 +154,7 @@ export default function EventPlanningPage() {
           </div>
         ))}
       </dl>
+      <VenueBookings bookings={event.venue_bookings ?? []} />
     </section>
   );
 }
