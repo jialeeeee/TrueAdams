@@ -8,7 +8,7 @@
 |---|---|---|
 | 1 | Acceptance criteria satisfied | ✅ All 9 ACs met, each shown by automated tests and in the running app ([§1](#1-acceptance-criteria-satisfied)) |
 | 2 | All test cases pass | ✅ SCRUM-46 backend 34/34 and frontend 11/11; whole backend suite 1010 run, all pass (3 skipped, not SCRUM-46's); whole frontend suite 479/479; end-to-end 8/8 ([§2](#2-all-test-cases-pass)) |
-| 3 | Test cases are correct and the code does what it says | ✅ Written test-first (red, then green); 32/32 deliberate breakages caught; behaviour confirmed in a real browser ([§3](#3-test-cases-are-correct-and-the-code-does-what-it-says)) |
+| 3 | Test cases are correct and the code does what it says | ✅ Written test-first (red, then green); 35/35 deliberate breakages caught; behaviour confirmed in a real browser ([§3](#3-test-cases-are-correct-and-the-code-does-what-it-says)) |
 | 4 | Evidence of checks documented | ✅ This document, 6 screenshots, the scripts that produced them and the raw results ([§4](#4-evidence-documented)) |
 
 > **Supabase:** `backend/db/event_change_requests.sql`, then the updated `backend/db/test_role.sql`, were run in the Supabase SQL editor on 27 Oct 2026. Afterwards `python -m unittest tests.test_app_factory tests.test_change_requests` against Supabase passed 27/27, including `test_database_tables_match_the_models`. The other results below come from a local PostgreSQL 17 built by `ci/build_test_database.py`, as CI's `unittest` job builds it, with the tests logged in as the restricted `connectsphere_test` role.
@@ -31,10 +31,10 @@
 | AC2 | I can propose new values for the permitted fields: date, time, expected attendance, venue requirements and equipment requirements. | Start, end, expected attendance, venue requirements and equipment requirements, prefilled with the current values. Only what changed is sent and recorded. | TC-46-01, 04, 05, 06, 11, 21, 22 | E2E-01, 04 |
 | AC3 | Each request records the event, the affected fields and the proposed values. | One row per request: the event, who and when, and each affected field with its current and proposed value. | TC-46-04, 05, 07 | E2E-04 · [04](SCRUM-46/04-pending-review.png) |
 | AC4 | If a change is disallowed or invalid, submission is blocked and the reason is shown. | 422 naming every problem at once: fields that can't be changed this way, attendance that isn't a whole number of at least 1, an end not after the start (checked against the current start or end when only one changes), invalid dates, blank venue requirements, text too long, or no change at all. The page shows each reason by its field and keeps the entries. | TC-46-06, 08 to 11, 23 | E2E-02 · [02](SCRUM-46/02-invalid-refused.png) |
-| AC5 | If the event has no assigned coordinator, submission is blocked and I'm told why. | 409 `no_coordinator`: "This event has no coordinator yet, so there is nobody to review a change request…". The form isn't offered. | TC-46-12, 24 | E2E-07 · [06](SCRUM-46/06-no-coordinator.png) |
-| AC6 | On success, the request is saved with status "Pending Review" and a confirmation is shown. | Status `pending_review`, shown as "Pending Review", with a confirmation naming the event and fields. One request at a time: another waits (409 `pending`), and the page shows the pending one. | TC-46-13 to 15, 22, 25 | E2E-04, 05 · [04](SCRUM-46/04-pending-review.png), [05](SCRUM-46/05-already-pending.png) |
+| AC5 | If the event has no assigned coordinator, submission is blocked and I'm told why. | 409 `no_coordinator`: "This event has no coordinator yet, so there is nobody to review a change request…". The form isn't offered. An assigned user whose role is no longer coordinator doesn't count, as elsewhere in the app. | TC-46-12, 24, 28 | E2E-07 · [06](SCRUM-46/06-no-coordinator.png) |
+| AC6 | On success, the request is saved with status "Pending Review" and a confirmation is shown. | Status `pending_review`, shown as "Pending Review", with a confirmation naming the event and fields. One request at a time: another waits (409 `pending`), and the page shows the pending one. If the database index is what refuses the second, the reply is still 409 `pending`. | TC-46-13 to 15, 22, 25, 29 | E2E-04, 05 · [04](SCRUM-46/04-pending-review.png), [05](SCRUM-46/05-already-pending.png) |
 | AC7 | The approved event information is not overwritten by a pending request. | The event row is never written by this flow. | TC-46-16 | E2E-05 |
-| AC8 | If saving fails, the event and request state are unchanged and an error message is shown. | The request and notification are saved in one commit. A failed save: 503, "Your change request was not submitted, and the event is unchanged. Please try again.", nothing saved, no email. The page keeps the entries for a retry. | TC-46-17, 18, 26 | E2E-03 · [03](SCRUM-46/03-save-failed.png) |
+| AC8 | If saving fails, the event and request state are unchanged and an error message is shown. | The request and notification are saved in one commit. A failed save: 503, "Your change request was not submitted, and the event is unchanged. Please try again.", nothing saved, no email. The page keeps the entries for a retry. | TC-46-17, 18, 26, 30 | E2E-03 · [03](SCRUM-46/03-save-failed.png) |
 | AC9 | The event's coordinator is notified of the pending change request with the proposed changes. | An in-app `change_requested` notification naming each field with its current and proposed value, saved with the request, then an email. If the email can't be queued, the request still stands (`email_queued: false`). | TC-46-19, 20 | E2E-06 |
 
 **Working assumptions.** Each is tied to an open question in the test-case document; none has been agreed with the customer:
@@ -43,7 +43,7 @@
 - **Q2:** equipment requirements are the organiser's own note, not SCRUM-42's itemised list.
 - **Q3:** the venue and whether registration is needed can't be changed this way.
 - **Q4:** past dates aren't refused, as in SCRUM-29.
-- **Q5:** one pending request per event.
+- **Q5:** one pending request per event. Until a later story decides requests (Q6), that means one request per event in total.
 - **Q6:** deciding and applying a request is a later story.
 - **Q7:** only the organiser can submit, although SCRUM-52 tells the coordinator to submit one.
 
@@ -51,7 +51,7 @@
 
 | Suite | Command | Result |
 |-------|---------|--------|
-| Backend, SCRUM-46 through the API | `python -m unittest tests.test_change_requests` (from `backend/`) | **20/20 pass** (TC-46-01 to 20) |
+| Backend, SCRUM-46 through the API | `python -m unittest tests.test_change_requests` (from `backend/`) | **23/23 pass** (TC-46-01 to 20 and 28 to 30) |
 | Backend, SCRUM-46 rules (no database) | `python -m unittest tests.test_change_requests_unit` | **14/14 pass** |
 | Backend, whole suite | `python -m unittest discover` | **Ran 1010 tests: OK, 3 skipped.** The skips are SCRUM-36/37 tests waiting on customer answers. Includes SCRUM-52's and SCRUM-59's tests. |
 | Frontend, SCRUM-46 | `npx vitest run src/pages/ChangeRequestPage.test.jsx src/pages/MyEventRequestsPage.test.jsx` | **11/11 pass**: the page 10, the link 1 (23/23 across the two files) |
@@ -70,7 +70,7 @@ While making them pass, two API tests turned out to contradict assumption A4 (th
 
 Each mutation breaks one rule, runs the tests, and restores the file byte for byte ([mutations](SCRUM-46/scripts/mutations.py), run with SCRUM-77's runner).
 
-- **Backend: 21/21 caught** ([results](SCRUM-46/mutation-results-backend.txt)), e.g. anyone may request (B1), non-approved events accepted (B2), no coordinator accepted (B3), negative attendance (B5), an end equal to the start (B7), the request applied to the event (B16), no notification (B19), a failed save reported as success (B17).
+- **Backend: 24/24 caught** ([results](SCRUM-46/mutation-results-backend.txt)), e.g. anyone may request (B1), non-approved events accepted (B2), no coordinator accepted (B3), a coordinator whose role has changed still counting (B22), negative attendance (B5), an end equal to the start (B7), the request applied to the event (B16), no notification (B19), a failed save reported as success (B17), the one-pending index's refusal reported as a failed save (B23) and any other refusal reported as pending (B24).
 - **Frontend: 11/11 caught** ([results](SCRUM-46/mutation-results-frontend.txt)), e.g. every field sent (F1), field reasons not shown (F3), entries lost (F4), the form shown when blocked (F5), the link on every request (F11).
 
 ### c. The running app does what it says (end-to-end)
@@ -92,13 +92,14 @@ The real app (Vite → Flask → the local PostgreSQL) driven in Microsoft Edge 
 
 ### d. Findings for the team (not part of SCRUM-46)
 
-1. **SCRUM-52 points the coordinator at an organiser-only endpoint (Q7).** `PATCH /api/events/<id>` (coordinator) answers a restricted change with `requires_review.next_step` → `POST /api/events/<id>/change-requests`, but SCRUM-46's AC1 lets only the organiser submit there, so the coordinator gets 403. SCRUM-52 was not changed; the team needs to decide whether coordinators may also submit change requests.
-2. **SCRUM-59's test was narrowed.** `MyEventRequestsPage.test.jsx` asserted that submitted requests have no links at all. SCRUM-59's rule (A5) is that they have no link to the *draft editor*, which is still checked; the test now allows only the new "Request a change" link.
+1. **SCRUM-52 points the coordinator at an organiser-only endpoint (Q7, Q3, Q1).** `PATCH /api/events/<id>` (coordinator only) answers a restricted change with `requires_review.next_step` → `POST /api/events/<id>/change-requests`. Following that advice always fails: the coordinator gets 403 (AC1: the organiser only); a venue or registration change would get 422 (not permitted fields, A2); and a submitted or under-review event gets 409 (approved only, A1). SCRUM-52 was not changed. The team needs to decide who submits change requests, or SCRUM-52's owner needs to change its message and `next_step`.
+2. **An event can take only one change request in total for now.** One may be pending at a time (A6), and deciding a request is a later story (A10), so once an organiser submits one for an event, it stays pending and that event can't take another. This follows the documented assumptions, but the team and customer should know.
+3. **SCRUM-59's test was narrowed.** `MyEventRequestsPage.test.jsx` asserted that submitted requests have no links at all. SCRUM-59's rule (A5) is that they have no link to the *draft editor*, which is still checked; the test now allows only the new "Request a change" link.
 
 ### e. Limitations
 
 - **Against Supabase, only the schema check and the SCRUM-46 API tests were run** (27/27 pass, see the note at the top). The whole suite was run against the local database, as CI does.
-- **Concurrency is shown, not stress-tested.** TC-46-15 confirms the event is read `FOR UPDATE` before pending requests are looked for, and the unique index refuses a second pending request in any case. Two submissions at the same moment were not simulated.
+- **Concurrency is shown, not stress-tested.** TC-46-15 confirms the event is read `FOR UPDATE` before pending requests are looked for. TC-46-29 has the unique index refuse a second pending request and checks the reply is 409 `pending`. Two submissions at the same moment were not run in parallel.
 - The demo accounts and events used in the browser check exist in the local database only.
 
 ## 4. Evidence documented
@@ -106,3 +107,17 @@ The real app (Vite → Flask → the local PostgreSQL) driven in Microsoft Edge 
 - This document, and the test-case document with its traceability matrix and open questions.
 - [SCRUM-46/](SCRUM-46/): screenshots `01`–`06`; `scripts/` (seed script, browser check, mutations); `mutation-results-backend.txt`, `mutation-results-frontend.txt`, `e2e-results.txt`.
 - Commits: `2e0a3de` (TDD, red) and the TDD-green commit that follows it on this branch.
+
+## 5. Changes after the team review (27 Oct 2026)
+
+| Review point | What changed | Shown by |
+|---|---|---|
+| SCRUM-52's `next_step` leads the coordinator to an error | Not changed here: it is SCRUM-52's behaviour and needs a team decision (§3d, finding 1). | — |
+| An event can only ever get one change request | Documented in A6, Q5 and §3d (finding 2). | — |
+| The race fallback had no test, and caught every integrity error | Only a refusal by `event_change_requests_one_pending_per_event` is reported as 409 `pending`; any other refused save is a failed save (503). | TC-46-29, 30; B23, B24 |
+| A coordinator whose role had changed was still notified | The event's coordinator must still have the coordinator role (`is_current_coordinator`), otherwise the event counts as having none (A5). | TC-46-28; B22 |
+| A frontend mock didn't match the backend's confirmation | `ChangeRequestPage.test.jsx` now mocks the message the backend sends. | — |
+| A SCRUM-60 comment was separated from its tests | Moved back above the SCRUM-60 block in `MyEventRequestsPage.test.jsx`. | — |
+| 409 is checked before 422 | Deliberate (A9), as in SCRUM-29 and SCRUM-44; unchanged. | TC-46-02, 12 |
+
+After these changes, against the local PostgreSQL: SCRUM-46 backend 37/37, whole backend suite 1036 run, all pass (3 skipped, as before; now including main's SCRUM-90 and SCRUM-94 tests); SCRUM-46 frontend 11/11, whole frontend suite 487/487; backend breakages 24/24 caught. The end-to-end check was not repeated: the pages and the successful paths are unchanged.

@@ -3376,6 +3376,9 @@ CHANGES_INVALID = "Some changes can't be requested. Please correct them and try 
 NO_CHANGES_TO_REQUEST = "There are no changes to request. Change at least one value."
 CHANGE_ALREADY_PENDING = ("A change request for this event is already pending review. You can "
                           "request another once it has been decided.")
+# The database's guard on A6 (models.EventChangeRequest), so a save it refuses is told
+# apart from any other refused save.
+ONE_PENDING_INDEX = "event_change_requests_one_pending_per_event"
 
 
 def _change_request_event(event_id, lock=False):
@@ -3398,13 +3401,29 @@ def _pending_change_request(event):
                                               status=change_requests.PENDING_REVIEW).first()
 
 
-def _change_request_blocked(event, pending):
+def _reviewing_coordinator(event):
+    """The event's coordinator, or None (A5). As everywhere else (_is_current_coordinator),
+    that is the assigned user while they still have the coordinator role, so someone whose
+    role has changed is neither shown nor notified."""
+    if event.coordinator_id is None:
+        return None
+    coordinator = db.session.get(User, event.coordinator_id)
+    return coordinator if _is_current_coordinator(coordinator, event) else None
+
+
+def _is_second_pending_request(error):
+    """Whether a refused save broke the one-pending index (A6), not some other rule."""
+    diag = getattr(error.orig, "diag", None)
+    return getattr(diag, "constraint_name", None) == ONE_PENDING_INDEX
+
+
+def _change_request_blocked(event, coordinator, pending):
     """Why no change can be requested for the event now, as (reason, message), or None."""
     if event.status != CHANGEABLE_STATUS:
         return "not_approved", (
             "Changes can only be requested for approved events. "
             f"This event is {event.status.replace('_', ' ')}.")
-    if event.coordinator_id is None:
+    if coordinator is None:
         # AC5: nobody would review it.
         return "no_coordinator", (
             "This event has no coordinator yet, so there is nobody to review a change "
@@ -3438,11 +3457,10 @@ def get_change_request_form(event_id: int):
     and whether a change can be requested now, with why not (AC1, AC5)."""
     try:
         _, event = _change_request_event(event_id)
+        coordinator = _reviewing_coordinator(event)
         pending = _pending_change_request(event)
-        blocked = _change_request_blocked(event, pending)
-        users = _users_by_id([event.coordinator_id,
-                              pending.requested_by_id if pending else None])
-        coordinator = users.get(event.coordinator_id)
+        blocked = _change_request_blocked(event, coordinator, pending)
+        users = _users_by_id([pending.requested_by_id if pending else None])
         current = {name: (_isoformat(getattr(event, name))
                           if name in change_requests.TIME_FIELDS
                           else _recorded(getattr(event, name)))
@@ -3497,7 +3515,8 @@ def submit_change_request(event_id: int):
         body = request.get_json(silent=True)
         if not isinstance(body, dict):
             raise _Rejected("Send the change request as a JSON object.", 400)
-        blocked = _change_request_blocked(event, _pending_change_request(event))
+        coordinator = _reviewing_coordinator(event)
+        blocked = _change_request_blocked(event, coordinator, _pending_change_request(event))
         if blocked:
             raise _Rejected(blocked[1], 409, reason=blocked[0])
         changes, problems = change_requests.parse_proposal(event, body)
@@ -3506,7 +3525,6 @@ def submit_change_request(event_id: int):
         if not changes:
             raise _Rejected(NO_CHANGES_TO_REQUEST, 422, fields={})
 
-        coordinator = db.session.get(User, event.coordinator_id)
         title, requester, to_address = event.title, user.email, coordinator.email
         row = EventChangeRequest(event_id=event.id, requested_by_id=user.id,
                                  status=change_requests.PENDING_REVIEW,
@@ -3523,10 +3541,12 @@ def submit_change_request(event_id: int):
     except _Rejected as rejected:
         db.session.rollback()  # Releases the event's lock.
         return _error(rejected.message, rejected.status_code, **rejected.extra)
-    except IntegrityError:
-        # Another request for the event was saved first (the one-pending index, A6).
+    except IntegrityError as error:
         db.session.rollback()
-        return _error(CHANGE_ALREADY_PENDING, 409, reason="pending")
+        if _is_second_pending_request(error):
+            # Another request for the event was saved first (A6).
+            return _error(CHANGE_ALREADY_PENDING, 409, reason="pending")
+        return _error(CHANGE_NOT_SUBMITTED, 503, retryable=True)
     except SQLAlchemyError:
         db.session.rollback()
         return _error(CHANGE_NOT_SUBMITTED, 503, retryable=True)

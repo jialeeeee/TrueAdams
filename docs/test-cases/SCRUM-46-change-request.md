@@ -24,8 +24,8 @@
 - **A2 — The permitted fields:** "date" and "time" are the event's start and end (`start_time`, `end_time`, Singapore time, `YYYY-MM-DDTHH:MM`); expected attendance is `expected_attendance`; venue requirements is `venue_requirements`; equipment requirements is the organiser's note `equipment_requirements` (the text they wrote in their request, SCRUM-29), **not** SCRUM-42's structured list, which the coordinator records. Any other field, such as the venue, the title or whether registration is needed, is *disallowed*: 422 saying it can't be changed through a change request. *(Q2, Q3)*
 - **A3 — What a request contains:** only the fields whose proposed value differs from the event's current value; a value equal to the current one is ignored, as in SCRUM-52. A request with no actual change is refused (422). The body is flat, `{"start_time": …, "expected_attendance": …}`, the same shape as SCRUM-52's `requires_review.requested`.
 - **A4 — Valid values:** the same rules as an organiser's request (SCRUM-29): times are valid `YYYY-MM-DDTHH:MM` values and the end must be after the start, checked on the start and end the event would have if the change were accepted (a proposed end is compared with the current start when only the end changes); attendance is a whole number of at least 1; venue requirements can't be blank (they are required for a request); equipment requirements may be blank, meaning none. Text is at most 5,000 characters. Past dates are not refused, as in SCRUM-29. Every problem is named at once (`fields`). *(Q4)*
-- **A5 — No coordinator:** an event with no coordinator can't take a request (409 `no_coordinator`), since nobody would review it. *(AC5)*
-- **A6 — One at a time:** an event can have at most one change request pending review; another is refused with 409 `pending` until the first is decided (not built here). A database index enforces it, and the event row is locked while it is checked. *(Q5)*
+- **A5 — No coordinator:** an event with no coordinator can't take a request (409 `no_coordinator`), since nobody would review it. As everywhere else in the app (`is_current_coordinator`), the event's coordinator is the assigned user while they still have the `coordinator` role. If their role has changed, the event counts as having no coordinator: the form doesn't name them and they aren't notified. *(AC5)*
+- **A6 — One at a time:** an event can have at most one change request pending review; another is refused with 409 `pending` until the first is decided. A database index enforces it, and the event row is locked while it is checked. If the index refuses a save anyway (a request saved by other code that didn't lock the event), the reply is the same 409 `pending`; any other refused save is a failed save (503). **Until a later story decides requests (A10), each event can take only one change request in total.** *(Q5, Q6)*
 - **A7 — What is recorded:** a new `event_change_requests` row (`db/event_change_requests.sql`): the event, who asked and when, status `pending_review` (shown as "Pending Review"), and `changes` as `{field: {"from": current value, "to": proposed value}}`, so the reviewer sees both. The event row is not changed. *(AC3, AC7)*
 - **A8 — Notification:** the event's coordinator gets an in-app notification (`change_requested`) naming each field with its current and proposed value, saved in the same commit as the request, then an email. If the email can't be queued the request still stands and the reply says `email_queued: false`.
 - **A9 — Order of checks:** 401 (no valid user) → 404 (no such event) → 403 (not the event's organiser) → 400 (body isn't a JSON object) → 409 (not approved → no coordinator → a request already pending) → 422 (disallowed or invalid fields, or no change) → 503 (not saved, `retryable: true`). The event's state is checked before its fields, as for drafts (SCRUM-29) and reservations (SCRUM-44).
@@ -127,6 +127,12 @@ Users: `USERS` from `backend/tests/seed_data.py` (dana and evan are organisers; 
 - **Expected result:** The form says `can_request: false`, `blocked_reason: "no_coordinator"`, with a message that the event has no coordinator yet. Submitting is refused with 409, `reason: "no_coordinator"`, and the same message. Nothing is saved.
 - **Automated:** `test_tc_46_12_an_event_without_a_coordinator_cannot_take_a_request`
 
+**TC-46-28 · A coordinator whose role has changed doesn't count**
+- **Traces to:** AC5, AC9 · **Type:** Negative · **Depends on:** A5
+- **Steps:** Change alice's role to attendee. As dana, open C1's form, then submit an attendance change.
+- **Expected result:** The form names no coordinator and says `blocked_reason: "no_coordinator"`. Submitting is refused with 409, `reason: "no_coordinator"`. Nothing is saved; alice gets no notification or email.
+- **Automated:** `test_tc_46_28_a_coordinator_whose_role_changed_does_not_count`
+
 ## AC6 — Saved as Pending Review, with a confirmation
 
 **TC-46-13 · A successful request is Pending Review and confirmed**
@@ -147,6 +153,12 @@ Users: `USERS` from `backend/tests/seed_data.py` (dana and evan are organisers; 
 - **Expected result:** The event is read `FOR UPDATE` before the pending requests are looked for.
 - **Automated:** `test_tc_46_15_the_event_is_locked_before_the_pending_check`
 
+**TC-46-29 · A request saved first elsewhere is reported as pending**
+- **Traces to:** AC6 · **Type:** Business rule (concurrency) · **Depends on:** A6
+- **Steps:** Propose attendance 250 for C1. Then, with the pending check made to find nothing (as if the first request were saved after it looked), propose attendance 300.
+- **Expected result:** The database index refuses the second; HTTP 409, `reason: "pending"`, not 503. Only the first request, its one notification and its one email exist.
+- **Automated:** `test_tc_46_29_a_request_saved_first_elsewhere_is_reported_as_pending`
+
 ## AC7 — The approved event is not overwritten
 
 **TC-46-16 · The event keeps its approved values**
@@ -162,6 +174,12 @@ Users: `USERS` from `backend/tests/seed_data.py` (dana and evan are organisers; 
 - **Steps:** Make saving the request fail, and then saving the notification, and each time propose attendance 250 for C1.
 - **Expected result:** HTTP 503, `retryable: true`, "Your change request was not submitted, and the event is unchanged. Please try again.", no internal error text. No request, no notification, no email; C1 unchanged.
 - **Automated:** `test_tc_46_17_a_failed_save_leaves_the_event_and_requests_unchanged`
+
+**TC-46-30 · Any other refused save is a failure, not "pending"**
+- **Traces to:** AC8 · **Type:** Negative (failure) · **Depends on:** A6
+- **Steps:** Make the database refuse the request's row for a reason other than the one-pending index, and propose attendance 250 for C1.
+- **Expected result:** HTTP 503, `retryable: true`, the not-submitted message. Nothing is saved; nobody is notified.
+- **Automated:** `test_tc_46_30_any_other_refused_save_is_a_failure_not_pending`
 
 **TC-46-18 · A failed load is an error, not an empty form**
 - **Traces to:** AC8 · **Type:** Negative (failure)
@@ -217,11 +235,11 @@ Also: `explains a failed load and offers Retry`; `does not send a request that c
 | AC2 | 01, 04, 05, 06, 11, 21, 22 |
 | AC3 | 04, 05, 07 |
 | AC4 | 06, 08, 09, 10, 11, 23 |
-| AC5 | 12, 24 |
-| AC6 | 13, 14, 15, 22, 25 |
+| AC5 | 12, 24, 28 |
+| AC6 | 13, 14, 15, 22, 25, 29 |
 | AC7 | 16 |
-| AC8 | 17, 18, 26 |
-| AC9 | 19, 20 |
+| AC8 | 17, 18, 26, 30 |
+| AC9 | 19, 20, 28 |
 
 ## Open questions for the customer
 
@@ -231,6 +249,6 @@ Also: `explains a failed load and offers Retry`; `does not send a request that c
 | Q2 | Is "equipment requirements" the organiser's own note (as built), or SCRUM-42's itemised list recorded by the coordinator? | A2 |
 | Q3 | Should the venue, or whether attendee registration is needed, also be changeable by a change request? SCRUM-52 treats both as restricted fields that need one. | A2, TC-46-06 |
 | Q4 | Should a proposed date in the past be refused? | A4 |
-| Q5 | May an organiser have more than one change request pending for an event, or withdraw one? | A6, TC-46-14 |
+| Q5 | May an organiser have more than one change request pending for an event, or withdraw one? Until requests can be decided, an event can only ever take one. | A6, TC-46-14 |
 | Q6 | Who decides a change request (the event's coordinator?), and is the event updated automatically when it is approved? | A10 |
 | Q7 | SCRUM-52 tells the **coordinator** to submit a change request for restricted fields, but AC1 lets only the **organiser** submit one. Should the coordinator also be able to submit one for the events they coordinate? | A1; SCRUM-52 B7 |

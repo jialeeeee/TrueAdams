@@ -44,7 +44,7 @@ const REQUEST = {
   ],
   requested_by: { id: 4, email: "dana@example.com" }, requested_at: "2026-10-26T02:00:00",
 };
-const CONFIRMATION = "Your change request for \"Charity Gala\" (Start and Expected attendance) is Pending Review. alice@example.com has been notified.";
+const CONFIRMATION = "Your change request for \"Charity Gala\" (Start and Expected attendance) is Pending Review. The event's coordinator, alice@example.com, has been notified.";
 const failed = (status, data) =>
   Object.assign(new Error("Request failed"), { response: { status, data } });
 

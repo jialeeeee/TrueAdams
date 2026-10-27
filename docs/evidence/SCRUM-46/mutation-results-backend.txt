@@ -1,7 +1,8 @@
 baseline: all backend tests pass
 B1 | Anyone may request a change to any event | AC1 | CAUGHT | test_tc_46_03_who_may_request_and_in_what_order
 B2 | Events that aren't approved can take a request | AC1 | CAUGHT | test_tc_46_02_events_that_are_not_approved_cannot_take_a_request
-B3 | An event without a coordinator can take a request | AC5 | CAUGHT | test_tc_46_12_an_event_without_a_coordinator_cannot_take_a_request
+B3 | An event without a coordinator can take a request | AC5 | CAUGHT | test_tc_46_12_an_event_without_a_coordinator_cannot_take_a_request, test_tc_46_28_a_coordinator_whose_role_changed_does_not_count
+B22 | A coordinator whose role has changed still counts, and is notified | AC5, AC9 | CAUGHT | test_tc_46_28_a_coordinator_whose_role_changed_does_not_count
 B4 | Fields that aren't permitted are silently ignored | AC2, AC4 | CAUGHT | test_every_problem_is_named_at_once, test_other_fields_are_disallowed, test_tc_46_06_fields_that_are_not_permitted_are_refused, test_tc_46_09_every_problem_is_named_at_once
 B5 | Negative attendance is accepted | AC4 | CAUGHT | test_attendance_must_be_a_whole_number_of_at_least_one, test_every_problem_is_named_at_once, test_tc_46_08_invalid_values_are_refused_with_the_reason, test_tc_46_09_every_problem_is_named_at_once
 B6 | An end before the start is accepted | AC4 | CAUGHT | test_a_new_start_must_be_before_the_current_end, test_tc_46_08_invalid_values_are_refused_with_the_reason, test_the_end_must_be_after_the_start
@@ -12,12 +13,14 @@ B10 | Times that aren't date and time are accepted | AC4 (A4) | CAUGHT | test_ti
 B11 | Unchanged values are recorded as changes | AC3 (A3) | CAUGHT | test_nothing_to_change_gives_no_changes_and_no_problems, test_tc_46_05_only_the_fields_that_change_are_recorded, test_tc_46_10_a_request_must_change_something, test_unchanged_values_are_ignored
 B12 | A request that changes nothing is saved | AC4 (A3) | CAUGHT | test_tc_46_10_a_request_must_change_something
 B13 | The current values are not recorded | AC3 (A7) | CAUGHT | test_changes_are_stored_as_json, test_every_permitted_field_can_change_in_field_order, test_tc_46_04_every_permitted_field_can_be_changed_in_one_request, test_tc_46_05_only_the_fields_that_change_are_recorded, test_tc_46_07_the_request_records_the_event_fields_and_values, test_tc_46_19_the_coordinator_is_told_the_proposed_changes, test_the_changes_are_described_with_labels_and_both_values, test_venue_requirements_cannot_be_blank_but_equipment_can
-B14 | The request isn't saved as Pending Review | AC6 | CAUGHT | test_tc_46_07_the_request_records_the_event_fields_and_values, test_tc_46_13_a_successful_request_is_pending_review_and_confirmed, test_tc_46_14_only_one_request_can_be_pending_at_a_time
+B14 | The request isn't saved as Pending Review | AC6 | CAUGHT | test_tc_46_07_the_request_records_the_event_fields_and_values, test_tc_46_13_a_successful_request_is_pending_review_and_confirmed, test_tc_46_14_only_one_request_can_be_pending_at_a_time, test_tc_46_29_a_request_saved_first_elsewhere_is_reported_as_pending
 B15 | The event isn't locked before the pending check | AC6 (A6) | CAUGHT | test_tc_46_15_the_event_is_locked_before_the_pending_check
 B16 | The pending request is applied to the approved event | AC7 | CAUGHT | test_tc_46_16_the_event_keeps_its_approved_values
 B17 | A failed save is reported as a success | AC8 | CAUGHT | test_tc_46_17_a_failed_save_leaves_the_event_and_requests_unchanged
 B18 | A failed load is shown as an empty form | AC8 | CAUGHT | test_tc_46_18_a_failed_load_is_an_error_not_an_empty_form
-B19 | No in-app notification | AC9 | CAUGHT | test_tc_46_17_a_failed_save_leaves_the_event_and_requests_unchanged, test_tc_46_19_the_coordinator_is_told_the_proposed_changes, test_tc_46_20_an_email_queue_failure_does_not_undo_the_request
+B19 | No in-app notification | AC9 | CAUGHT | test_tc_46_17_a_failed_save_leaves_the_event_and_requests_unchanged, test_tc_46_19_the_coordinator_is_told_the_proposed_changes, test_tc_46_20_an_email_queue_failure_does_not_undo_the_request, test_tc_46_29_a_request_saved_first_elsewhere_is_reported_as_pending
 B20 | The notification doesn't say what would change | AC9 | CAUGHT | test_tc_46_19_the_coordinator_is_told_the_proposed_changes
 B21 | No email is queued | AC9 | CAUGHT | test_tc_46_19_the_coordinator_is_told_the_proposed_changes, test_tc_46_20_an_email_queue_failure_does_not_undo_the_request
+B23 | A request refused by the one-pending index is reported as a failed save | AC6 | CAUGHT | test_tc_46_29_a_request_saved_first_elsewhere_is_reported_as_pending
+B24 | Any refused save is reported as an already-pending request | AC8 | CAUGHT | test_tc_46_30_any_other_refused_save_is_a_failure_not_pending
 after restore: all pass

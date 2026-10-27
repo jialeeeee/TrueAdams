@@ -29,9 +29,10 @@ from datetime import datetime
 from unittest import mock
 
 from sqlalchemy import event as sa_event
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import IntegrityError, OperationalError
 
 from app import tasks
+from app.events import routes as event_routes
 from app.models import Event, Notification
 from tests import seed_data
 from tests.base import AppTestCase
@@ -327,6 +328,20 @@ class NoCoordinatorTests(ChangeRequestTestCase):
         self.assertEqual(body["error"], form["message"])
         self.assertEqual(self.requests("C3"), [])
 
+    # TC-46-28 · AC5, AC9
+    def test_tc_46_28_a_coordinator_whose_role_changed_does_not_count(self):
+        self.users["alice"].role = "attendee"
+        self.db.session.commit()
+
+        form = self.form()
+        self.assertIsNone(form["event"]["coordinator"])
+        self.assertEqual(form["blocked_reason"], "no_coordinator")
+
+        body = self.assert_error(self.submit({"expected_attendance": 250}), 409)
+
+        self.assertEqual(body["reason"], "no_coordinator")
+        self.assert_nothing_requested()
+
 
 # ---------- AC6: saved as Pending Review, with a confirmation ----------
 
@@ -371,6 +386,21 @@ class PendingReviewTests(ChangeRequestTestCase):
                     if "FROM events" in s and "FOR UPDATE" in s)
         look = next(i for i, s in enumerate(statements) if "FROM event_change_requests" in s)
         self.assertLess(lock, look)
+
+    # TC-46-29 · AC6
+    def test_tc_46_29_a_request_saved_first_elsewhere_is_reported_as_pending(self):
+        self.submitted({"expected_attendance": 250})
+        self.email.reset_mock()
+
+        # As if the first request were saved after this one looked: only the index stops it.
+        with mock.patch.object(event_routes, "_pending_change_request", return_value=None):
+            body = self.assert_error(self.submit({"expected_attendance": 300}), 409)
+
+        self.assertEqual(body["reason"], "pending")
+        [row] = self.requests()
+        self.assertEqual(row.changes["expected_attendance"]["to"], 250)
+        self.assertEqual(len(self.notifications("alice")), 1)
+        self.email.assert_not_called()
 
 
 # ---------- AC7: the approved event is not overwritten ----------
@@ -420,6 +450,23 @@ class FailureTests(ChangeRequestTestCase):
                 self.assertNotIn("simulated outage", body["error"])
                 self.assert_nothing_requested()
                 self.assertEqual(self.saved_event(), before)
+
+    # TC-46-30 · AC8
+    def test_tc_46_30_any_other_refused_save_is_a_failure_not_pending(self):
+        def refuse(conn, cursor, statement, parameters, context, executemany):
+            if statement.startswith("INSERT INTO event_change_requests"):
+                raise IntegrityError(statement, parameters, Exception("another rule"))
+
+        sa_event.listen(self.db.engine, "before_cursor_execute", refuse)
+        try:
+            response = self.submit({"expected_attendance": 250})
+        finally:
+            sa_event.remove(self.db.engine, "before_cursor_execute", refuse)
+
+        body = self.assert_error(response, 503)
+        self.assertIs(body.get("retryable"), True)
+        self.assertEqual(body["error"], NOT_SUBMITTED)
+        self.assert_nothing_requested()
 
     # TC-46-18 · AC8
     def test_tc_46_18_a_failed_load_is_an_error_not_an_empty_form(self):

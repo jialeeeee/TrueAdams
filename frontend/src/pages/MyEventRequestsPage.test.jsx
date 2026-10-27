@@ -152,8 +152,6 @@ describe("SCRUM-59 my event requests", () => {
   });
 });
 
-// Frontend case TC-60-15 in docs/test-cases/SCRUM-60-accountable-decisions.md; the
-// API side is backend/tests/test_decision_accountability.py (TC-60-03).
 // SCRUM-46 (TC-46-27): only approved events can take a change request (AC1).
 describe("SCRUM-46 request a change", () => {
   it("offers a change request only for approved requests", async () => {
@@ -167,6 +165,8 @@ describe("SCRUM-46 request a change", () => {
   });
 });
 
+// Frontend case TC-60-15 in docs/test-cases/SCRUM-60-accountable-decisions.md; the
+// API side is backend/tests/test_decision_accountability.py (TC-60-03).
 describe("SCRUM-60 who decided", () => {
   it("SCRUM-60 shows who decided each submitted request", async () => {
     const alice = { id: 2, email: "alice.coordinator@connectsphere.test" };
