@@ -20,10 +20,11 @@ from ..models import (
     Resource,
     User,
     Venue,
+    VenueBooking,
 )
 from ..registrations.routes import REGISTERED, REGISTRABLE_STATUS, WITHDRAWN, singapore_now
 from ..resources import availability, reservations as reserving
-from ..venues.scheduling import overlapping
+from ..venues.scheduling import BLOCKING_BOOKING_STATUS, overlapping
 from . import equipment, suitability
 from .permissions import (
     COORDINATOR_ROLE,
@@ -167,6 +168,117 @@ def list_events():
         return _error("Events could not be loaded. Please try again.", 503, retryable=True)
 
     return jsonify({"events": items, "message": None if items else "There are no events to show."})
+
+
+# SCRUM-90 AC3: only Safety Officers may read the safety queue, including no admin override.
+SAFETY_CHECK_VIEWER_ROLES = {"safety_officer"}
+
+
+def _safety_schedule_covered(event, bookings):
+    """PR #58: confirmed booked periods must cover the current event without gaps.
+
+    Venues may cover different phases; setup/turnaround are not event activities.
+    This cannot establish unrecorded requirements for particular venues (A6/Q6).
+    """
+    covered_until = event.start_time
+    for booking in sorted(bookings, key=lambda row: row.start_time):
+        if booking.start_time > covered_until:
+            break
+        covered_until = max(covered_until, booking.end_time)
+        if covered_until >= event.end_time:
+            return True
+    return False
+
+
+def _safety_check_payload(event, venues, equipment_lines):
+    return {
+        "id": event.id,
+        "title": event.title,
+        "venues": venues,
+        "start_time": _isoformat(event.start_time),
+        "end_time": _isoformat(event.end_time),
+        "expected_attendance": event.expected_attendance,
+        "equipment": equipment_lines,
+    }
+
+
+@events_bp.get("/safety-checks")
+@jwt_required()
+def list_safety_checks():
+    """SCRUM-90: confirmed venues and complete active equipment reservations."""
+    try:
+        user = _current_user()
+        if user is None:
+            return _error("Your session is no longer valid. Please log in again.", 401)
+        if user.role not in SAFETY_CHECK_VIEWER_ROLES:
+            return _error("Only Safety Officers can view events awaiting a safety check.", 403)
+
+        # PR #58: closed events and events ending now or earlier need no safety check.
+        events = Event.query.filter(
+            Event.end_time > singapore_now(),
+            *[Event.status != status for status in EQUIPMENT_CLOSED_STATUSES]).all()
+        events = [event for event in events if event.start_time is not None]
+        event_ids = {event.id for event in events}
+        items = []
+        if event_ids:
+            # Read only confirmed bookings for current candidates and their date range.
+            # Use booked times here: setup/turnaround do not cover event activities.
+            bookings = VenueBooking.query.filter_by(status=BLOCKING_BOOKING_STATUS).filter(
+                VenueBooking.event_id.in_(event_ids),
+                VenueBooking.start_time < max(event.end_time for event in events),
+                VenueBooking.end_time > min(event.start_time for event in events)).all()
+            requirements = EquipmentRequirement.query.filter(
+                EquipmentRequirement.event_id.in_(event_ids)).all()
+            reservations = EquipmentReservation.query.filter_by(status=reserving.RESERVED).filter(
+                EquipmentReservation.event_id.in_(event_ids)).all()
+            venue_ids = {booking.venue_id for booking in bookings}
+            venues = {venue.id: venue for venue in Venue.query.filter(Venue.id.in_(venue_ids)).all()}
+
+            event_venues = {}
+            event_bookings = {}
+            events_by_id = {event.id: event for event in events}
+            for booking in bookings:
+                event = events_by_id[booking.event_id]
+                # The batch date range can include another event's obsolete periods.
+                # Only booked activities overlapping this event belong in its row.
+                if booking.end_time <= event.start_time or booking.start_time >= event.end_time:
+                    continue
+                event_bookings.setdefault(booking.event_id, []).append(booking)
+                venue = venues[booking.venue_id]
+                event_venues.setdefault(booking.event_id, {})[venue.id] = {
+                    "id": venue.id, "name": venue.name,
+                }
+            event_requirements = {}
+            for requirement in requirements:
+                event_requirements.setdefault(requirement.event_id, []).append(requirement)
+            reserved = {}
+            for reservation in reservations:
+                key = (reservation.event_id, reservation.requirement_id)
+                reserved[key] = reserved.get(key, 0) + reservation.quantity
+
+            for event in events:
+                if not _safety_schedule_covered(event, event_bookings.get(event.id, [])):
+                    continue
+                needed = event_requirements.get(event.id, [])
+                # SCRUM-90 A1/Q1: an unprocessed organiser note is not "no equipment".
+                if not needed and (event.equipment_requirements or "").strip():
+                    continue
+                equipment_lines = [{
+                    "equipment_type": requirement.equipment_type,
+                    "quantity": requirement.quantity,
+                    "reserved_quantity": reserved.get((event.id, requirement.id), 0),
+                } for requirement in needed]
+                if any(line["reserved_quantity"] < line["quantity"] for line in equipment_lines):
+                    continue
+                items.append(_safety_check_payload(
+                    event, list(event_venues[event.id].values()), equipment_lines))
+    except SQLAlchemyError:
+        db.session.rollback()
+        return _error("The safety check list could not be loaded. Please try again.",
+                      503, retryable=True)
+
+    return jsonify({"events": items, "message": None if items else
+                    "There are no events awaiting a safety check."})
 
 
 @events_bp.post("/")
