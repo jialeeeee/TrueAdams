@@ -939,23 +939,27 @@ def _locked_venue_and_conflicts(booking, outcome="the booking was not approved")
         ) from None
 
 
-def _queue_coordinator_email(to_address, subject, message, event_id):
-    """Queue the coordinator's email about a venue decision; False if the queue could
-    not be reached.
+def _queue_email(to_address, subject, body, event_id):
+    """Queue an email about a venue booking; False if the queue could not be reached.
 
-    The decision and its in-app notification are already saved by then, so a broker
+    The change and its in-app notification are already saved by then, so a broker
     outage must not undo or hide them. It takes plain values, not models.
     """
     try:
-        tasks.send_notification_email.delay(
-            to_address, subject,
-            f"{message}\n\nSign in to ConnectSphere to see the event's planning information.",
-        )
+        tasks.send_notification_email.delay(to_address, subject, body)
     except Exception:
         current_app.logger.exception("Could not queue venue booking email for event %s",
                                      event_id)
         return False
     return True
+
+
+def _queue_coordinator_email(to_address, subject, message, event_id):
+    """Queue the coordinator's email about a venue decision (see _queue_email)."""
+    return _queue_email(
+        to_address, subject,
+        f"{message}\n\nSign in to ConnectSphere to see the event's planning information.",
+        event_id)
 
 
 @venues_bp.post("/bookings/<int:booking_id>/approve")
@@ -1300,4 +1304,97 @@ def list_holds():
     return jsonify({
         "holds": payloads,
         "message": None if payloads else "There are no tentative holds.",
+    })
+
+
+# ---------- The coordinator cancels a booking (SCRUM-94) ----------
+
+CANCELLED = "cancelled"
+# Bookings that hold, or may yet hold, their venue (AC1, A2).
+CANCELLABLE_STATUSES = {PENDING, TENTATIVE, CONFIRMED}
+CANCELLATION_NOTIFICATION = "venue_booking_cancelled"
+# Venue Staff can't open the event's planning view, so their email points to their list.
+STAFF_EMAIL_FOOTER = "Sign in to ConnectSphere to see the venue requests."
+
+
+def _cancellable_booking(user, booking_id):
+    """The booking and its event, locked, if `user` may cancel it now (A1, A2, A6, A7).
+
+    Locked, so a cancellation and a Venue Staff decision happen one at a time.
+    """
+    booking = db.session.get(VenueBooking, booking_id, with_for_update=True,
+                             populate_existing=True)
+    if booking is None:
+        raise _Rejected("Booking not found.", 404)
+    event = db.session.get(Event, booking.event_id, with_for_update=True,
+                           populate_existing=True) if booking.event_id else None
+    if event is None or not is_current_coordinator(user, event):
+        raise _Rejected(
+            "Only the event's assigned coordinator can cancel its venue bookings.", 403)
+    if booking.status not in CANCELLABLE_STATUSES:
+        raise _Rejected(f"This booking is {booking.status}, so it can't be cancelled.",
+                        409, reason="not_cancellable")
+    return booking, event
+
+
+def _release_event_venue(event, booking, previous_status):
+    """Approving set the event's venue (SCRUM-40 A4), so cancelling it clears it (A3, Q3)."""
+    if previous_status == CONFIRMED and event.venue_id == booking.venue_id:
+        event.venue_id = None
+
+
+def _notify_venue_staff(message, event_id):
+    """Add an in-app notification for every Venue Staff member; return their addresses.
+
+    Venue Staff aren't linked to venues, so all of them are told (A4, open question Q4).
+    """
+    staff = User.query.filter(User.role.in_(BOOKING_REVIEWER_ROLES)).all()
+    for member in staff:
+        db.session.add(Notification(recipient_id=member.id, kind=CANCELLATION_NOTIFICATION,
+                                    message=message, event_id=event_id))
+    return [member.email for member in staff]
+
+
+@venues_bp.post("/bookings/<int:booking_id>/cancel")
+@jwt_required()
+def cancel_booking(booking_id: int):
+    try:
+        # Load the user first, then the record, then check permission (AGENTS.md, A6).
+        user = _require_viewer(roles=None)
+        booking, event = _cancellable_booking(user, booking_id)
+        venue = db.session.get(Venue, booking.venue_id)
+
+        # The row and its other columns are kept; only the status changes (A3).
+        previous_status = booking.status
+        booking.status = CANCELLED
+        _release_event_venue(event, booking, previous_status)
+        message = (
+            f'{user.email} cancelled the {previous_status} booking of {venue.name} for '
+            f'"{event.title}" ({_period_text(booking.start_time, booking.end_time)}). '
+            "The venue is free again for that time."
+        )
+        # Saved in the same commit as the cancellation, so neither exists without the other.
+        staff_addresses = _notify_venue_staff(message, event.id)
+        payload = _booking_decision_payload(booking)
+        title, venue_name, event_id = event.title, venue.name, event.id
+        db.session.commit()
+    except _Rejected as rejected:
+        return _error(rejected.message, rejected.status_code, **rejected.extra)
+    except SQLAlchemyError:
+        db.session.rollback()
+        return _error(
+            "The cancellation was not saved, so the booking is unchanged. Please try again.",
+            503, retryable=True,
+        )
+
+    subject = f"Venue booking cancelled for {title}: {venue_name}"
+    queued = [_queue_email(address, subject, f"{message}\n\n{STAFF_EMAIL_FOOTER}", event_id)
+              for address in staff_addresses]
+    return jsonify({
+        "message": (
+            f"You cancelled the booking of {venue_name} for {title}. The venue is free again "
+            "for that time, and Venue Staff have been notified."
+        ),
+        "booking": payload,
+        "notification": {"in_app": True, "email_queued": all(queued)},
     })
