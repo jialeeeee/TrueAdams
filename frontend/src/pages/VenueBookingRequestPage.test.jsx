@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -304,5 +304,124 @@ describe("SCRUM-69 coordinator sees the saved venue rejection", () => {
     expect(await screen.findByText(`Reason: ${REASON}`)).toBeTruthy();
     expect(field("Venue requirements").value).toBe("Keep my unsent requirements.");
     await waitFor(() => expect(screen.queryByText(message)).toBeNull());
+  });
+});
+
+// SCRUM-94: TC-94-07, 08, 09 and 21 in docs/test-cases/SCRUM-94-cancel-venue-booking.md.
+// The API contract mirrors backend/tests/test_venue_booking_cancellation.py.
+describe("SCRUM-94 the coordinator cancels a venue booking", () => {
+  const CIVIC = { id: 4, name: "Civic Hall", location: "12 Civic Road" };
+  const AURORA = { id: 3, name: "Aurora Ballroom", location: "Level 3, Marina Tower" };
+  const booking = (id, status, venue, start, end, extra = {}) => ({
+    id, status, venue, event: { id: 7, title: "Harbour Lights Festival" },
+    start_time: start, end_time: end, rejection_reason: null, decided_at: null, decided_by: null,
+    ...extra,
+  });
+  const P1 = booking(11, "pending", AURORA, "2027-03-12T16:00:00", "2027-03-12T22:30:00");
+  const T1 = booking(12, "tentative", AURORA, "2027-03-13T09:00:00", "2027-03-13T12:00:00");
+  const C1 = booking(13, "confirmed", CIVIC, "2027-03-12T16:00:00", "2027-03-12T22:30:00");
+  const R1 = booking(14, "rejected", CIVIC, "2027-03-11T10:00:00", "2027-03-11T12:00:00",
+    { rejection_reason: "No stage power." });
+  const X1 = booking(15, "cancelled", { id: 5, name: "Bayfront Pavilion", location: null },
+    "2027-03-11T13:00:00", "2027-03-11T15:00:00");
+  const CANCELLED_MESSAGE =
+    "You cancelled the booking of Civic Hall for Harbour Lights Festival. The venue is free again for that time, and Venue Staff have been notified.";
+
+  function mockBookings(bookings, event = planning({ venue: CIVIC })) {
+    apiClient.get.mockImplementation((url) => {
+      if (url === "/events/7/planning") return Promise.resolve({ data: event });
+      if (url === "/venues/") return Promise.resolve({ data: VENUES });
+      if (url === "/venues/bookings") return Promise.resolve({ data: { bookings, message: null } });
+      return Promise.reject(new Error(`unexpected GET ${url}`));
+    });
+  }
+
+  async function renderBookings(bookings = [P1, T1, C1, R1, X1]) {
+    mockBookings(bookings);
+    const user = renderPage();
+    await screen.findByRole("region", { name: "Venue bookings" });
+    return user;
+  }
+
+  const bookingItem = (text) =>
+    within(screen.getByRole("region", { name: "Venue bookings" }))
+      .getAllByRole("listitem").find((item) => item.textContent.includes(text));
+  const civicItem = () => bookingItem("Civic Hall, 2027-03-12 16:00 to 2027-03-12 22:30");
+
+  // TC-94-07 · AC2
+  it("lists the event's bookings and offers to cancel only the live ones", async () => {
+    await renderBookings();
+
+    const list = within(screen.getByRole("region", { name: "Venue bookings" }));
+    expect(list.getAllByRole("listitem")).toHaveLength(4);
+    for (const [text, status] of [
+      ["Aurora Ballroom, 2027-03-12 16:00 to 2027-03-12 22:30", "Pending"],
+      ["Aurora Ballroom, 2027-03-13 09:00 to 2027-03-13 12:00", "Tentative"],
+      ["Civic Hall, 2027-03-12 16:00 to 2027-03-12 22:30", "Confirmed"],
+    ]) {
+      const item = bookingItem(text);
+      expect(item.textContent).toContain(`Status: ${status}`);
+      expect(within(item).getByRole("button", { name: "Cancel booking" })).toBeTruthy();
+    }
+    const cancelled = bookingItem("Bayfront Pavilion");
+    expect(cancelled.textContent).toContain("Status: Cancelled");
+    expect(within(cancelled).queryByRole("button", { name: "Cancel booking" })).toBeNull();
+    // The rejection stays with its reason under the previous decisions only (SCRUM-69).
+    expect(list.queryByText(/No stage power/)).toBeNull();
+    expect(screen.getByText("Reason: No stage power.")).toBeTruthy();
+  });
+
+  // TC-94-08 · AC2
+  it("asks for confirmation and sends nothing when the coordinator keeps the booking", async () => {
+    const user = await renderBookings();
+
+    await user.click(within(civicItem()).getByRole("button", { name: "Cancel booking" }));
+    const confirmation = screen.getByRole("group", { name: "Confirm cancellation" });
+    expect(confirmation.textContent).toContain("Civic Hall");
+    expect(confirmation.textContent).toContain("2027-03-12 16:00 to 2027-03-12 22:30");
+    expect(confirmation.textContent).toContain("released");
+    await user.click(within(confirmation).getByRole("button", { name: "Keep booking" }));
+
+    expect(screen.queryByRole("group", { name: "Confirm cancellation" })).toBeNull();
+    expect(apiClient.post).not.toHaveBeenCalled();
+    expect(civicItem().textContent).toContain("Status: Confirmed");
+  });
+
+  // TC-94-09 · AC2, AC3
+  it("cancels the booking on confirmation and shows it as cancelled", async () => {
+    const user = await renderBookings();
+    const cancelledC1 = { ...C1, status: "cancelled" };
+    apiClient.post.mockResolvedValue({
+      data: { message: CANCELLED_MESSAGE, booking: cancelledC1,
+        notification: { in_app: true, email_queued: true } },
+    });
+
+    await user.click(within(civicItem()).getByRole("button", { name: "Cancel booking" }));
+    // The server has cancelled it: the page reloads the event (no venue now) and its bookings.
+    mockBookings([P1, T1, cancelledC1, R1, X1], planning());
+    await user.click(screen.getByRole("button", { name: "Yes, cancel booking" }));
+
+    expect((await screen.findByRole("status")).textContent).toBe(CANCELLED_MESSAGE);
+    expect(apiClient.post).toHaveBeenCalledTimes(1);
+    expect(apiClient.post).toHaveBeenCalledWith("/venues/bookings/13/cancel");
+    await waitFor(() => expect(civicItem().textContent).toContain("Status: Cancelled"));
+    expect(within(civicItem()).queryByRole("button", { name: "Cancel booking" })).toBeNull();
+    expect(screen.queryByText(/Venue confirmed:/)).toBeNull();
+    expect(screen.queryByRole("group", { name: "Confirm cancellation" })).toBeNull();
+  });
+
+  // TC-94-21 · AC6
+  it("shows the error and keeps the booking when cancelling fails", async () => {
+    const message = "The cancellation was not saved, so the booking is unchanged. Please try again.";
+    const user = await renderBookings();
+    apiClient.post.mockRejectedValue(httpFailure(503, { error: message, retryable: true }));
+
+    await user.click(within(civicItem()).getByRole("button", { name: "Cancel booking" }));
+    await user.click(screen.getByRole("button", { name: "Yes, cancel booking" }));
+
+    expect((await screen.findByRole("alert")).textContent).toBe(message);
+    expect(civicItem().textContent).toContain("Status: Confirmed");
+    expect(within(civicItem()).getByRole("button", { name: "Cancel booking" })).toBeTruthy();
+    expect(screen.queryByRole("status")).toBeNull();
   });
 });
