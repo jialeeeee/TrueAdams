@@ -11,6 +11,10 @@ import statusLabel from "../utils/statusLabel.js";
 const NOT_LOADED = "The event or venues could not be loaded. Check your connection and try again.";
 const NOT_SENT = "Your venue request was not sent. Check your connection and try again.";
 const OUTCOMES_NOT_LOADED = "Saved venue outcomes could not be loaded. Check your connection and try again.";
+const NOT_CANCELLED = "The booking was not cancelled. Check your connection and try again.";
+// SCRUM-94 AC1: the statuses a coordinator can cancel. Must match CANCELLABLE_STATUSES
+// in backend/app/venues/routes.py.
+const CANCELLABLE = ["pending", "tentative", "confirmed"];
 // Must match the "missing" messages in _booking_problems (backend/app/venues/routes.py).
 const MISSING = {
   venue_id: "Choose a venue.",
@@ -28,6 +32,7 @@ const CONFLICT_LABELS = {
 // Event and booking times are Singapore time without a time zone: show them as recorded.
 const asInput = (value) => (value ? value.slice(0, 16) : "");
 const asText = (value) => value.slice(0, 16).replace("T", " ");
+const asPeriod = (booking) => `${asText(booking.start_time)} to ${asText(booking.end_time)}`;
 
 function missingFields(form) {
   const problems = {};
@@ -36,6 +41,44 @@ function missingFields(form) {
   if (!form.end_time) problems.end_time = MISSING.end_time;
   if (!form.venue_requirements.trim()) problems.venue_requirements = MISSING.venue_requirements;
   return problems;
+}
+
+// SCRUM-94: the event's bookings, except rejections (listed with their reasons below), each
+// pending, tentative or confirmed one with Cancel booking and a confirmation step (AC2, A5).
+function VenueBookings({ bookings, onCancel }) {
+  const [confirming, setConfirming] = useState(null);
+  if (bookings.length === 0) return null;
+
+  const confirm = async () => {
+    await onCancel(confirming);
+    setConfirming(null);
+  };
+
+  return (
+    <section aria-label="Venue bookings">
+      <h2>Venue bookings</h2>
+      <ul>
+        {bookings.map((booking) => (
+          <li key={booking.id}>
+            <p>{`${booking.venue.name}, ${asPeriod(booking)}`}</p>
+            <p>{`Status: ${statusLabel(booking.status)}`}</p>
+            {CANCELLABLE.includes(booking.status) && (
+              <button type="button" onClick={() => setConfirming(booking)}>Cancel booking</button>
+            )}
+          </li>
+        ))}
+      </ul>
+      {confirming && (
+        <div role="group" aria-label="Confirm cancellation">
+          <p>
+            {`Cancel the booking of ${confirming.venue.name}, ${asPeriod(confirming)}? The venue will be released for that time.`}
+          </p>
+          <button type="button" onClick={confirm}>Yes, cancel booking</button>
+          <button type="button" onClick={() => setConfirming(null)}>Keep booking</button>
+        </div>
+      )}
+    </section>
+  );
 }
 
 export default function VenueBookingRequestPage() {
@@ -52,6 +95,9 @@ export default function VenueBookingRequestPage() {
   const [clash, setClash] = useState(null);
   const [bookings, setBookings] = useState([]);
   const [outcomeError, setOutcomeError] = useState(null);
+  // SCRUM-94: the outcome of cancelling a booking.
+  const [cancelMessage, setCancelMessage] = useState("");
+  const [cancelError, setCancelError] = useState("");
 
   // SCRUM-69: recover decisions from request rows, independently of notifications.
   const loadOutcomes = useCallback(async () => {
@@ -97,6 +143,20 @@ export default function VenueBookingRequestPage() {
     setOutcomeError(null);
     load();
   }, [load]);
+
+  const cancelBooking = async (booking) => {
+    setCancelMessage("");
+    setCancelError("");
+    try {
+      const response = await apiClient.post(`/venues/bookings/${booking.id}/cancel`);
+      setCancelMessage(response.data.message);
+      // Cancelling the confirmed venue clears the event's venue (A3), so reload both.
+      load();
+    } catch (failure) {
+      // The booking is unchanged (AC6), so it stays listed and can be cancelled again.
+      setCancelError(explain(failure, NOT_CANCELLED));
+    }
+  };
 
   const change = (name) => (e) => setForm((current) => ({ ...current, [name]: e.target.value }));
 
@@ -154,6 +214,10 @@ export default function VenueBookingRequestPage() {
           {outcomeError.retryable && <button type="button" onClick={loadOutcomes}>Retry</button>}
         </div>
       )}
+      {cancelMessage && <p role="status">{cancelMessage}</p>}
+      {cancelError && <p role="alert">{cancelError}</p>}
+      <VenueBookings bookings={bookings.filter((booking) => booking.status !== "rejected")}
+        onCancel={cancelBooking} />
       {rejections.length > 0 && (
         <section aria-label="Previous venue decisions">
           <h2>Previous venue decisions</h2>
