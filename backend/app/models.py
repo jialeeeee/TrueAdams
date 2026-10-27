@@ -351,6 +351,36 @@ class EquipmentReservation(db.Model):
     release_reason = db.Column(db.Text)
 
 
+class EventChangeRequest(db.Model):
+    """An organiser's request to change their approved event (SCRUM-46).
+
+    It records what would change and leaves the event itself alone until the request is
+    decided (AC7), which a later story builds.
+    """
+
+    __tablename__ = "event_change_requests"
+    __table_args__ = (
+        # At most one request pending review per event (A6).
+        db.Index(
+            "event_change_requests_one_pending_per_event",
+            "event_id",
+            unique=True,
+            postgresql_where=db.text("status = 'pending_review'"),
+        ),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    event_id = db.Column(db.Integer, db.ForeignKey("events.id"), nullable=False)
+    requested_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    # "pending_review" is the only status until deciding requests is built.
+    status = db.Column(db.String(20), nullable=False, default="pending_review")
+    # {"<field>": {"from": current value, "to": proposed value}} for each field that
+    # would change; times as Singapore-time ISO strings (A7).
+    changes = db.Column(JSONB, nullable=False)
+    # Naive UTC, like the other audit timestamps.
+    requested_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+
 class VenueChange(db.Model):
     """SCRUM-63: one add or edit of a venue, with who made it and when."""
 

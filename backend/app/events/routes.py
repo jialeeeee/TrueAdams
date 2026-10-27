@@ -13,6 +13,7 @@ from ..models import (
     EquipmentReservation,
     EquipmentUnavailability,
     Event,
+    EventChangeRequest,
     EventClarification,
     Notification,
     ReassignmentRequest,
@@ -25,7 +26,7 @@ from ..models import (
 from ..registrations.routes import REGISTERED, REGISTRABLE_STATUS, WITHDRAWN, singapore_now
 from ..resources import availability, reservations as reserving
 from ..venues.scheduling import BLOCKING_BOOKING_STATUS, overlapping
-from . import equipment, suitability
+from . import change_requests, equipment, suitability
 from .permissions import (
     COORDINATOR_ROLE,
     can_view_clarifications,
@@ -284,11 +285,6 @@ def list_safety_checks():
 @events_bp.post("/")
 def create_event():
     return jsonify({"message": "create event not yet implemented"}), 501
-
-
-@events_bp.post("/<int:event_id>/change-requests")
-def submit_change_request(event_id: int):
-    return jsonify({"message": "change request not yet implemented"}), 501
 
 
 def _error(message, status_code, **extra):
@@ -3364,3 +3360,204 @@ def reserve_equipment(event_id: int):
             if reservation["id"] in reservation_ids]
     return jsonify({"confirmation": confirmation, "saved": True, "reservations": made,
                     "notification": notification, **page}), 201
+
+
+# ---------- Request a change to an approved event (SCRUM-46) ----------
+
+# Only approved events can have a change requested (A1, open question Q1).
+CHANGEABLE_STATUS = "approved"
+CHANGE_REQUEST_NOTIFICATION = "change_requested"
+CHANGE_REQUEST_ORGANISER_ONLY = "You can only request changes to events you organise."
+CHANGE_FORM_NOT_LOADED = "The change request form could not be loaded. Please try again."
+# A failed save leaves the event and its requests as they were (AC8).
+CHANGE_NOT_SUBMITTED = ("Your change request was not submitted, and the event is unchanged. "
+                        "Please try again.")
+CHANGES_INVALID = "Some changes can't be requested. Please correct them and try again."
+NO_CHANGES_TO_REQUEST = "There are no changes to request. Change at least one value."
+CHANGE_ALREADY_PENDING = ("A change request for this event is already pending review. You can "
+                          "request another once it has been decided.")
+# The database's guard on A6 (models.EventChangeRequest), so a save it refuses is told
+# apart from any other refused save.
+ONE_PENDING_INDEX = "event_change_requests_one_pending_per_event"
+
+
+def _change_request_event(event_id, lock=False):
+    """The caller and their event, checked in the order 401, 404, 403 (A9). With lock,
+    the event is held until commit, so two requests for it are checked one at a time (A6)."""
+    user = _current_user()
+    if user is None:
+        raise _Rejected("Your session is no longer valid. Please log in again.", 401)
+    locking = {"with_for_update": True, "populate_existing": True} if lock else {}
+    event = db.session.get(Event, event_id, **locking) if event_id <= DB_INTEGER_MAX else None
+    if event is None:
+        raise _Rejected(EVENT_NOT_FOUND, 404)
+    if not is_current_organiser(user, event):
+        raise _Rejected(CHANGE_REQUEST_ORGANISER_ONLY, 403)
+    return user, event
+
+
+def _pending_change_request(event):
+    return EventChangeRequest.query.filter_by(event_id=event.id,
+                                              status=change_requests.PENDING_REVIEW).first()
+
+
+def _reviewing_coordinator(event):
+    """The event's coordinator, or None (A5). As everywhere else (_is_current_coordinator),
+    that is the assigned user while they still have the coordinator role, so someone whose
+    role has changed is neither shown nor notified."""
+    if event.coordinator_id is None:
+        return None
+    coordinator = db.session.get(User, event.coordinator_id)
+    return coordinator if _is_current_coordinator(coordinator, event) else None
+
+
+def _is_second_pending_request(error):
+    """Whether a refused save broke the one-pending index (A6), not some other rule."""
+    diag = getattr(error.orig, "diag", None)
+    return getattr(diag, "constraint_name", None) == ONE_PENDING_INDEX
+
+
+def _change_request_blocked(event, coordinator, pending):
+    """Why no change can be requested for the event now, as (reason, message), or None."""
+    if event.status != CHANGEABLE_STATUS:
+        return "not_approved", (
+            "Changes can only be requested for approved events. "
+            f"This event is {event.status.replace('_', ' ')}.")
+    if coordinator is None:
+        # AC5: nobody would review it.
+        return "no_coordinator", (
+            "This event has no coordinator yet, so there is nobody to review a change "
+            "request. Please try again once a coordinator is assigned.")
+    if pending is not None:
+        return "pending", CHANGE_ALREADY_PENDING  # A6, open question Q5
+    return None
+
+
+def _change_request_payload(row, users):
+    requester = users.get(row.requested_by_id)
+    return {
+        "id": row.id,
+        "event_id": row.event_id,
+        "status": row.status,
+        "status_label": change_requests.STATUS_LABELS.get(row.status, row.status),
+        # JSONB doesn't keep key order, so the fields' display order is used.
+        "changes": [{"field": name, "label": label, "from": row.changes[name]["from"],
+                     "to": row.changes[name]["to"]}
+                    for name, label in change_requests.PERMITTED_FIELDS.items()
+                    if name in row.changes],
+        "requested_by": _user_summary(requester) if requester else None,
+        "requested_at": _isoformat(row.requested_at),
+    }
+
+
+@events_bp.get("/<int:event_id>/change-requests")
+@jwt_required()
+def get_change_request_form(event_id: int):
+    """The organiser's form: the event's current values of the fields they may change,
+    and whether a change can be requested now, with why not (AC1, AC5)."""
+    try:
+        _, event = _change_request_event(event_id)
+        coordinator = _reviewing_coordinator(event)
+        pending = _pending_change_request(event)
+        blocked = _change_request_blocked(event, coordinator, pending)
+        users = _users_by_id([pending.requested_by_id if pending else None])
+        current = {name: (_isoformat(getattr(event, name))
+                          if name in change_requests.TIME_FIELDS
+                          else _recorded(getattr(event, name)))
+                   for name in change_requests.PERMITTED_FIELDS}
+        payload = {
+            "event": {
+                "id": event.id,
+                "title": event.title,
+                "status": event.status,
+                "coordinator": _user_summary(coordinator) if coordinator else None,
+                "current": current,
+            },
+            "fields": [{"name": name, "label": label}
+                       for name, label in change_requests.PERMITTED_FIELDS.items()],
+            "can_request": blocked is None,
+            "blocked_reason": blocked[0] if blocked else None,
+            "message": blocked[1] if blocked else None,
+            "pending_request": _change_request_payload(pending, users) if pending else None,
+        }
+    except _Rejected as rejected:
+        return _error(rejected.message, rejected.status_code, **rejected.extra)
+    except SQLAlchemyError:
+        db.session.rollback()
+        return _error(CHANGE_FORM_NOT_LOADED, 503, retryable=True)
+    return jsonify(payload)
+
+
+def _queue_change_request_email(to_address, title, requester, changes, event_id):
+    """Tell the event's coordinator what was asked for (AC9)."""
+    lines = "\n".join(change_requests.describe({name: change})
+                      for name, change in changes.items())
+    return _queue_email(
+        to_address,
+        f"Change request for {title}",
+        f'{requester} has requested changes to "{title}":\n\n{lines}\n\n'
+        "Sign in to ConnectSphere to review the request.",
+        event_id,
+    )
+
+
+@events_bp.post("/<int:event_id>/change-requests")
+@jwt_required()
+def submit_change_request(event_id: int):
+    """Record the organiser's proposed changes as a request pending review (AC3, AC6).
+
+    The event is locked, then checked; every proposed value is checked before anything
+    is saved; and the request and the coordinator's notification are saved together, so
+    a refusal or a failed save changes nothing (AC4, AC8). The event itself is never
+    changed here (AC7)."""
+    try:
+        user, event = _change_request_event(event_id, lock=True)
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            raise _Rejected("Send the change request as a JSON object.", 400)
+        coordinator = _reviewing_coordinator(event)
+        blocked = _change_request_blocked(event, coordinator, _pending_change_request(event))
+        if blocked:
+            raise _Rejected(blocked[1], 409, reason=blocked[0])
+        changes, problems = change_requests.parse_proposal(event, body)
+        if problems:
+            raise _Rejected(CHANGES_INVALID, 422, fields=problems)
+        if not changes:
+            raise _Rejected(NO_CHANGES_TO_REQUEST, 422, fields={})
+
+        title, requester, to_address = event.title, user.email, coordinator.email
+        row = EventChangeRequest(event_id=event.id, requested_by_id=user.id,
+                                 status=change_requests.PENDING_REVIEW,
+                                 changes=change_requests.as_json(changes),
+                                 requested_at=datetime.utcnow())
+        db.session.add(row)
+        db.session.add(Notification(
+            recipient_id=coordinator.id, kind=CHANGE_REQUEST_NOTIFICATION, event_id=event.id,
+            message=(f'{requester} requested changes to "{title}": '
+                     f"{change_requests.describe(changes)}.")))
+        db.session.flush()  # The id, read before the commit expires it.
+        payload = _change_request_payload(row, {user.id: user})
+        db.session.commit()
+    except _Rejected as rejected:
+        db.session.rollback()  # Releases the event's lock.
+        return _error(rejected.message, rejected.status_code, **rejected.extra)
+    except IntegrityError as error:
+        db.session.rollback()
+        if _is_second_pending_request(error):
+            # Another request for the event was saved first (A6).
+            return _error(CHANGE_ALREADY_PENDING, 409, reason="pending")
+        return _error(CHANGE_NOT_SUBMITTED, 503, retryable=True)
+    except SQLAlchemyError:
+        db.session.rollback()
+        return _error(CHANGE_NOT_SUBMITTED, 503, retryable=True)
+
+    # After the commit: a queue outage must not undo or hide the request (A8).
+    email_queued = _queue_change_request_email(to_address, title, requester, changes, event_id)
+    labels = _join_words([change_requests.PERMITTED_FIELDS[name] for name in changes])
+    return jsonify({
+        "message": (f'Your change request for "{title}" ({labels}) is '
+                    f"{payload['status_label']}. The event's coordinator, {to_address}, "
+                    "has been notified."),
+        "request": payload,
+        "notification": {"in_app": True, "email_queued": email_queued},
+    }), 201
