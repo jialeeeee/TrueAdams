@@ -221,15 +221,16 @@ describe("SCRUM-39 submit a venue booking request", () => {
 });
 
 // SCRUM-40: once Venue Staff approve a request, the event has a confirmed venue.
-// Frontend case TC-40-24 in docs/test-cases/SCRUM-40-approve-venue-booking.md.
+// Frontend case TC-40-24 in docs/test-cases/SCRUM-40-approve-venue-booking.md, changed by
+// SCRUM-85 (TC-85-26): an event can have several venues, so the form is still offered.
 describe("SCRUM-40 the coordinator sees the confirmed venue", () => {
-  it("shows the confirmed venue instead of offering a new request", async () => {
+  it("offers the request form alongside the confirmed venue", async () => {
     await renderLoaded(planning({ venue: { id: 3, name: "Aurora Ballroom", location: "Level 3, Marina Tower" } }));
 
     expect(screen.getByText("Venue confirmed: Aurora Ballroom, Level 3, Marina Tower")).toBeTruthy();
     expect(screen.getByText(/change request/i)).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Submit request" })).toBeNull();
-    expect(screen.queryByLabelText("Venue")).toBeNull();
+    expect(submitButton()).toBeTruthy();
+    expect(field("Venue").value).toBe("");
   });
 
   it("shows just the venue's name when its location is not recorded", async () => {
@@ -286,7 +287,8 @@ describe("SCRUM-69 coordinator sees the saved venue rejection", () => {
     expect(await screen.findByText(`Reason: ${REASON}`)).toBeTruthy();
     expect(screen.getByRole("region", { name: "Previous venue decisions" })).toBeTruthy();
     expect(screen.getByText("Venue confirmed: Civic Hall, 12 Civic Road")).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Submit request" })).toBeNull();
+    // SCRUM-85: another venue can still be requested.
+    expect(submitButton()).toBeTruthy();
   });
 
   it("reports saved rejection load failure and retries without losing request details", async () => {
@@ -423,5 +425,103 @@ describe("SCRUM-94 the coordinator cancels a venue booking", () => {
     expect(civicItem().textContent).toContain("Status: Confirmed");
     expect(within(civicItem()).getByRole("button", { name: "Cancel booking" })).toBeTruthy();
     expect(screen.queryByRole("status")).toBeNull();
+  });
+});
+
+// SCRUM-85: TC-85-27 to 29 in docs/test-cases/SCRUM-85-several-venues-for-one-event.md.
+// The API contract mirrors backend/tests/test_several_venues.py.
+describe("SCRUM-85 several venues for one event", () => {
+  const CIVIC = { id: 4, name: "Civic Hall", location: "12 Civic Road" };
+  const AURORA = { id: 3, name: "Aurora Ballroom", location: "Level 3, Marina Tower" };
+  const booking = (id, status, venue, start, end) => ({
+    id, status, venue, event: { id: 7, title: "Harbour Lights Festival" },
+    start_time: start, end_time: end, rejection_reason: null, decided_at: null, decided_by: null,
+  });
+  const P1 = booking(11, "pending", AURORA, "2027-03-12T16:00:00", "2027-03-12T22:30:00");
+  const T1 = booking(12, "tentative", AURORA, "2027-03-13T09:00:00", "2027-03-13T12:00:00");
+  const C1 = booking(13, "confirmed", CIVIC, "2027-03-12T16:00:00", "2027-03-12T22:30:00");
+  const X1 = booking(15, "cancelled", CIVIC, "2027-03-11T13:00:00", "2027-03-11T15:00:00");
+  const CANCELLED_MESSAGE =
+    "You cancelled the bookings of Civic Hall and Aurora Ballroom for Harbour Lights Festival. The venues are free again for those times, and Venue Staff have been notified.";
+
+  function mockBookings(bookings) {
+    apiClient.get.mockImplementation((url) => {
+      if (url === "/events/7/planning") return Promise.resolve({ data: planning({ venue: CIVIC }) });
+      if (url === "/venues/") return Promise.resolve({ data: VENUES });
+      if (url === "/venues/bookings") return Promise.resolve({ data: { bookings, message: null } });
+      return Promise.reject(new Error(`unexpected GET ${url}`));
+    });
+  }
+
+  async function startCancellingC1() {
+    mockBookings([P1, T1, C1, X1]);
+    const user = renderPage();
+    const list = await screen.findByRole("region", { name: "Venue bookings" });
+    const civic = within(list).getAllByRole("listitem")
+      .find((item) => item.textContent.includes("Civic Hall, 2027-03-12 16:00"));
+    await user.click(within(civic).getByRole("button", { name: "Cancel booking" }));
+    return { user, confirmation: screen.getByRole("group", { name: "Confirm cancellation" }) };
+  }
+
+  const bookingsLoads = () => apiClient.get.mock.calls.filter(([url]) => url === "/venues/bookings").length;
+
+  // TC-85-27 · AC1
+  it("opens a fresh form to request another venue", async () => {
+    const user = await renderLoaded();
+    await fillValid(user);
+    apiClient.post.mockResolvedValue(created({
+      start_time: "2027-03-12T16:00", end_time: "2027-03-12T22:30", venue_requirements: REQUIREMENTS,
+    }));
+    await user.click(submitButton());
+    await screen.findByRole("status");
+    const loadsBefore = bookingsLoads();
+
+    await user.click(screen.getByRole("button", { name: "Request another venue" }));
+
+    expect(await screen.findByRole("button", { name: "Submit request" })).toBeTruthy();
+    expect(field("Venue").value).toBe("");
+    expect(field("Start").value).toBe("2027-03-12T17:00");
+    expect(screen.queryByRole("status")).toBeNull();
+    // The list is read again, so it shows the request just sent.
+    await waitFor(() => expect(bookingsLoads()).toBeGreaterThan(loadsBefore));
+  });
+
+  // TC-85-28 · AC3
+  it("offers the other live bookings and cancels only the chosen one by default", async () => {
+    const { user, confirmation } = await startCancellingC1();
+
+    const choices = within(confirmation).getAllByRole("checkbox");
+    expect(choices.map((box) => box.labels[0].textContent)).toEqual([
+      "Also cancel Aurora Ballroom, 2027-03-12 16:00 to 2027-03-12 22:30",
+      "Also cancel Aurora Ballroom, 2027-03-13 09:00 to 2027-03-13 12:00",
+    ]);
+    expect(choices.every((box) => !box.checked)).toBe(true);
+    apiClient.post.mockResolvedValue({ data: {
+      message: "You cancelled the booking of Civic Hall for Harbour Lights Festival.",
+      booking: { ...C1, status: "cancelled" }, also_cancelled: [],
+      notification: { in_app: true, email_queued: true },
+    } });
+
+    await user.click(within(confirmation).getByRole("button", { name: "Yes, cancel booking" }));
+
+    await screen.findByRole("status");
+    expect(apiClient.post.mock.calls).toEqual([["/venues/bookings/13/cancel"]]);
+  });
+
+  // TC-85-29 · AC3
+  it("cancels the other bookings the coordinator ticks", async () => {
+    const { user, confirmation } = await startCancellingC1();
+    apiClient.post.mockResolvedValue({ data: {
+      message: CANCELLED_MESSAGE, booking: { ...C1, status: "cancelled" },
+      also_cancelled: [{ ...T1, status: "cancelled" }],
+      notification: { in_app: true, email_queued: true },
+    } });
+
+    await user.click(within(confirmation).getByLabelText(
+      "Also cancel Aurora Ballroom, 2027-03-13 09:00 to 2027-03-13 12:00"));
+    await user.click(within(confirmation).getByRole("button", { name: "Yes, cancel booking" }));
+
+    expect((await screen.findByRole("status")).textContent).toBe(CANCELLED_MESSAGE);
+    expect(apiClient.post.mock.calls).toEqual([["/venues/bookings/13/cancel", { also_cancel: [12] }]]);
   });
 });

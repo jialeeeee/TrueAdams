@@ -112,15 +112,8 @@ class ListedConflictTests(ConflictCheckTestCase):
         ])
         self.assertEqual(conflicts["P2"], [])
 
-    # TC-41-03 · AC1, AC2 (Q1) — the event's existing confirmed venue is listed.
-    def test_events_existing_confirmed_venue_is_listed(self):
-        existing = self.add_booking("E1", "recorded_as_none", "confirmed", P1_START, P1_END)
-
-        self.assertEqual(self.listed_conflicts()["P1"], [{
-            "type": "event_booking", "id": existing.id,
-            "start": "2027-03-12T16:00:00", "end": "2027-03-12T22:30:00",
-            "venue": {"id": self.venues["recorded_as_none"].id, "name": "Civic Hall"},
-        }])
+    # TC-41-03 (the event's existing confirmed venue is listed) is replaced by SCRUM-85
+    # TC-85-08: an event's venue elsewhere is no longer a conflict.
 
     # TC-41-04 · AC1 (boundary, Q1) — only real overlaps with confirmed bookings and blocks.
     def test_touching_and_unconfirmed_bookings_are_not_listed(self):
