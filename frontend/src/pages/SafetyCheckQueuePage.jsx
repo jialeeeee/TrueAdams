@@ -10,7 +10,10 @@ const NOT_RECORDED = "Not recorded";
 export default function SafetyCheckQueuePage() {
   const [result, setResult] = useState(null);
   const [loadError, setLoadError] = useState(null);
+  const [comments, setComments] = useState({});
+  const [approvals, setApprovals] = useState({});
   const loadAttempt = useRef(0);
+  const saving = Object.values(approvals).some((approval) => approval.pending);
 
   const load = useCallback(async () => {
     const attempt = ++loadAttempt.current;
@@ -31,6 +34,20 @@ export default function SafetyCheckQueuePage() {
     load();
   }, [load]);
 
+  const approve = async (eventId) => {
+    setApprovals((previous) => ({ ...previous, [eventId]: { pending: true } }));
+    const comment = (comments[eventId] || "").trim();
+    try {
+      const response = await apiClient.post(`/events/${eventId}/safety-checks/approve`,
+        comment ? { comment } : {});
+      setApprovals((previous) => ({ ...previous,
+        [eventId]: { saved: true, message: response.data.message } }));
+    } catch (failure) {
+      setApprovals((previous) => ({ ...previous,
+        [eventId]: { error: explain(failure, "The safety decision could not be saved. Please try again.") } }));
+    }
+  };
+
   return (
     <section>
       <h1>Events awaiting a safety check</h1>
@@ -43,7 +60,7 @@ export default function SafetyCheckQueuePage() {
         <p>Loading…</p>
       ) : (
         <>
-          <button type="button" onClick={load}>Refresh</button>
+          <button type="button" onClick={load} disabled={saving}>Refresh</button>
           {result.events.length === 0 ? (
             <p>{result.message}</p>
           ) : (
@@ -59,6 +76,21 @@ export default function SafetyCheckQueuePage() {
                   ) : event.equipment.map((line, index) => (
                     <p key={index}>{`${line.quantity} × ${line.equipment_type} (${line.reserved_quantity} reserved)`}</p>
                   ))}
+                  {approvals[event.id]?.saved ? (
+                    <p role="status">{approvals[event.id].message}</p>
+                  ) : (
+                    <form onSubmit={(submit) => { submit.preventDefault(); approve(event.id); }}>
+                      <label htmlFor={`safety-comment-${event.id}`}>Comment (optional)</label>
+                      <textarea id={`safety-comment-${event.id}`} value={comments[event.id] || ""}
+                        disabled={approvals[event.id]?.pending}
+                        onChange={(change) => setComments((previous) => ({ ...previous,
+                          [event.id]: change.target.value }))} />
+                      <button type="submit" disabled={approvals[event.id]?.pending}>
+                        {approvals[event.id]?.pending ? "Saving…" : "Approve safety check"}
+                      </button>
+                      {approvals[event.id]?.error && <p role="alert">{approvals[event.id].error}</p>}
+                    </form>
+                  )}
                 </li>
               ))}
             </ul>

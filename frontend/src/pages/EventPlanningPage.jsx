@@ -155,6 +155,15 @@ export default function EventPlanningPage() {
         ))}
       </dl>
       <VenueBookings bookings={event.venue_bookings ?? []} />
+      {event.safety_check && (
+        <section aria-label="Safety check">
+          <h2>Safety check</h2>
+          <p>{`Decision: ${statusLabel(event.safety_check.decision)}`}</p>
+          <p>{`Safety Officer: ${event.safety_check.officer?.email || NOT_RECORDED}`}</p>
+          <p>{`Comment: ${event.safety_check.comment ?? NOT_RECORDED}`}</p>
+          <p>{`Decided: ${event.safety_check.decided_at ? formatSavedAt(event.safety_check.decided_at) : NOT_RECORDED}`}</p>
+        </section>
+      )}
     </section>
   );
 }
