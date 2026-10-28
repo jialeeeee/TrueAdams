@@ -1,0 +1,13 @@
+baseline: all frontend tests pass
+F1 | The impact isn't shown | AC2 | CAUGHT | says when nothing recorded is affected, shows the requested changes and what they affect
+F11 | What the change would affect stays after deciding | AC2 (A3) | CAUGHT | accepts the request and shows the decision
+F2 | Why each booking is affected isn't shown | AC2 | CAUGHT | shows the requested changes and what they affect
+F3 | A rejection is sent without a reason | AC4 | CAUGHT | requires a reason of at most 500 characters to reject
+F4 | A reason over 500 characters can be sent | AC4 | CAUGHT | requires a reason of at most 500 characters to reject
+F5 | The reason is lost after a failed decision | AC6 | CAUGHT | keeps the reason after a failed decision so it can be tried again
+F6 | The buttons stay after a decision | AC3 | CAUGHT | accepts the request and shows the decision
+F7 | The buttons are offered for a request that can't be decided | AC1, AC3 | CAUGHT | accepts the request and shows the decision, explains why a request can't be decided
+F8 | The list links to the wrong page | AC1 | CAUGHT | lists the pending change requests with links to review them
+F9 | The organiser doesn't see the outcome | AC3 | CAUGHT | shows the outcome of the last decided request
+F10 | The organiser doesn't see the rejection reason | AC4 | CAUGHT | shows the outcome of the last decided request
+after restore: all pass

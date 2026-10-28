@@ -153,7 +153,7 @@ describe("SCRUM-46 an organiser requests a change to their approved event", () =
 
   // TC-46-24 · AC1, AC5
   it("explains why no change can be requested", async () => {
-    const message = "This event has no coordinator yet, so there is nobody to review a change request. Please try again once a coordinator is assigned.";
+    const message = "This event is waiting for a coordinator to be assigned, so there is nobody to review a change request yet. Please try again once a coordinator is assigned.";
     apiClient.get.mockResolvedValue({ data: {
       ...FORM, event: { ...FORM.event, coordinator: null }, can_request: false,
       blocked_reason: "no_coordinator", message,
@@ -233,5 +233,36 @@ describe("SCRUM-46 an organiser requests a change to their approved event", () =
 
     expect((await screen.findByRole("alert")).textContent).toContain(denied);
     expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+  });
+});
+
+// Frontend case TC-70-32 in docs/test-cases/SCRUM-70-review-change-request.md; the API side
+// is backend/tests/test_change_request_review.py (TC-70-13). The form adds
+// latest_decision: REQ + { decided_at, decided_by, decision_reason } | null.
+describe("SCRUM-70 the organiser sees the coordinator's decision", () => {
+  // TC-70-32 · AC3, AC4
+  it("shows the outcome of the last decided request", async () => {
+    const decided = { ...REQUEST, status: "rejected", status_label: "Rejected",
+      decided_at: "2026-10-28T03:00:00", decided_by: { id: 2, email: "alice@example.com" },
+      decision_reason: "The ballroom can't hold 250." };
+    apiClient.get.mockResolvedValue({ data: { ...FORM, latest_decision: decided } });
+    renderPage();
+
+    const outcome = await screen.findByRole("region", { name: "Your last change request" });
+    expect(within(outcome).getByText("Status: Rejected")).toBeTruthy();
+    expect(within(outcome).getByText(
+      `Decided by alice@example.com · ${new Date("2026-10-28T03:00:00Z").toLocaleString()}`)).toBeTruthy();
+    expect(within(outcome).getByText("Reason: The ballroom can't hold 250.")).toBeTruthy();
+    expect(within(outcome).getAllByRole("listitem")).toHaveLength(2);
+    // Nothing is pending, so a new request can still be made.
+    expect(screen.getByRole("button", { name: "Submit change request" })).toBeTruthy();
+  });
+
+  it("shows no outcome before any request is decided", async () => {
+    apiClient.get.mockResolvedValue({ data: { ...FORM, latest_decision: null } });
+    renderPage();
+
+    await screen.findByRole("heading", { name: "Charity Gala" });
+    expect(screen.queryByRole("region", { name: "Your last change request" })).toBeNull();
   });
 });
