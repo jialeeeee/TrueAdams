@@ -26,7 +26,7 @@ from ..models import (
 from ..registrations.routes import REGISTERED, REGISTRABLE_STATUS, WITHDRAWN, singapore_now
 from ..resources import availability, reservations as reserving
 from ..venues.scheduling import BLOCKING_BOOKING_STATUS, TENTATIVE_STATUS, overlapping
-from . import change_requests, equipment, suitability
+from . import change_requests, change_review, equipment, suitability
 from .permissions import (
     COORDINATOR_ROLE,
     can_view_clarifications,
@@ -3535,17 +3535,20 @@ def _change_request_blocked(event, coordinator, pending):
             "Changes can only be requested for approved events. "
             f"This event is {event.status.replace('_', ' ')}.")
     if coordinator is None:
-        # AC5: nobody would review it.
+        # AC5: nobody would review it. It waits in the Lead's queue (SCRUM-70 AC5, A9).
         return "no_coordinator", (
-            "This event has no coordinator yet, so there is nobody to review a change "
-            "request. Please try again once a coordinator is assigned.")
+            "This event is waiting for a coordinator to be assigned, so there is nobody to "
+            "review a change request yet. Please try again once a coordinator is assigned.")
     if pending is not None:
         return "pending", CHANGE_ALREADY_PENDING  # A6, open question Q5
     return None
 
 
 def _change_request_payload(row, users):
+    """The request, with the coordinator's decision once there is one (SCRUM-70 A4).
+    `users` holds its requester and decider by id."""
     requester = users.get(row.requested_by_id)
+    decider = users.get(row.decided_by_id)
     return {
         "id": row.id,
         "event_id": row.event_id,
@@ -3558,7 +3561,25 @@ def _change_request_payload(row, users):
                     if name in row.changes],
         "requested_by": _user_summary(requester) if requester else None,
         "requested_at": _isoformat(row.requested_at),
+        "decided_at": _isoformat(row.decided_at),
+        "decided_by": _user_summary(decider) if decider else None,
+        "decision_reason": row.decision_reason,
     }
+
+
+def _request_users(rows):
+    """The requesters and deciders of these requests, by id."""
+    return _users_by_id([user_id for row in rows if row is not None
+                         for user_id in (row.requested_by_id, row.decided_by_id)])
+
+
+def _latest_decision(event):
+    """The event's most recently decided change request, or None (SCRUM-70 AC3)."""
+    return (EventChangeRequest.query
+            .filter(EventChangeRequest.event_id == event.id,
+                    EventChangeRequest.decided_at.isnot(None))
+            .order_by(EventChangeRequest.decided_at.desc(), EventChangeRequest.id.desc())
+            .first())
 
 
 @events_bp.get("/<int:event_id>/change-requests")
@@ -3571,7 +3592,8 @@ def get_change_request_form(event_id: int):
         coordinator = _reviewing_coordinator(event)
         pending = _pending_change_request(event)
         blocked = _change_request_blocked(event, coordinator, pending)
-        users = _users_by_id([pending.requested_by_id if pending else None])
+        latest = _latest_decision(event)
+        users = _request_users([pending, latest])
         current = {name: (_isoformat(getattr(event, name))
                           if name in change_requests.TIME_FIELDS
                           else _recorded(getattr(event, name)))
@@ -3590,6 +3612,8 @@ def get_change_request_form(event_id: int):
             "blocked_reason": blocked[0] if blocked else None,
             "message": blocked[1] if blocked else None,
             "pending_request": _change_request_payload(pending, users) if pending else None,
+            # SCRUM-70 AC3: the organiser sees the outcome of their last decided request.
+            "latest_decision": _change_request_payload(latest, users) if latest else None,
         }
     except _Rejected as rejected:
         return _error(rejected.message, rejected.status_code, **rejected.extra)
@@ -3672,3 +3696,262 @@ def submit_change_request(event_id: int):
         "request": payload,
         "notification": {"in_app": True, "email_queued": email_queued},
     }), 201
+
+
+# ---------- Review a change request (SCRUM-70) ----------
+
+CHANGE_REVIEW_COORDINATOR_ONLY = "Only the event's coordinator can review its change requests."
+CHANGE_REVIEWERS_ONLY = "Only event coordinators can review change requests."
+CHANGE_REQUEST_NOT_FOUND = "Change request not found."
+CHANGE_REVIEW_NOT_LOADED = "The change request could not be loaded. Please try again."
+CHANGE_REVIEWS_NOT_LOADED = "Change requests could not be loaded. Please try again."
+NO_CHANGE_REQUESTS_TO_REVIEW = "You have no change requests to review."
+# AC6: a failed save changes nothing.
+CHANGE_DECISION_NOT_SAVED = ("The decision was not saved, so the change request and the event "
+                             "are unchanged. Please try again.")
+# What the organiser is told of the decision (AC7, A7).
+CHANGE_DECISION_NOTIFICATIONS = {change_requests.ACCEPTED: "change_request_accepted",
+                                 change_requests.REJECTED: "change_request_rejected"}
+# What registered attendees are told when an accepted change moves the event (AC9, A7).
+EVENT_DETAILS_CHANGED_NOTIFICATION = "event_details_changed"
+
+
+def _review_target(event_id, request_id, lock=False):
+    """The caller, the event and its change request, checked in the order 401, 404, 403
+    (A8). With lock, the event and then the request are read FOR UPDATE, in the order
+    submitting a request locks them, so decisions and new requests happen one at a time."""
+    user = _current_user()
+    if user is None:
+        raise _Rejected("Your session is no longer valid. Please log in again.", 401)
+    locking = {"with_for_update": True, "populate_existing": True} if lock else {}
+    event = db.session.get(Event, event_id, **locking) if event_id <= DB_INTEGER_MAX else None
+    if event is None:
+        raise _Rejected(EVENT_NOT_FOUND, 404)
+    row = (db.session.get(EventChangeRequest, request_id, **locking)
+           if request_id <= DB_INTEGER_MAX else None)
+    # Another event's request is not found here, so its existence isn't revealed.
+    if row is None or row.event_id != event.id:
+        raise _Rejected(CHANGE_REQUEST_NOT_FOUND, 404)
+    if not _is_current_coordinator(user, event):
+        raise _Rejected(CHANGE_REVIEW_COORDINATOR_ONLY, 403)
+    return user, event, row
+
+
+def _decision_blocked(event, row):
+    """Why the request can't be decided now, as (reason, message), or None (A1, A4)."""
+    if row.status != change_requests.PENDING_REVIEW:
+        return "decided", f"This change request was already {row.status}."
+    if event.status != CHANGEABLE_STATUS:
+        return "not_approved", (
+            "A change request can only be decided while its event is approved. "
+            f"This event is {event.status.replace('_', ' ')}.")
+    return None
+
+
+def _change_impact(event, row):
+    """What the request would affect, from the event's arrangements as recorded now (A3)."""
+    bookings = (VenueBooking.query.filter_by(event_id=event.id)
+                .order_by(VenueBooking.start_time, VenueBooking.id).all())
+    venue_ids = {booking.venue_id for booking in bookings}
+    venues = ({venue.id: venue for venue in Venue.query.filter(Venue.id.in_(venue_ids))}
+              if venue_ids else {})
+    requirements = (EquipmentRequirement.query.filter_by(event_id=event.id)
+                    .order_by(EquipmentRequirement.id).all())
+    reserved = dict(
+        db.session.query(EquipmentReservation.requirement_id,
+                         func.sum(EquipmentReservation.quantity))
+        .filter(EquipmentReservation.event_id == event.id,
+                EquipmentReservation.status == reserving.RESERVED)
+        .group_by(EquipmentReservation.requirement_id).all())
+    registered = Registration.query.filter_by(event_id=event.id, status=REGISTERED).count()
+    return change_review.impact(
+        row.changes,
+        [{"id": booking.id, "status": booking.status,
+          "venue": {"id": booking.venue_id, "name": venues[booking.venue_id].name,
+                    "capacity": venues[booking.venue_id].capacity},
+          "start_time": booking.start_time, "end_time": booking.end_time,
+          "hold_expires_at": booking.hold_expires_at} for booking in bookings],
+        [{"id": requirement.id, "equipment_type": requirement.equipment_type,
+          "quantity": requirement.quantity, "reserved": int(reserved.get(requirement.id, 0))}
+         for requirement in requirements],
+        {"registered": registered, "capacity": event.registration_capacity,
+         "closes_at": event.registration_closes_at},
+        singapore_now(),
+    )
+
+
+@events_bp.get("/change-requests")
+@jwt_required()
+def list_change_requests_to_review():
+    """The pending change requests of the events the caller coordinates, oldest first (A10)."""
+    try:
+        user = _current_user()
+        if user is None:
+            raise _Rejected("Your session is no longer valid. Please log in again.", 401)
+        if user.role != COORDINATOR_ROLE:
+            raise _Rejected(CHANGE_REVIEWERS_ONLY, 403)
+        rows = (EventChangeRequest.query
+                .join(Event, Event.id == EventChangeRequest.event_id)
+                .filter(Event.coordinator_id == user.id,
+                        EventChangeRequest.status == change_requests.PENDING_REVIEW)
+                .order_by(EventChangeRequest.requested_at, EventChangeRequest.id).all())
+        events = ({event.id: event for event in
+                   Event.query.filter(Event.id.in_({row.event_id for row in rows}))}
+                  if rows else {})
+        users = _request_users(rows)
+        requests = [{**_change_request_payload(row, users),
+                     "event": {"id": row.event_id, "title": events[row.event_id].title,
+                               "status": events[row.event_id].status}}
+                    for row in rows]
+    except _Rejected as rejected:
+        return _error(rejected.message, rejected.status_code, **rejected.extra)
+    except SQLAlchemyError:
+        db.session.rollback()
+        return _error(CHANGE_REVIEWS_NOT_LOADED, 503, retryable=True)
+    return jsonify({"requests": requests,
+                    "message": None if requests else NO_CHANGE_REQUESTS_TO_REVIEW})
+
+
+@events_bp.get("/<int:event_id>/change-requests/<int:request_id>")
+@jwt_required()
+def review_change_request(event_id: int, request_id: int):
+    """The request, what it would affect, and whether it can be decided now (AC2, A1)."""
+    try:
+        _, event, row = _review_target(event_id, request_id)
+        organiser = db.session.get(User, event.organiser_id)
+        blocked = _decision_blocked(event, row)
+        payload = {
+            "event": {"id": event.id, "title": event.title, "status": event.status,
+                      "organiser": _user_summary(organiser) if organiser else None},
+            "request": _change_request_payload(row, _request_users([row])),
+            # Only before deciding (AC2): once decided, the event's arrangements no longer
+            # describe what the request would change.
+            "impact": (_change_impact(event, row)
+                       if row.status == change_requests.PENDING_REVIEW else None),
+            "can_decide": blocked is None,
+            "blocked_reason": blocked[0] if blocked else None,
+            "message": blocked[1] if blocked else None,
+        }
+    except _Rejected as rejected:
+        return _error(rejected.message, rejected.status_code, **rejected.extra)
+    except SQLAlchemyError:
+        db.session.rollback()
+        return _error(CHANGE_REVIEW_NOT_LOADED, 503, retryable=True)
+    return jsonify(payload)
+
+
+def _has_reserved_equipment(event):
+    return db.session.query(EquipmentReservation.query.filter_by(
+        event_id=event.id, status=reserving.RESERVED).exists()).scalar()
+
+
+def _registered_attendees(event):
+    """Everyone registered for the event now; not those who withdrew (AC9)."""
+    return (User.query.join(Registration, Registration.attendee_id == User.id)
+            .filter(Registration.event_id == event.id, Registration.status == REGISTERED)
+            .order_by(User.id).distinct().all())
+
+
+def _change_decision_message(title, status, decider, row):
+    """The organiser's notification: the outcome, who decided and when, and the changes
+    or the reason (AC7)."""
+    message = (f'Your change request for "{title}" was {status} by {decider.email} on '
+               f"{_singapore_time(row.decided_at)}.")
+    if status == change_requests.ACCEPTED:
+        return f"{message} The event now shows: {change_requests.describe(row.changes)}."
+    return f"{message} Reason: {row.decision_reason}"
+
+
+def _new_details_message(event):
+    """What registered attendees are told when the event moves (AC9)."""
+    venue = db.session.get(Venue, event.venue_id) if event.venue_id else None
+    where = f"at {venue.name}" if venue else "at a venue still to be confirmed"
+    return (f'The date and time of "{event.title}" have changed. It now runs from '
+            f"{event.start_time:%Y-%m-%d %H:%M} to {event.end_time:%Y-%m-%d %H:%M} "
+            f"(Singapore time) {where}.")
+
+
+def _queue_emails(emails, event_id):
+    """Queue each (address, subject, body); stop at the first that can't be queued, since
+    the queue is then down for the rest too (A7). False if any was not queued."""
+    return all(_queue_email(*email, event_id) for email in emails)
+
+
+@events_bp.post("/<int:event_id>/change-requests/<int:request_id>/decision")
+@jwt_required()
+def decide_change_request(event_id: int, request_id: int):
+    """Accept or reject a pending change request (AC3).
+
+    The decision, the event's new values (AC8) and the notifications to the organiser and,
+    when the event moves, its registered attendees (AC7, AC9) are saved in one commit, so a
+    refusal or a failed save changes nothing (AC6). Emails are queued after it."""
+    try:
+        user, event, row = _review_target(event_id, request_id, lock=True)
+        try:
+            status, reason = change_review.parse_decision(request.get_json(silent=True))
+        except change_review.Refused as refused:
+            extra = {"field": refused.field} if refused.field else {}
+            raise _Rejected(refused.message, 400, **extra) from None
+        blocked = _decision_blocked(event, row)
+        if blocked:
+            raise _Rejected(blocked[1], 409, reason=blocked[0])
+
+        accepted = status == change_requests.ACCEPTED
+        moves = accepted and change_review.changes_times(row.changes)
+        # New times release the event's reserved equipment (SCRUM-44 A10), so say so.
+        releases = moves and _has_reserved_equipment(event)
+        organiser = db.session.get(User, event.organiser_id)
+        row.status = status
+        row.decided_at = datetime.utcnow()
+        row.decided_by_id = user.id
+        row.decision_reason = reason
+        if accepted:
+            for name, value in change_review.applied_values(row.changes).items():
+                setattr(event, name, value)
+        title = event.title
+        message = _change_decision_message(title, status, user, row)
+        db.session.add(Notification(recipient_id=organiser.id, event_id=event.id,
+                                    kind=CHANGE_DECISION_NOTIFICATIONS[status], message=message))
+        emails = [(organiser.email, f"Your change request was {status}: {title}",
+                   f"{message}\n\nSign in to ConnectSphere to see your event's change requests.")]
+        attendees = _registered_attendees(event) if moves else []
+        if attendees:
+            details = _new_details_message(event)
+            for attendee in attendees:
+                db.session.add(Notification(recipient_id=attendee.id, event_id=event.id,
+                                            kind=EVENT_DETAILS_CHANGED_NOTIFICATION,
+                                            message=details))
+            emails += [(attendee.email, f"New date and time for {title}",
+                        f"{details}\n\nSign in to ConnectSphere to see the event's details.")
+                       for attendee in attendees]
+        db.session.flush()  # Saved now, so the reply is built from what will be committed.
+        payload = _change_request_payload(row, {**_request_users([row]), user.id: user})
+        organiser_email = organiser.email
+        db.session.commit()
+    except _Rejected as rejected:
+        db.session.rollback()  # Releases the locks.
+        return _error(rejected.message, rejected.status_code, **rejected.extra)
+    except SQLAlchemyError:
+        db.session.rollback()
+        return _error(CHANGE_DECISION_NOT_SAVED, 503, retryable=True)
+
+    # After the commit: a queue outage must not undo or hide the decision (A7).
+    email_queued = _queue_emails(emails, event_id)
+    if accepted:
+        confirmation = (f'You accepted the change request for "{title}". The event now shows '
+                        "the new values.")
+        if releases:
+            confirmation += f" {RESERVATIONS_RELEASED}"
+    else:
+        confirmation = f'You rejected the change request for "{title}".'
+    confirmation += f" {organiser_email} has been notified"
+    if attendees:
+        told = (f"{len(attendees)} registered attendee was" if len(attendees) == 1
+                else f"{len(attendees)} registered attendees were")
+        confirmation += f", and {told} told the new date and time"
+    return jsonify({
+        "message": f"{confirmation}.",
+        "request": payload,
+        "notification": {"in_app": True, "email_queued": email_queued,
+                         "attendees_notified": len(attendees)},
+    })

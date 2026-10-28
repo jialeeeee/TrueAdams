@@ -124,7 +124,7 @@ Users: `USERS` from `backend/tests/seed_data.py` (dana and evan are organisers; 
 **TC-46-12 · An event without a coordinator can't take a request, and says why**
 - **Traces to:** AC5 · **Type:** Negative · **Depends on:** A5
 - **Steps:** As dana, open C3's form, then submit an attendance change.
-- **Expected result:** The form says `can_request: false`, `blocked_reason: "no_coordinator"`, with a message that the event has no coordinator yet. Submitting is refused with 409, `reason: "no_coordinator"`, and the same message. Nothing is saved.
+- **Expected result:** The form says `can_request: false`, `blocked_reason: "no_coordinator"`, with a message that the event is waiting for a coordinator (SCRUM-70 AC5). Submitting is refused with 409, `reason: "no_coordinator"`, and the same message. Nothing is saved.
 - **Automated:** `test_tc_46_12_an_event_without_a_coordinator_cannot_take_a_request`
 
 **TC-46-28 · A coordinator whose role has changed doesn't count**

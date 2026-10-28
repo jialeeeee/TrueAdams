@@ -130,7 +130,7 @@ await check("E2E-06", "The coordinator is notified of the proposed changes (AC9)
 
 await check("E2E-07", "An event with no coordinator says why and offers no form (AC5)", async () => {
   await organiser.goto(`${WEB}/events/${fair}/change-request`);
-  await organiser.getByText(/has no coordinator yet/).waitFor();
+  await organiser.getByText(/waiting for a coordinator/).waitFor();
   assert.equal(await organiser.getByLabel("Start", { exact: true }).count(), 0);
   await shot(organiser, "06-no-coordinator.png");
 });

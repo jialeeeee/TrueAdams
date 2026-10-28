@@ -10,7 +10,10 @@ import re
 from datetime import datetime
 
 PENDING_REVIEW = "pending_review"
-STATUS_LABELS = {PENDING_REVIEW: "Pending Review"}
+# The coordinator's decision on a request (SCRUM-70 A4).
+ACCEPTED = "accepted"
+REJECTED = "rejected"
+STATUS_LABELS = {PENDING_REVIEW: "Pending Review", ACCEPTED: "Accepted", REJECTED: "Rejected"}
 
 # The fields an organiser can ask to change, in display order, with their labels (A2):
 # the event's date and time, expected attendance, and the venue and equipment

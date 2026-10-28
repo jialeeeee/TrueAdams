@@ -1,0 +1,32 @@
+baseline: all backend tests pass
+B1 | Anyone may review and decide | AC1 | CAUGHT | test_tc_70_02_who_may_review_and_in_what_order
+B2 | Another event's request can be reviewed under this event | AC1 | CAUGHT | test_tc_70_02_who_may_review_and_in_what_order
+B3 | A request can be decided after its event is no longer approved | AC1 | CAUGHT | test_tc_70_03_a_request_on_an_event_no_longer_approved_cannot_be_decided
+B4 | The list shows other coordinators' requests | AC1 | CAUGHT | test_tc_70_04_the_coordinator_lists_their_pending_change_requests
+B5 | The list shows decided requests | AC1 | CAUGHT | test_tc_70_04_the_coordinator_lists_their_pending_change_requests
+B6 | Rejected and cancelled bookings and expired holds are listed | AC2 | CAUGHT | test_new_times_affect_every_live_booking, test_new_venue_requirements_affect_live_bookings, test_tc_70_05_a_time_change_lists_bookings_reserved_equipment_and_registrations, test_tc_70_06_an_attendance_change_lists_small_venues_and_registrations_above_it, test_tc_70_07_requirement_changes_list_bookings_and_equipment, test_tc_70_08_only_live_arrangements_of_the_event_are_listed
+B7 | A time change doesn't list the venue bookings | AC2 | CAUGHT | test_new_times_affect_every_live_booking, test_nothing_affected_says_so, test_reasons_add_up_when_several_fields_change, test_tc_70_05_a_time_change_lists_bookings_reserved_equipment_and_registrations
+B8 | Every venue is listed as too small | AC2 | CAUGHT | test_more_people_than_a_venue_holds, test_nothing_affected_says_so, test_tc_70_06_an_attendance_change_lists_small_venues_and_registrations_above_it
+B9 | Reserved equipment isn't listed for a time change | AC2 | CAUGHT | test_new_times_release_reserved_equipment_only, test_tc_70_05_a_time_change_lists_bookings_reserved_equipment_and_registrations
+B30 | A decided request still shows what it would affect | AC2 (A3) | CAUGHT | test_tc_70_12_a_decided_request_cannot_be_decided_again
+B10 | Registered attendees aren't counted | AC2 | CAUGHT | test_tc_70_05_a_time_change_lists_bookings_reserved_equipment_and_registrations, test_tc_70_06_an_attendance_change_lists_small_venues_and_registrations_above_it, test_tc_70_08_only_live_arrangements_of_the_event_are_listed
+B11 | Registrations above the new attendance aren't listed | AC2 | CAUGHT | test_fewer_people_than_registered_or_places_set, test_tc_70_06_an_attendance_change_lists_small_venues_and_registrations_above_it
+B12 | Released reservations count as reserved | AC2 | CAUGHT | test_tc_70_05_a_time_change_lists_bookings_reserved_equipment_and_registrations, test_tc_70_07_requirement_changes_list_bookings_and_equipment, test_tc_70_08_only_live_arrangements_of_the_event_are_listed
+B13 | A decided request can be decided again | AC3 | CAUGHT | test_tc_70_12_a_decided_request_cannot_be_decided_again
+B14 | The decision time isn't saved | AC3 | CAUGHT | test_tc_70_10_accepting_records_the_decision_and_its_time, test_tc_70_11_rejecting_records_the_decision_time_and_reason, test_tc_70_12_a_decided_request_cannot_be_decided_again, test_tc_70_13_the_organiser_sees_the_outcome_and_may_ask_again, test_tc_70_15_the_rejection_reason_is_required_and_limited, test_tc_70_17_a_failed_save_leaves_the_request_and_event_unchanged, test_tc_70_18_the_event_and_request_are_locked_before_deciding, test_tc_70_19_the_organiser_is_told_the_decision, test_tc_70_20_an_email_queue_failure_does_not_undo_the_decision, test_tc_70_21_accepting_applies_every_proposed_value, test_tc_70_22_rejecting_leaves_the_event_unchanged, test_tc_70_23_new_times_release_reserved_equipment_and_leave_bookings, test_tc_70_24_every_registered_attendee_is_told_the_new_details, test_tc_70_25_no_attendee_is_told_when_the_times_do_not_change
+B15 | The organiser can't see the outcome | AC3 | CAUGHT | test_tc_70_13_the_organiser_sees_the_outcome_and_may_ask_again
+B16 | A rejection needs no reason | AC4 | CAUGHT | test_a_reason_is_required_to_reject, test_tc_70_15_the_rejection_reason_is_required_and_limited
+B17 | A reason over 500 characters is accepted | AC4 | CAUGHT | test_tc_70_15_the_rejection_reason_is_required_and_limited, test_the_reason_must_be_text_of_at_most_500_characters
+B18 | Blank reasons made of invisible spaces count as reasons | AC4 | CAUGHT | test_a_reason_is_required_to_reject, test_tc_70_15_the_rejection_reason_is_required_and_limited
+B19 | The submission doesn't say the event is waiting for a coordinator | AC5 | CAUGHT | test_tc_46_12_an_event_without_a_coordinator_cannot_take_a_request, test_tc_70_16_an_event_waiting_for_a_coordinator_cannot_take_a_request
+B20 | A failed save is reported as a success | AC6 | CAUGHT | test_tc_70_17_a_failed_save_leaves_the_request_and_event_unchanged
+B21 | The request isn't locked before deciding | AC6 | CAUGHT | test_tc_70_18_the_event_and_request_are_locked_before_deciding
+B22 | The organiser isn't notified in the app | AC7 | CAUGHT | test_tc_70_12_a_decided_request_cannot_be_decided_again, test_tc_70_17_a_failed_save_leaves_the_request_and_event_unchanged, test_tc_70_19_the_organiser_is_told_the_decision, test_tc_70_20_an_email_queue_failure_does_not_undo_the_decision
+B23 | The organiser isn't emailed | AC7 | CAUGHT | test_tc_70_19_the_organiser_is_told_the_decision, test_tc_70_24_every_registered_attendee_is_told_the_new_details
+B24 | Accepting doesn't apply the values | AC8 | CAUGHT | test_tc_70_17_a_failed_save_leaves_the_request_and_event_unchanged, test_tc_70_20_an_email_queue_failure_does_not_undo_the_decision, test_tc_70_21_accepting_applies_every_proposed_value, test_tc_70_23_new_times_release_reserved_equipment_and_leave_bookings, test_tc_70_24_every_registered_attendee_is_told_the_new_details
+B25 | Rejecting applies the values too | AC8 | CAUGHT | test_tc_70_22_rejecting_leaves_the_event_unchanged
+B26 | Attendees aren't told the new date and time | AC9 | CAUGHT | test_tc_70_17_a_failed_save_leaves_the_request_and_event_unchanged, test_tc_70_20_an_email_queue_failure_does_not_undo_the_decision, test_tc_70_24_every_registered_attendee_is_told_the_new_details
+B27 | Withdrawn attendees are told too | AC9 | CAUGHT | test_tc_70_24_every_registered_attendee_is_told_the_new_details
+B28 | Attendees are told of every accepted change | AC9 | CAUGHT | test_tc_70_25_no_attendee_is_told_when_the_times_do_not_change
+B29 | After a failed email, the rest are still tried | AC7 (A7) | CAUGHT | test_tc_70_20_an_email_queue_failure_does_not_undo_the_decision
+after restore: all pass

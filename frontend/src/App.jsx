@@ -2,6 +2,8 @@ import { useRef } from "react";
 import { Link, Navigate, Outlet, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import AssignCoordinatorPage from "./pages/AssignCoordinatorPage.jsx";
 import ChangeRequestPage from "./pages/ChangeRequestPage.jsx";
+import ChangeRequestReviewPage from "./pages/ChangeRequestReviewPage.jsx";
+import ChangeRequestsToReviewPage from "./pages/ChangeRequestsToReviewPage.jsx";
 import ClarificationPage from "./pages/ClarificationPage.jsx";
 import DraftEventPage from "./pages/DraftEventPage.jsx";
 import EquipmentAvailabilityPage from "./pages/EquipmentAvailabilityPage.jsx";
@@ -71,6 +73,7 @@ export default function App() {
         <Link to="/events/queue">Waiting events</Link>
         <Link to="/events/supervised">Events I assigned</Link>
         <Link to="/events/review-requests">Requests for review</Link>
+        <Link to="/events/change-requests">Change requests to review</Link>
         <Link to="/events/safety-checks">Safety checks</Link>
         <Link to="/venues">Venues</Link>
         <Link to="/venues/availability">Venue availability</Link>
@@ -97,11 +100,13 @@ export default function App() {
           <Route path="/events/supervised" element={<LeadAssignedEventsPage />} />
           <Route path="/events/queue" element={<UnassignedQueuePage />} />
           <Route path="/events/review-requests" element={<ReviewRequestsPage />} />
+          <Route path="/events/change-requests" element={<ChangeRequestsToReviewPage />} />
           <Route path="/events/safety-checks" element={<SafetyCheckQueuePage />} />
           <Route path="/events/:eventId" element={<EventDetailsPage />} />
           <Route path="/events/:eventId/planning" element={<EventPlanningPage />} />
           <Route path="/events/:eventId/review" element={<ReviewRequestPage />} />
           <Route path="/events/:eventId/change-request" element={<ChangeRequestPage />} />
+          <Route path="/events/:eventId/change-requests/:requestId" element={<ChangeRequestReviewPage />} />
           <Route path="/events/:eventId/clarifications" element={<ClarificationPage />} />
           <Route path="/events/:eventId/register" element={<EventRegistrationPage />} />
           <Route path="/events/:eventId/registrations" element={<EventRegistrationsPage />} />

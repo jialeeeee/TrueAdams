@@ -1,0 +1,10 @@
+PASS E2E-01 The coordinator finds the request and sees what it affects (AC1, AC2)
+PASS E2E-02 Another coordinator can't open it (AC1)
+PASS E2E-03 Accepting applies the new times and confirms it (AC3, AC8)
+PASS E2E-04 Registered attendees are told the new details; the one who withdrew isn't (AC9)
+PASS E2E-05 A rejection needs a reason of at most 500 characters (AC4)
+PASS E2E-06 A failed save keeps the reason and changes nothing (AC6)
+PASS E2E-07 Rejecting with a reason; the organiser sees the outcome (AC3, AC4, AC7)
+PASS E2E-08 An event waiting for a coordinator says so to the organiser (AC5)
+
+8/8 passed
