@@ -829,6 +829,7 @@ def _booking_decision_payload(booking):
         "rejection_reason": booking.rejection_reason,
         "decided_at": booking.decided_at.isoformat() if booking.decided_at else None,
         "decided_by": {"id": decider.id, "email": decider.email} if decider else None,
+        "hold": _coordinator_hold(booking),  # SCRUM-87 A10
     }
 
 
@@ -1162,6 +1163,15 @@ def _hold_payload(booking):
             "expires_at": booking.hold_expires_at.isoformat(),
         },
     }
+
+
+def _coordinator_hold(booking):
+    """What the coordinator sees of a hold: its expiry and whether that has passed, by
+    A3's rule; None for any other booking (A10, open question Q5)."""
+    if booking.status != TENTATIVE:
+        return None
+    return {"expires_at": booking.hold_expires_at.isoformat(),
+            "expired": booking.hold_expires_at <= singapore_now()}
 
 
 @venues_bp.post("/bookings/<int:booking_id>/hold")

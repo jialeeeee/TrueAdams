@@ -34,6 +34,14 @@ const asInput = (value) => (value ? value.slice(0, 16) : "");
 const asText = (value) => value.slice(0, 16).replace("T", " ");
 const asPeriod = (booking) => `${asText(booking.start_time)} to ${asText(booking.end_time)}`;
 
+// SCRUM-87 A10: a hold shows its expiry as recorded. The server says whether it has
+// expired, so the browser's clock plays no part.
+function bookingStatus(booking) {
+  if (!booking.hold) return statusLabel(booking.status);
+  const expiry = asText(booking.hold.expires_at);
+  return booking.hold.expired ? `Hold expired on ${expiry}` : `Tentative hold until ${expiry} (Singapore time)`;
+}
+
 function missingFields(form) {
   const problems = {};
   if (!form.venue_id) problems.venue_id = MISSING.venue_id;
@@ -84,7 +92,7 @@ function VenueBookings({ bookings, onCancel }) {
         {bookings.map((booking) => (
           <li key={booking.id}>
             <p>{`${booking.venue.name}, ${asPeriod(booking)}`}</p>
-            <p>{`Status: ${statusLabel(booking.status)}`}</p>
+            <p>{`Status: ${bookingStatus(booking)}`}</p>
             {CANCELLABLE.includes(booking.status) && (
               <button type="button" onClick={() => startConfirming(booking)}>Cancel booking</button>
             )}
