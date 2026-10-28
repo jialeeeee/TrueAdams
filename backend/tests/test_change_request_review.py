@@ -288,7 +288,8 @@ class AccessTests(ReviewTestCase):
                 return send(url, headers=headers or {}, **kwargs)
 
             with self.subTest(method=method):
-                self.assert_error(call(self.url("T1")), 401)
+                # With no token at all, flask-jwt-extended answers before the route runs.
+                self.assertEqual(call(self.url("T1")).status_code, 401)
                 error = self.assert_error(call(self.url("T1"), ghost_headers), 401)
                 self.assertEqual(error["error"], SESSION_EXPIRED)
                 missing_event = f"/api/events/{self.missing_id(Event)}/change-requests/{t1}"

@@ -355,8 +355,8 @@ class EquipmentReservation(db.Model):
 class EventChangeRequest(db.Model):
     """An organiser's request to change their approved event (SCRUM-46).
 
-    It records what would change and leaves the event itself alone until the request is
-    decided (AC7), which a later story builds.
+    It records what would change and leaves the event itself alone until the event's
+    coordinator accepts it (SCRUM-46 AC7, SCRUM-70 AC8).
     """
 
     __tablename__ = "event_change_requests"
@@ -373,13 +373,18 @@ class EventChangeRequest(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     event_id = db.Column(db.Integer, db.ForeignKey("events.id"), nullable=False)
     requested_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
-    # "pending_review" is the only status until deciding requests is built.
+    # "pending_review", then "accepted" or "rejected" by the coordinator (SCRUM-70 A4).
     status = db.Column(db.String(20), nullable=False, default="pending_review")
     # {"<field>": {"from": current value, "to": proposed value}} for each field that
     # would change; times as Singapore-time ISO strings (A7).
     changes = db.Column(JSONB, nullable=False)
     # Naive UTC, like the other audit timestamps.
     requested_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    # SCRUM-70: when (naive UTC) and by which coordinator it was decided, and why it was
+    # rejected. NULL while pending; the reason is NULL for an accepted request.
+    decided_at = db.Column(db.DateTime)
+    decided_by_id = db.Column(db.Integer, db.ForeignKey("users.id"))
+    decision_reason = db.Column(db.Text)
 
 
 class VenueChange(db.Model):

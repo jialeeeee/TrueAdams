@@ -40,7 +40,7 @@ const IMPACT = {
   }],
   equipment: [{
     id: 61, equipment_type: "Wireless microphone", quantity: 2, reserved: 2,
-    reasons: ["2 reserved for the current date and time; accepting releases them."],
+    reasons: ["2 reserved for the current date and time; they are released if the change is accepted."],
   }],
   registrations: {
     registered: 2, capacity: 210,

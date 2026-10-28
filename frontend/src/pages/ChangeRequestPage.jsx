@@ -2,7 +2,9 @@ import { useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import apiClient from "../api/client.js";
 import canRetry from "../utils/canRetry.js";
+import decidedBy from "../utils/decidedBy.js";
 import explain from "../utils/explain.js";
+import formatSavedAt from "../utils/formatSavedAt.js";
 
 // SCRUM-46: an organiser asks for changes to their approved event, via GET and POST
 // /api/events/<id>/change-requests. The event itself is not changed: the request waits,
@@ -42,6 +44,24 @@ function RequestedChanges({ request }) {
         ))}
       </ul>
     </>
+  );
+}
+
+// SCRUM-70 AC3, AC4: the coordinator's decision on the last decided request, with the
+// reason when it was rejected.
+function LatestDecision({ request }) {
+  return (
+    <section aria-label="Your last change request">
+      <h2>Your last change request</h2>
+      <p>{`Status: ${request.status_label}`}</p>
+      <p>{`${decidedBy(request)} · ${formatSavedAt(request.decided_at)}`}</p>
+      {request.decision_reason && <p>{`Reason: ${request.decision_reason}`}</p>}
+      <ul aria-label="Changes in your last request">
+        {request.changes.map((change) => (
+          <li key={change.field}>{`${change.label}: ${shown(change.from)} → ${shown(change.to)}`}</li>
+        ))}
+      </ul>
+    </section>
   );
 }
 
@@ -145,6 +165,7 @@ function EventChangeRequest({ eventId }) {
       {submitted && <p role="status">{submitted.message}</p>}
       {!submitted && form.message && <p>{form.message}</p>}
       {pending && <RequestedChanges request={pending} />}
+      {form.latest_decision && <LatestDecision request={form.latest_decision} />}
 
       {!submitted && form.can_request && (
         // noValidate: the server checks every value and says what is wrong (AC4).
