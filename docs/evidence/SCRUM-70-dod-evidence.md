@@ -11,7 +11,7 @@
 | 3 | Test cases are correct and the code does what it says | ✅ Written test-first (red, then green); 41/41 deliberate breakages caught; behaviour confirmed in a real browser ([§3](#3-test-cases-are-correct-and-the-code-does-what-it-says)) |
 | 4 | Evidence of checks documented | ✅ This document, 7 screenshots, the scripts that produced them and the raw results ([§4](#4-evidence-documented)) |
 
-> **Supabase:** `backend/db/event_change_request_decisions.sql` adds three columns to `event_change_requests` and **has not been run on Supabase yet**. It must be run in the Supabase SQL editor (as the project owner) before this branch is merged; until then CI's `supabase-schema` job fails `test_database_tables_match_the_models`. No new table, so `test_role.sql` need not be re-run. All results below come from a local PostgreSQL 17 built by `ci/build_test_database.py`, as CI's `unittest` job builds it, with the tests logged in as the restricted `connectsphere_test` role.
+> **Supabase:** `backend/db/event_change_request_decisions.sql`, which adds three columns to `event_change_requests`, was run in the Supabase SQL editor on 28 Oct 2026 (no new table, so `test_role.sql` was not re-run). Afterwards `python -m unittest tests.test_app_factory tests.test_change_request_review tests.test_change_request_review_unit tests.test_change_requests` against Supabase passed 73/73, including `test_database_tables_match_the_models`. The other results below come from a local PostgreSQL 17 built by `ci/build_test_database.py`, as CI's `unittest` job builds it, with the tests logged in as the restricted `connectsphere_test` role.
 
 ## What this story changed
 
@@ -104,7 +104,7 @@ The real app (Vite → Flask → the local PostgreSQL) driven in Microsoft Edge 
 
 ### e. Limitations
 
-- **Not run against Supabase:** the new columns aren't there yet (see the note at the top).
+- **Against Supabase, only the schema check and the SCRUM-46/70 tests were run** (73/73 pass, see the note at the top). The whole suite was run against the local database, as CI does.
 - **Concurrency is shown, not stress-tested.** TC-70-18 confirms the event, then the request, are read `FOR UPDATE` before anything is written; two decisions at the same moment were not run in parallel.
 - **Emails were queued, not delivered:** tests patch the queue, and the browser check ran without a Celery worker.
 - The demo accounts and events used in the browser check exist in the local database only.
