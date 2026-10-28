@@ -252,6 +252,7 @@ describe("SCRUM-69 coordinator sees the saved venue rejection", () => {
     venue: { id: 3, name: "Aurora Ballroom" },
     start_time: "2027-03-12T16:00:00", end_time: "2027-03-12T22:30:00",
     decided_at: "2026-10-21T03:00:00", decided_by: { id: 9, email: "gus.venue@connectsphere.test" },
+    hold: null,
   };
 
   function mockSaved(bookings = [SAVED], failure = null, event = planning()) {
@@ -317,10 +318,11 @@ describe("SCRUM-94 the coordinator cancels a venue booking", () => {
   const booking = (id, status, venue, start, end, extra = {}) => ({
     id, status, venue, event: { id: 7, title: "Harbour Lights Festival" },
     start_time: start, end_time: end, rejection_reason: null, decided_at: null, decided_by: null,
-    ...extra,
+    hold: null, ...extra,
   });
   const P1 = booking(11, "pending", AURORA, "2027-03-12T16:00:00", "2027-03-12T22:30:00");
-  const T1 = booking(12, "tentative", AURORA, "2027-03-13T09:00:00", "2027-03-13T12:00:00");
+  const T1 = booking(12, "tentative", AURORA, "2027-03-13T09:00:00", "2027-03-13T12:00:00",
+    { hold: { expires_at: "2027-03-01T17:00:00", expired: false } });
   const C1 = booking(13, "confirmed", CIVIC, "2027-03-12T16:00:00", "2027-03-12T22:30:00");
   const R1 = booking(14, "rejected", CIVIC, "2027-03-11T10:00:00", "2027-03-11T12:00:00",
     { rejection_reason: "No stage power." });
@@ -433,12 +435,14 @@ describe("SCRUM-94 the coordinator cancels a venue booking", () => {
 describe("SCRUM-85 several venues for one event", () => {
   const CIVIC = { id: 4, name: "Civic Hall", location: "12 Civic Road" };
   const AURORA = { id: 3, name: "Aurora Ballroom", location: "Level 3, Marina Tower" };
-  const booking = (id, status, venue, start, end) => ({
+  const booking = (id, status, venue, start, end, hold = null) => ({
     id, status, venue, event: { id: 7, title: "Harbour Lights Festival" },
     start_time: start, end_time: end, rejection_reason: null, decided_at: null, decided_by: null,
+    hold,
   });
   const P1 = booking(11, "pending", AURORA, "2027-03-12T16:00:00", "2027-03-12T22:30:00");
-  const T1 = booking(12, "tentative", AURORA, "2027-03-13T09:00:00", "2027-03-13T12:00:00");
+  const T1 = booking(12, "tentative", AURORA, "2027-03-13T09:00:00", "2027-03-13T12:00:00",
+    { expires_at: "2027-03-01T17:00:00", expired: false });
   const C1 = booking(13, "confirmed", CIVIC, "2027-03-12T16:00:00", "2027-03-12T22:30:00");
   const X1 = booking(15, "cancelled", CIVIC, "2027-03-11T13:00:00", "2027-03-11T15:00:00");
   const CANCELLED_MESSAGE =
@@ -513,7 +517,7 @@ describe("SCRUM-85 several venues for one event", () => {
     const { user, confirmation } = await startCancellingC1();
     apiClient.post.mockResolvedValue({ data: {
       message: CANCELLED_MESSAGE, booking: { ...C1, status: "cancelled" },
-      also_cancelled: [{ ...T1, status: "cancelled" }],
+      also_cancelled: [{ ...T1, status: "cancelled", hold: null }],
       notification: { in_app: true, email_queued: true },
     } });
 
