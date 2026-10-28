@@ -3824,7 +3824,10 @@ def review_change_request(event_id: int, request_id: int):
             "event": {"id": event.id, "title": event.title, "status": event.status,
                       "organiser": _user_summary(organiser) if organiser else None},
             "request": _change_request_payload(row, _request_users([row])),
-            "impact": _change_impact(event, row),
+            # Only before deciding (AC2): once decided, the event's arrangements no longer
+            # describe what the request would change.
+            "impact": (_change_impact(event, row)
+                       if row.status == change_requests.PENDING_REVIEW else None),
             "can_decide": blocked is None,
             "blocked_reason": blocked[0] if blocked else None,
             "message": blocked[1] if blocked else None,
@@ -3943,7 +3946,8 @@ def decide_change_request(event_id: int, request_id: int):
         confirmation = f'You rejected the change request for "{title}".'
     confirmation += f" {organiser_email} has been notified"
     if attendees:
-        told = f"{len(attendees)} registered attendee{'' if len(attendees) == 1 else 's'}"
+        told = (f"{len(attendees)} registered attendee was" if len(attendees) == 1
+                else f"{len(attendees)} registered attendees were")
         confirmation += f", and {told} told the new date and time"
     return jsonify({
         "message": f"{confirmation}.",

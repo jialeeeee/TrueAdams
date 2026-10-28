@@ -184,7 +184,8 @@ function ReviewChangeRequest({ eventId, requestId }) {
           <li key={change.field}>{`${change.label}: ${shown(change.from)} → ${shown(change.to)}`}</li>
         ))}
       </ul>
-      <Impact impact={impact} />
+      {/* Only before deciding (AC2): afterwards it no longer describes the event. */}
+      {impact && request.status === "pending_review" && <Impact impact={impact} />}
 
       {confirmation && <p role="status">{confirmation}</p>}
       {emailNote && <p>{emailNote}</p>}

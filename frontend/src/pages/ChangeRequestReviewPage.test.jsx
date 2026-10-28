@@ -132,6 +132,8 @@ describe("SCRUM-70 the coordinator reviews a change request", () => {
     expect(screen.getByText(`Decided by ${ALICE.email} · ${localTime("2026-10-28T03:00:00")}`)).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Accept" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Reject" })).toBeNull();
+    // What the change would affect is shown only before deciding (AC2).
+    expect(screen.queryByRole("region", { name: "What this change affects" })).toBeNull();
   });
 
   // TC-70-28 · AC4
@@ -191,8 +193,9 @@ describe("SCRUM-70 the coordinator reviews a change request", () => {
   it("explains why a request can't be decided", async () => {
     const decided = { ...REQUEST, status: "rejected", status_label: "Rejected",
       decided_at: "2026-10-27T03:00:00", decided_by: ALICE, decision_reason: "Too big." };
-    apiClient.get.mockResolvedValueOnce({ data: { ...REVIEW, request: decided, can_decide: false,
-      blocked_reason: "decided", message: "This change request was already rejected." } });
+    apiClient.get.mockResolvedValueOnce({ data: { ...REVIEW, request: decided, impact: null,
+      can_decide: false, blocked_reason: "decided",
+      message: "This change request was already rejected." } });
     renderPage();
 
     expect(await screen.findByText("This change request was already rejected.")).toBeTruthy();

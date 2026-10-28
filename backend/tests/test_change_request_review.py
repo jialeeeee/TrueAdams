@@ -528,6 +528,8 @@ class DecisionTests(ReviewTestCase):
         self.assertIs(review["can_decide"], False)
         self.assertEqual(review["blocked_reason"], "decided")
         self.assertEqual(review["request"]["status"], "accepted")
+        # What it would affect is only worked out before deciding (AC2, A3).
+        self.assertIsNone(review["impact"])
 
     # TC-70-13 · AC3, AC4
     def test_tc_70_13_the_organiser_sees_the_outcome_and_may_ask_again(self):

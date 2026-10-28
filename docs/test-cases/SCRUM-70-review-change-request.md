@@ -2,7 +2,7 @@
 
 **User story:** As an Event Coordinator, I want to review a change request on an event I coordinate and accept or reject it so that changes are approved only after I understand what they affect.
 
-**Created:** 28 Oct 2026 · **Builds on:** SCRUM-46 (the organiser's change request, `event_change_requests`) · **Automated tests:** `backend/tests/test_change_request_review.py` (through the API), `backend/tests/test_change_request_review_unit.py` (the rules, no database), `frontend/src/pages/ChangeRequestReviewPage.test.jsx`, `frontend/src/pages/ChangeRequestsToReviewPage.test.jsx` (+ the outcome in `ChangeRequestPage.test.jsx`) · **Endpoints:** `GET /api/events/change-requests`, `GET /api/events/<id>/change-requests/<request id>`, `POST /api/events/<id>/change-requests/<request id>/decision` · **Related:** SCRUM-44 (an event's new times release its equipment reservations), SCRUM-45/68 (registrations), SCRUM-83 (the Lead's queue of events waiting for a coordinator), SCRUM-85 (several venue bookings per event)
+**Created:** 28 Oct 2026 · **Status of all cases:** automated cases pass (28 Oct 2026, local PostgreSQL as in CI + Vitest); end-to-end check passed in the browser, see [the DoD evidence](../evidence/SCRUM-70-dod-evidence.md) · **Builds on:** SCRUM-46 (the organiser's change request, `event_change_requests`) · **Automated tests:** `backend/tests/test_change_request_review.py` (through the API), `backend/tests/test_change_request_review_unit.py` (the rules, no database), `frontend/src/pages/ChangeRequestReviewPage.test.jsx`, `frontend/src/pages/ChangeRequestsToReviewPage.test.jsx` (+ the outcome in `ChangeRequestPage.test.jsx`) · **Endpoints:** `GET /api/events/change-requests`, `GET /api/events/<id>/change-requests/<request id>`, `POST /api/events/<id>/change-requests/<request id>/decision` · **Related:** SCRUM-44 (an event's new times release its equipment reservations), SCRUM-45/68 (registrations), SCRUM-83 (the Lead's queue of events waiting for a coordinator), SCRUM-85 (several venue bookings per event)
 
 ## Acceptance criteria
 
@@ -28,6 +28,7 @@
   - **New venue requirements:** every live venue booking, since Venue Staff assessed it against the current requirements.
   - **New equipment requirements:** every recorded equipment requirement, since the coordinator recorded them from the current note (SCRUM-42).
   - Each listed item says why. When nothing recorded is affected, the review says so.
+  - The impact is shown only while the request is pending. Once it is decided, the event's arrangements no longer describe what the request would change, so the review of a decided request has none (`impact: null`).
 - **A4 — Deciding:** `{"decision": "accept" | "reject", "reason": …}`. The whole request is accepted or rejected, not field by field *(Q6)*. The request's status becomes `accepted` ("Accepted") or `rejected` ("Rejected"), with when (naive UTC) and by whom. A decided request can't be decided again (409 `decided`). With nothing pending, the organiser may submit a new request (SCRUM-46 A6).
 - **A5 — Rejection reason (AC4):** required to reject; it must contain a visible character (as SCRUM-60 A3) and be at most 500 characters after trimming. It is saved trimmed and shown to the organiser. A reason sent with an acceptance is ignored: the review page only offers it for rejecting.
 - **A6 — Accepting (AC8):** the proposed values replace the event's start, end, expected attendance, venue requirements or equipment requirements, in the same commit as the decision. Everything else on the event is unchanged. A new start or end releases the event's reserved equipment through SCRUM-44's rule. Venue bookings, the equipment requirements and the registration settings are not changed: the coordinator rebooks or updates them afterwards *(Q3, Q4)*.
@@ -151,7 +152,7 @@ V1 has at most one pending request at a time (SCRUM-46 A6), so each test seeds T
 **TC-70-12 · A decided request can't be decided again**
 - **Traces to:** AC3 · **Type:** Negative · **Depends on:** A4
 - **Steps:** Accept N1, then accept it again, then reject it with a reason; open it.
-- **Expected result:** Both repeats are refused with 409, `reason: "decided"`, saying it was already accepted. N1 keeps its first decision; the organiser has one notification. The review shows the decision and `can_decide: false`.
+- **Expected result:** Both repeats are refused with 409, `reason: "decided"`, saying it was already accepted. N1 keeps its first decision; the organiser has one notification. The review shows the decision, `can_decide: false` and no impact.
 - **Automated:** `test_tc_70_12_a_decided_request_cannot_be_decided_again`
 
 **TC-70-13 · The organiser sees the outcome, and may ask again**
