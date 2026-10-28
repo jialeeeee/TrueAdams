@@ -56,7 +56,7 @@ React SPA → Flask monolith → Supabase Postgres, with Celery + Redis for back
 | API calls | [frontend/src/api/client.js](frontend/src/api/client.js) | Always use this axios client. It adds the bearer token from `sessionStorage["access_token"]`. |
 | Shared UI helpers | `frontend/src/utils/` | e.g. `statusLabel`, `formatSavedAt`. |
 
-Stubs (they return **501** or an empty list) that are free to be built by their story: `GET/POST /api/events/`, `POST /api/events/<id>/change-requests` (SCRUM-46), `POST /api/venues/`, `POST /api/auth/register`, everything under `/api/resources`, and `GET /api/registrations/`. Keep the URL when implementing one; `SCRUM-52`'s `requires_review.next_step` already points at the change-requests URL via `url_for`.
+Stubs (they return **501** or an empty list) that are free to be built by their story: `GET/POST /api/events/`, `POST /api/venues/`, `POST /api/auth/register`, everything under `/api/resources`, and `GET /api/registrations/`. Keep the URL when implementing one. `POST /api/events/<id>/change-requests` is built (SCRUM-46, the event's organiser only); `SCRUM-52`'s `requires_review.next_step` points at it via `url_for`, so keep its function name `submit_change_request`.
 
 ## Backend conventions — follow the existing pattern
 

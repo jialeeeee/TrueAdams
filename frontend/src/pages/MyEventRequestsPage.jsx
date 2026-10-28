@@ -53,6 +53,10 @@ function SubmittedSection({ requests }) {
               {request.decision_note && (
                 <p>{`${request.status === "rejected" ? "Reason" : "Note"}: ${request.decision_note}`}</p>
               )}
+              {/* SCRUM-46: only approved events can take a change request (AC1). */}
+              {request.status === "approved" && (
+                <Link to={`/events/${request.id}/change-request`}>Request a change</Link>
+              )}
             </li>
           ))}
         </ul>

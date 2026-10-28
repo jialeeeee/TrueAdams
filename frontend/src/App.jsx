@@ -1,6 +1,7 @@
 import { useRef } from "react";
 import { Link, Navigate, Outlet, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import AssignCoordinatorPage from "./pages/AssignCoordinatorPage.jsx";
+import ChangeRequestPage from "./pages/ChangeRequestPage.jsx";
 import ClarificationPage from "./pages/ClarificationPage.jsx";
 import DraftEventPage from "./pages/DraftEventPage.jsx";
 import EquipmentAvailabilityPage from "./pages/EquipmentAvailabilityPage.jsx";
@@ -100,6 +101,7 @@ export default function App() {
           <Route path="/events/:eventId" element={<EventDetailsPage />} />
           <Route path="/events/:eventId/planning" element={<EventPlanningPage />} />
           <Route path="/events/:eventId/review" element={<ReviewRequestPage />} />
+          <Route path="/events/:eventId/change-request" element={<ChangeRequestPage />} />
           <Route path="/events/:eventId/clarifications" element={<ClarificationPage />} />
           <Route path="/events/:eventId/register" element={<EventRegistrationPage />} />
           <Route path="/events/:eventId/registrations" element={<EventRegistrationsPage />} />

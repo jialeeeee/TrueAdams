@@ -84,7 +84,9 @@ describe("SCRUM-59 my event requests", () => {
     expect(link.getAttribute("href")).toBe("/events/drafts/1");
 
     const submitted = section("Submitted requests");
-    expect(within(submitted).queryAllByRole("link")).toEqual([]);
+    // SCRUM-46 adds "Request a change" to approved requests; nothing else is linked.
+    expect(within(submitted).queryAllByRole("link").map((a) => a.getAttribute("href")))
+      .toEqual(["/events/13/change-request"]);
     const editorLinks = screen.getAllByRole("link").map((a) => a.getAttribute("href"));
     for (const request of SUBMITTED) {
       expect(editorLinks).not.toContain(`/events/drafts/${request.id}`);
@@ -147,6 +149,19 @@ describe("SCRUM-59 my event requests", () => {
       "Your event requests could not be loaded. Check your connection and try again.",
     );
     expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
+  });
+});
+
+// SCRUM-46 (TC-46-27): only approved events can take a change request (AC1).
+describe("SCRUM-46 request a change", () => {
+  it("offers a change request only for approved requests", async () => {
+    apiClient.get.mockResolvedValue(loaded());
+    renderPage();
+
+    const links = await screen.findAllByRole("link", { name: "Request a change" });
+    expect(links.map((a) => a.getAttribute("href"))).toEqual(["/events/13/change-request"]);
+    const approved = within(section("Submitted requests")).getAllByRole("listitem")[0];
+    expect(within(approved).getByRole("link", { name: "Request a change" })).toBeTruthy();
   });
 });
 

@@ -1,0 +1,10 @@
+PASS E2E-01 The organiser opens the form from an approved request; it shows the current values (AC1, AC2)
+PASS E2E-02 Negative attendance and an end before the start are refused with the reasons (AC4)
+PASS E2E-03 A failed save says so, keeps the entries and saves nothing (AC8)
+PASS E2E-04 A valid request is saved as Pending Review and confirmed (AC2, AC3, AC6)
+PASS E2E-05 The approved event is not changed, and a second request waits (AC6, AC7)
+PASS E2E-06 The coordinator is notified of the proposed changes (AC9)
+PASS E2E-07 An event with no coordinator says why and offers no form (AC5)
+PASS E2E-08 A submitted event can't take a request, even by its address (AC1)
+
+8/8 passed
