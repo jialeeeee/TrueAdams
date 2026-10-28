@@ -320,7 +320,7 @@ class NoCoordinatorTests(ChangeRequestTestCase):
         form = self.form("C3")
         self.assertIs(form["can_request"], False)
         self.assertEqual(form["blocked_reason"], "no_coordinator")
-        self.assertIn("no coordinator", form["message"])
+        self.assertIn("waiting for a coordinator", form["message"])  # SCRUM-70 AC5
 
         body = self.assert_error(self.submit({"expected_attendance": 100}, "C3"), 409)
 
