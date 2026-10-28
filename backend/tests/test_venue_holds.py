@@ -21,6 +21,8 @@ Endpoints (JWT required, else 401; caller not Venue Staff -> 403)
     GET   /api/venues/holds  200 {"holds": [hold, ...], "message"}, unexpired, soonest expiry first
     hold = SCRUM-39's booking payload + {"hold": {"held_at", "held_by": {"id", "email"},
                                                   "expires_at"}}
+    GET   /api/venues/bookings?event_id=<id>  (SCRUM-69's list for the event's coordinator)
+        since reopening, each booking also has "hold": {"expires_at", "expired"} | null
 
 An unexpired hold (expiry later than now) is a "hold" conflict, a "hold" period on the
 calendar, makes its time "tentative", and leaves its venue out of search. "Now" is
@@ -37,7 +39,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from app.models import VenueBooking
 from tests.test_venue_booking_approval import P1_END, P1_START
-from tests.test_venue_booking_conflicts import BLOCKS, ConflictCheckTestCase
+from tests.test_venue_booking_conflicts import BLOCKS, HOLDS, ConflictCheckTestCase
 
 HOLDS_URL = "/api/venues/holds"
 NOW = datetime(2027, 3, 1, 12, 0)
@@ -701,6 +703,91 @@ class HoldsListTests(HoldTestCase):
         body = self.assert_error(response, 503)
         self.assertIs(body.get("retryable"), True)
         self.assertNotIn("holds", body)
+
+
+# ---------- Reopened 28 Oct 2026: AC5 and AC8 ----------
+#
+# Both were built already (TC-87-22, 23, 25); these close the gaps found on rechecking.
+
+
+class ReopenedSearchTests(HoldTestCase):
+    def found(self, headers=None):
+        """The ids of the venues found for 12 Mar 2027 18:00-20:00, searched as alice."""
+        response = self.search(headers)
+        self.assertEqual(response.status_code, 200, response.get_json())
+        return [v["id"] for v in response.get_json()["venues"]]
+
+    def search(self, headers=None):
+        return self.client.get(
+            "/api/venues/search", headers=headers or self.auth_headers(self.users["alice"]),
+            query_string={"date": "2027-03-12", "start": "18:00", "end": "20:00"})
+
+    # TC-87-39 · AC8 (boundary) — holds that don't overlap, or have expired, leave it in.
+    def test_search_keeps_venues_whose_holds_do_not_overlap_or_have_expired(self):
+        self.add_hold("E3", "fully_recorded", datetime(2027, 3, 12, 16, 0), H2_START)
+        self.add_hold("E3", "fully_recorded", H2_END, datetime(2027, 3, 12, 22, 0))
+        self.add_hold("E2", "recorded_as_none", H2_START, H2_END)
+        self.add_hold("E3", "fully_recorded", H2_START, H2_END, expires_at=NOW)
+
+        self.assertIn(self.venues["fully_recorded"].id, self.found())
+
+    # TC-87-40 · AC8 (boundary, SCRUM-84 A1) — a hold's setup time counts.
+    def test_search_counts_a_holds_setup_and_turnaround(self):
+        hold = self.add_hold("E3", "fully_recorded", datetime(2027, 3, 12, 20, 30),
+                             datetime(2027, 3, 12, 22, 0))
+        hold.setup_minutes = 45
+        self.db.session.commit()
+
+        self.assertNotIn(self.venues["fully_recorded"].id, self.found())
+
+    # TC-87-41 · AC8 — a search whose holds can't be read offers nothing.
+    def test_search_fails_when_holds_cannot_be_read(self):
+        headers = self.auth_headers(self.users["alice"])
+        with self.statements_fail(HOLDS[1]):
+            response = self.search(headers)
+
+        body = self.assert_error(response, 503)
+        self.assertIs(body.get("retryable"), True)
+        self.assertNotIn("venues", body)
+
+
+class ReopenedCoordinatorTests(HoldTestCase):
+    # TC-87-42 · AC5 — the event's current coordinator is told, not the one who asked.
+    def test_the_events_current_coordinator_is_notified(self):
+        self.events["E1"].coordinator_id = self.users["ben"].id
+        self.db.session.commit()
+
+        self.assertEqual(self.hold("P1").status_code, 200)
+
+        [notification] = self.notifications_for("ben")
+        self.assertEqual(notification.kind, "venue_hold_placed")
+        self.assertIn("2027-03-01 17:00", notification.message)
+        self.assertEqual(self.notifications_for("alice"), [])
+        self.queue_email.assert_called_once()
+        to_address, _, body = self.queue_email.call_args.args
+        self.assertEqual(to_address, self.users["ben"].email)
+        self.assertIn("2027-03-01 17:00", body)
+
+    # TC-87-43 · AC5 (Q5) — the coordinator's list shows each hold's expiry.
+    def test_coordinator_sees_each_holds_expiry(self):
+        held = self.make_hold("P1")
+        expired = self.add_hold("E1", "recorded_as_none", datetime(2027, 3, 13, 10, 0),
+                                datetime(2027, 3, 13, 12, 0), expires_at=NOW)
+        confirmed = self.add_booking("E1", "recorded_as_none", "confirmed",
+                                     datetime(2027, 3, 14, 10, 0), datetime(2027, 3, 14, 12, 0))
+
+        response = self.client.get("/api/venues/bookings",
+                                   query_string={"event_id": self.events["E1"].id},
+                                   headers=self.auth_headers(self.users["alice"]))
+
+        self.assertEqual(response.status_code, 200, response.get_json())
+        by_id = {b["id"]: b for b in response.get_json()["bookings"]}
+        self.assertEqual(by_id[held.id].get("hold"),
+                         {"expires_at": "2027-03-01T17:00:00", "expired": False})
+        self.assertEqual(by_id[expired.id].get("hold"),
+                         {"expires_at": "2027-03-01T12:00:00", "expired": True})
+        self.assertIn("hold", by_id[confirmed.id])
+        self.assertIsNone(by_id[confirmed.id]["hold"])
 
 
 if __name__ == "__main__":

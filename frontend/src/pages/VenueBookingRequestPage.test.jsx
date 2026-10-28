@@ -525,3 +525,45 @@ describe("SCRUM-85 several venues for one event", () => {
     expect(apiClient.post.mock.calls).toEqual([["/venues/bookings/13/cancel", { also_cancel: [12] }]]);
   });
 });
+
+// SCRUM-87 (reopened 28 Oct 2026): TC-87-44 in docs/test-cases/SCRUM-87-tentative-venue-hold.md.
+// The API contract mirrors test_coordinator_sees_each_holds_expiry in
+// backend/tests/test_venue_holds.py.
+describe("SCRUM-87 the coordinator sees a hold's expiry", () => {
+  const CIVIC = { id: 4, name: "Civic Hall", location: "12 Civic Road" };
+  const AURORA = { id: 3, name: "Aurora Ballroom", location: "Level 3, Marina Tower" };
+  const booking = (id, status, venue, start, end, hold = null) => ({
+    id, status, venue, event: { id: 7, title: "Harbour Lights Festival" },
+    start_time: start, end_time: end, rejection_reason: null, decided_at: null, decided_by: null,
+    hold,
+  });
+  const BOOKINGS = [
+    booking(11, "tentative", AURORA, "2027-03-12T16:00:00", "2027-03-12T22:30:00",
+      { expires_at: "2027-03-01T17:00:00", expired: false }),
+    booking(12, "tentative", CIVIC, "2027-03-13T10:00:00", "2027-03-13T12:00:00",
+      { expires_at: "2027-03-01T12:00:00", expired: true }),
+    booking(13, "confirmed", CIVIC, "2027-03-14T10:00:00", "2027-03-14T12:00:00"),
+  ];
+
+  const bookingItem = (text) =>
+    within(screen.getByRole("region", { name: "Venue bookings" }))
+      .getAllByRole("listitem").find((item) => item.textContent.includes(text));
+
+  // TC-87-44 · AC5 (A10, Q5)
+  it("shows each hold with its expiry", async () => {
+    apiClient.get.mockImplementation((url) => {
+      if (url === "/events/7/planning") return Promise.resolve({ data: planning({ venue: CIVIC }) });
+      if (url === "/venues/") return Promise.resolve({ data: VENUES });
+      if (url === "/venues/bookings") return Promise.resolve({ data: { bookings: BOOKINGS, message: null } });
+      return Promise.reject(new Error(`unexpected GET ${url}`));
+    });
+    renderPage();
+    await screen.findByRole("region", { name: "Venue bookings" });
+
+    expect(bookingItem("Aurora Ballroom, 2027-03-12 16:00").textContent)
+      .toContain("Status: Tentative hold until 2027-03-01 17:00 (Singapore time)");
+    expect(bookingItem("Civic Hall, 2027-03-13 10:00").textContent)
+      .toContain("Status: Hold expired on 2027-03-01 12:00");
+    expect(bookingItem("Civic Hall, 2027-03-14 10:00").textContent).toContain("Status: Confirmed");
+  });
+});
