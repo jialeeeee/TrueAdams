@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -225,5 +225,54 @@ describe("SCRUM-42 record equipment requirements from the planning view", () => 
 
     const link = await screen.findByRole("link", { name: "Equipment requirements" });
     expect(link.getAttribute("href")).toBe("/events/1/equipment");
+  });
+});
+
+// SCRUM-85: TC-85-24 and 25 in docs/test-cases/SCRUM-85-several-venues-for-one-event.md.
+// The API is backend/tests/test_several_venues.py's `venue_bookings`.
+describe("SCRUM-85 venue bookings in the planning view", () => {
+  const AURORA = { id: 9, name: "Aurora Ballroom", location: "Level 3, Marina Tower" };
+  const CIVIC = { id: 4, name: "Civic Hall", location: null };
+  const booking = (id, venue, start, end, status, extra = {}) => ({
+    id, venue, start_time: start, end_time: end, setup_minutes: 0, turnaround_minutes: 0,
+    status, hold_expires_at: null, hold_expired: null, ...extra,
+  });
+  const BOOKINGS = [
+    booking(21, CIVIC, "2026-12-11T10:00:00", "2026-12-11T12:00:00", "rejected"),
+    booking(22, AURORA, "2026-12-12T17:00:00", "2026-12-12T22:00:00", "confirmed",
+      { setup_minutes: 30, turnaround_minutes: 45 }),
+    booking(23, CIVIC, "2026-12-12T17:00:00", "2026-12-12T19:00:00", "pending"),
+    booking(24, CIVIC, "2026-12-13T09:00:00", "2026-12-13T12:00:00", "tentative",
+      { hold_expires_at: "2026-12-01T12:00:00", hold_expired: false }),
+    booking(25, AURORA, "2026-12-14T09:00:00", "2026-12-14T12:00:00", "tentative",
+      { hold_expires_at: "2026-10-01T12:00:00", hold_expired: true }),
+  ];
+
+  // TC-85-24 · AC4
+  it("lists every venue booking with its status", async () => {
+    apiClient.get.mockResolvedValue({ data: { ...FESTIVAL, venue_bookings: BOOKINGS } });
+    renderPage();
+
+    const region = await screen.findByRole("region", { name: "Venue bookings" });
+    const items = within(region).getAllByRole("listitem").map((item) => item.textContent);
+    expect(items).toEqual([
+      "Civic Hall2026-12-11 10:00 to 2026-12-11 12:00Status: Rejected",
+      "Aurora Ballroom, Level 3, Marina Tower2026-12-12 17:00 to 2026-12-12 22:00"
+        + "Setup 30 min before, turnaround 45 min afterStatus: Confirmed",
+      "Civic Hall2026-12-12 17:00 to 2026-12-12 19:00Status: Pending",
+      "Civic Hall2026-12-13 09:00 to 2026-12-13 12:00Status: Tentative, held until 2026-12-01 12:00",
+      "Aurora Ballroom, Level 3, Marina Tower2026-12-14 09:00 to 2026-12-14 12:00"
+        + "Status: Hold expired on 2026-10-01 12:00",
+    ]);
+  });
+
+  // TC-85-25 · AC4
+  it("says when the event has no venue bookings", async () => {
+    apiClient.get.mockResolvedValue({ data: { ...FESTIVAL, venue_bookings: [] } });
+    renderPage();
+
+    const region = await screen.findByRole("region", { name: "Venue bookings" });
+    expect(region.textContent).toContain("No venue bookings yet.");
+    expect(within(region).queryAllByRole("listitem")).toEqual([]);
   });
 });

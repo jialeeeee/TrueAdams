@@ -20,7 +20,6 @@ Endpoint
         503 {"error", "retryable": true} if saving fails
     conflict = {"type": "booking", "id", "start", "end", "event": {"id", "title"} | null}
              | {"type": "block", "id", "start", "end", "reason"}
-             | {"type": "event_booking", "id", "start", "end", "venue": {"id", "name"}}
 
 The coordinator's email is queued through tasks.send_notification_email, mocked here.
 """
@@ -301,21 +300,8 @@ class ConflictTests(ApprovalTestCase):
                                      requested_by="alice")
             self.assertEqual(self.approve(small.id).status_code, 200)
 
-    # TC-40-15, TC-40-25 · AC3, AC5 (Q3) — an event can have only one confirmed venue.
-    def test_event_can_have_only_one_confirmed_venue(self):
-        existing = self.add_booking("E1", "recorded_as_none", "confirmed", P1_START, P1_END)
-
-        body = self.assert_error(self.approve("P1"), 409, reason="conflict")
-
-        self.assertEqual(body["conflicts"], [{
-            "type": "event_booking", "id": existing.id,
-            "start": "2027-03-12T16:00:00", "end": "2027-03-12T22:30:00",
-            "venue": {"id": self.venues["recorded_as_none"].id, "name": "Civic Hall"},
-        }])
-        stored = self.stored("P1")
-        self.assertEqual((stored["status"], stored["decided_at"]), ("pending", None))
-        self.assertEqual(self.notifications_for("alice"), [])
-        self.queue_email.assert_not_called()
+    # TC-40-15 (an event can have only one confirmed venue) is replaced by SCRUM-85,
+    # which lets an event have several: see test_several_venues.py (TC-85-07, 09).
 
     # TC-40-16 · AC3 (A7) — decisions on the same venue are made one at a time.
     def test_booking_and_venue_rows_are_locked_before_the_conflict_check(self):

@@ -113,13 +113,8 @@ class VenueBooking(db.Model):
                            name="venue_bookings_setup_minutes_range"),
         db.CheckConstraint("turnaround_minutes between 0 and 1440",
                            name="venue_bookings_turnaround_minutes_range"),
-        # An event can have at most one pending venue request (SCRUM-39 A6).
-        db.Index(
-            "venue_bookings_one_pending_per_event",
-            "event_id",
-            unique=True,
-            postgresql_where=db.text("status = 'pending'"),
-        ),
+        # An event may have several pending requests, one per venue it needs (SCRUM-85
+        # A1), so SCRUM-39's one-pending-request index is gone.
         # No two confirmed bookings at one venue may overlap, whichever code saves them
         # (SCRUM-41 A4). Periods are half-open, so touching is allowed; the venue id is
         # a one-value range so plain GiST can compare it without an extension. It is the

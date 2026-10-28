@@ -35,14 +35,14 @@ These are the team's current reading of the story, agreed with the scrum lead on
 
 - **A1 — What counts as a conflict:** the SCRUM-40 rule, unchanged.
   - The request's period overlaps a **confirmed booking** or a **recorded block** at the same venue. Periods are half-open, so touching periods do not overlap.
-  - The event already has a confirmed booking (at any venue), because an event has one confirmed venue (SCRUM-40 A3).
+  - ~~The event already has a confirmed booking (at any venue), because an event has one confirmed venue (SCRUM-40 A3).~~ Removed by [SCRUM-85](SCRUM-85-several-venues-for-one-event.md) A3: an event can have several venues.
   - Pending, rejected and cancelled bookings do not conflict. Operating hours, capacity and the "not currently bookable" flag are suitability, not conflicts. *(Q1)*
   - **Since the reopening:** an **unexpired tentative hold** at the same venue conflicts too. A hold is unexpired while its expiry is later than the current Singapore time; at the expiry itself it has expired and no longer conflicts. This is SCRUM-87 A3's rule. *(Q5)*
 - **A2 — Conflicts are shown before approval:**
   - Each request in Venue Staff's pending list (`GET /api/venues/bookings`) carries `conflicts`: the same entries, in the same time order, that approving it now would be refused with. An empty list means none were found.
   - The page shows each conflict on its own line with its period (the SCRUM-40 wording), or "No conflicts found."
   - Approve stays available either way. The list can be out of date, and the server checks again when the approval is saved. *(Q2)*
-- **A3 — Other venues:** a booking or block at another venue never conflicts because of its times (AC4). The only cross-venue conflict is A1's "the event already has a confirmed venue", which is about the event and applies whatever the times. *(Q1)*
+- **A3 — Other venues:** a booking or block at another venue never conflicts because of its times (AC4). Since [SCRUM-85](SCRUM-85-several-venues-for-one-event.md) there is no cross-venue conflict at all. *(Q1)*
 - **A4 — The final save (AC6):** two safeguards.
   - The SCRUM-40 row locks make approvals at one venue happen one at a time.
   - A new database rule, `venue_bookings_no_overlapping_confirmed`, refuses to store two **confirmed** bookings at the same venue whose periods overlap (half-open, so touching is allowed). It holds even for a code path that does not take the lock.
@@ -64,7 +64,7 @@ These are the team's current reading of the story, agreed with the scrum lead on
 - **A conflict entry** is one of the SCRUM-40 types:
   - `{"type": "booking", "id", "start", "end", "event": {"id", "title"} | null}`;
   - `{"type": "block", "id", "start", "end", "reason"}`;
-  - `{"type": "event_booking", "id", "start", "end", "venue": {"id", "name"}}`.
+  - ~~`{"type": "event_booking", …}`~~ No longer produced since [SCRUM-85](SCRUM-85-several-venues-for-one-event.md).
 
 ## Seed data (VC-SEED)
 
@@ -99,11 +99,7 @@ Reset the database to this data before **every** test case.
   - P2's `conflicts` is empty.
 - **Automated:** `test_overlapping_bookings_and_blocks_are_listed_with_their_periods`
 
-**TC-41-03 · The event's existing confirmed venue is listed**
-- **Traces to:** AC1, AC2 · **Type:** Negative (conflict) · **Depends on:** Q1
-- **Preconditions:** E1 already has a confirmed booking at Civic Hall, 12 Mar 2027 16:00–22:30.
-- **Expected result:** P1's `conflicts` lists that booking (type `event_booking`, its times and Civic Hall).
-- **Automated:** `test_events_existing_confirmed_venue_is_listed`
+**TC-41-03 · The event's existing confirmed venue is listed** — *replaced by [SCRUM-85](SCRUM-85-several-venues-for-one-event.md) TC-85-08: the event's venue elsewhere is not a conflict.*
 
 **TC-41-04 · Only confirmed bookings and blocks that really overlap are listed**
 - **Traces to:** AC1 · **Type:** Boundary · **Depends on:** Q1

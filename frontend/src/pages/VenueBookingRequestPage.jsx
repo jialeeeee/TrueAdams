@@ -43,14 +43,37 @@ function missingFields(form) {
   return problems;
 }
 
+// The form for a new request, prefilled from the event; the coordinator may change them (A3, A4).
+function freshForm(event) {
+  return {
+    venue_id: "",
+    start_time: asInput(event.start_time),
+    end_time: asInput(event.end_time),
+    venue_requirements: event.venue_requirements ?? "",
+    setup_minutes: "0",
+    turnaround_minutes: "0",
+  };
+}
+
 // SCRUM-94: the event's bookings, except rejections (listed with their reasons below), each
 // pending, tentative or confirmed one with Cancel booking and a confirmation step (AC2, A5).
+// SCRUM-85 A6, A8: the step also offers the event's other live bookings, unticked.
 function VenueBookings({ bookings, onCancel }) {
   const [confirming, setConfirming] = useState(null);
+  const [alsoCancel, setAlsoCancel] = useState([]);
   if (bookings.length === 0) return null;
 
+  const startConfirming = (booking) => {
+    setAlsoCancel([]);
+    setConfirming(booking);
+  };
+  const toggle = (id) => setAlsoCancel((ids) => (ids.includes(id) ? ids.filter((other) => other !== id) : [...ids, id]));
+  const others = confirming
+    ? bookings.filter((booking) => booking.id !== confirming.id && CANCELLABLE.includes(booking.status))
+    : [];
+
   const confirm = async () => {
-    await onCancel(confirming);
+    await onCancel(confirming, others.map((booking) => booking.id).filter((id) => alsoCancel.includes(id)));
     setConfirming(null);
   };
 
@@ -63,7 +86,7 @@ function VenueBookings({ bookings, onCancel }) {
             <p>{`${booking.venue.name}, ${asPeriod(booking)}`}</p>
             <p>{`Status: ${statusLabel(booking.status)}`}</p>
             {CANCELLABLE.includes(booking.status) && (
-              <button type="button" onClick={() => setConfirming(booking)}>Cancel booking</button>
+              <button type="button" onClick={() => startConfirming(booking)}>Cancel booking</button>
             )}
           </li>
         ))}
@@ -73,6 +96,22 @@ function VenueBookings({ bookings, onCancel }) {
           <p>
             {`Cancel the booking of ${confirming.venue.name}, ${asPeriod(confirming)}? The venue will be released for that time.`}
           </p>
+          {others.length > 0 && (
+            <>
+              <p>The event&apos;s other bookings stay as they are unless you tick them:</p>
+              <ul>
+                {others.map((booking) => (
+                  <li key={booking.id}>
+                    <label>
+                      <input type="checkbox" checked={alsoCancel.includes(booking.id)}
+                        onChange={() => toggle(booking.id)} />
+                      {`Also cancel ${booking.venue.name}, ${asPeriod(booking)}`}
+                    </label>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
           <button type="button" onClick={confirm}>Yes, cancel booking</button>
           <button type="button" onClick={() => setConfirming(null)}>Keep booking</button>
         </div>
@@ -123,15 +162,7 @@ export default function VenueBookingRequestPage() {
       const loaded = planning.data;
       setEvent(loaded);
       setVenues(venueList.data.venues);
-      // Prefilled from the event; the coordinator may change them (A3, A4).
-      setForm({
-        venue_id: "",
-        start_time: asInput(loaded.start_time),
-        end_time: asInput(loaded.end_time),
-        venue_requirements: loaded.venue_requirements ?? "",
-        setup_minutes: "0",
-        turnaround_minutes: "0",
-      });
+      setForm(freshForm(loaded));
       loadOutcomes();
     } catch (failure) {
       setLoadError(explain(failure, NOT_LOADED));
@@ -144,18 +175,32 @@ export default function VenueBookingRequestPage() {
     load();
   }, [load]);
 
-  const cancelBooking = async (booking) => {
+  // SCRUM-85 A6: the other bookings are sent only when the coordinator chose some.
+  const cancelBooking = async (booking, alsoCancel = []) => {
     setCancelMessage("");
     setCancelError("");
     try {
-      const response = await apiClient.post(`/venues/bookings/${booking.id}/cancel`);
+      const url = `/venues/bookings/${booking.id}/cancel`;
+      const response = alsoCancel.length
+        ? await apiClient.post(url, { also_cancel: alsoCancel })
+        : await apiClient.post(url);
       setCancelMessage(response.data.message);
-      // Cancelling the confirmed venue clears the event's venue (A3), so reload both.
+      // Cancelling a confirmed venue can change the event's venue (A3; SCRUM-85 A4), so reload both.
       load();
     } catch (failure) {
       // The booking is unchanged (AC6), so it stays listed and can be cancelled again.
       setCancelError(explain(failure, NOT_CANCELLED));
     }
+  };
+
+  // SCRUM-85 A8: a fresh form for the next venue, and the list read again to show the last.
+  const requestAnother = () => {
+    setSent(null);
+    setError("");
+    setFieldErrors({});
+    setClash(null);
+    setForm(freshForm(event));
+    loadOutcomes();
   };
 
   const change = (name) => (e) => setForm((current) => ({ ...current, [name]: e.target.value }));
@@ -249,31 +294,29 @@ export default function VenueBookingRequestPage() {
           <p>{`Occupied: ${asText(booking.occupied_start)} to ${asText(booking.occupied_end)}`}</p>
         )}
         <p>{`Status: ${statusLabel(booking.status)}`}</p>
+        <button type="button" onClick={requestAnother}>Request another venue</button>
         {outcomes}
       </section>
     );
   }
 
   // SCRUM-40: Venue Staff approved a venue; changing it goes through a change request (A3).
-  if (event.venue) {
-    return (
-      <section>
-        {back}
-        <h1>Request a venue: {event.title}</h1>
-        <p>
-          {`Venue confirmed: ${event.venue.name}${event.venue.location ? `, ${event.venue.location}` : ""}`}
-        </p>
-        <p>To change the venue, submit a change request.</p>
-        {outcomes}
-      </section>
-    );
-  }
+  // SCRUM-85: the event may still need more venues, so the form is offered alongside it.
+  const confirmed = event.venue && (
+    <>
+      <p>
+        {`Venue confirmed: ${event.venue.name}${event.venue.location ? `, ${event.venue.location}` : ""}`}
+      </p>
+      <p>To change the venue, submit a change request.</p>
+    </>
+  );
 
   if (event.status !== "approved") {
     return (
       <section>
         {back}
         <h1>Request a venue: {event.title}</h1>
+        {confirmed}
         <p>{`A venue can only be requested for an approved event. This event is ${statusLabel(event.status)}.`}</p>
         {outcomes}
       </section>
@@ -287,6 +330,7 @@ export default function VenueBookingRequestPage() {
     <section>
       {back}
       <h1>Request a venue: {event.title}</h1>
+      {confirmed}
       {outcomes}
       <form onSubmit={handleSubmit} noValidate>
         <label htmlFor="venue-request-venue">Venue</label>

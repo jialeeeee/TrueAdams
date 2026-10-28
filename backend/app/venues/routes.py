@@ -697,10 +697,11 @@ def _booking_payload(booking):
     }
 
 
-ALREADY_PENDING = (
-    "A venue request for this event is already pending. Venue Staff must decide on it "
-    "before you request another venue."
-)
+def _own_pending_request(event, venue_id, start, end):
+    """The event's pending request for the venue whose occupied period overlaps
+    `start`-`end`, or None. Asking again would only repeat it (SCRUM-85 A2, Q2)."""
+    query = VenueBooking.query.filter_by(event_id=event.id, venue_id=venue_id, status=PENDING)
+    return scheduling.overlapping(query, VenueBooking, start, end).first()
 
 
 @venues_bp.post("/bookings")
@@ -739,14 +740,20 @@ def request_booking():
             raise _Rejected(
                 "A venue can only be requested for an approved event. "
                 f"This event is {event.status}.", 409)
-        if VenueBooking.query.filter_by(event_id=event.id, status=PENDING).first():
-            raise _Rejected(ALREADY_PENDING, 409)
 
         setup = _parse_minutes(body.get("setup_minutes"))
         turnaround = _parse_minutes(body.get("turnaround_minutes"))
         # SCRUM-84 A5: a request whose occupied period clashes is refused up front.
         occupied_start = start - timedelta(minutes=setup)
         occupied_end = end + timedelta(minutes=turnaround)
+        # SCRUM-85: other venues may be requested alongside, but not this one again.
+        duplicate = _own_pending_request(event, venue.id, occupied_start, occupied_end)
+        if duplicate:
+            raise _Rejected(
+                f"This event already has a pending request for {venue.name} at an overlapping "
+                f"time ({_period_text(duplicate.start_time, duplicate.end_time)}). Wait for "
+                "Venue Staff to decide on it, or cancel it, before asking for that venue again.",
+                409, reason="already_requested", booking_id=duplicate.id)
         conflicts = _conflicts_for(venue.id, occupied_start, occupied_end)
         if conflicts:
             clash = _clash(venue, conflicts, refused="requested")
@@ -762,12 +769,7 @@ def request_booking():
             requested_by_id=user.id, created_at=datetime.utcnow(),
         )
         db.session.add(booking)
-        try:
-            db.session.commit()
-        except IntegrityError:
-            # Another submission for this event won the race (A6).
-            db.session.rollback()
-            raise _Rejected(ALREADY_PENDING, 409) from None
+        db.session.commit()
         payload = _booking_payload(booking)
     except _Rejected as rejected:
         return _error(rejected.message, rejected.status_code, **rejected.extra)
@@ -885,13 +887,14 @@ def _approval_conflicts(booking):
     Venue Staff also see these in the pending list before approving (SCRUM-41 A2).
     """
     start, end = scheduling.occupied(booking)
-    return _conflicts_for(booking.venue_id, start, end, booking.event_id)
+    return _conflicts_for(booking.venue_id, start, end)
 
 
-def _conflicts_for(venue_id, start, end, event_id=None):
+def _conflicts_for(venue_id, start, end):
     """The conflicts for occupying `venue_id` from `start` to `end` (occupied times).
 
-    `event_id` is given when approving, to include the event's own confirmed booking.
+    Only that venue is checked: an event's bookings at other venues are not conflicts, so
+    it can have several (SCRUM-85 A3). Its own booking at this venue is, like any other.
     """
     period = ([venue_id], start, end)
     conflicts = []
@@ -906,12 +909,6 @@ def _conflicts_for(venue_id, start, end, event_id=None):
         event = db.session.get(Event, hold.event_id)
         conflicts.append(_conflict("hold", hold, event={"id": event.id, "title": event.title},
                                    expires_at=hold.hold_expires_at.isoformat()))
-    # An event can have only one confirmed venue (A3).
-    if event_id is not None:
-        for existing in VenueBooking.query.filter_by(event_id=event_id, status=CONFIRMED):
-            venue = db.session.get(Venue, existing.venue_id)
-            conflicts.append(_conflict(
-                "event_booking", existing, venue={"id": venue.id, "name": venue.name}))
     return sorted(conflicts, key=lambda conflict: conflict["start"])
 
 
@@ -990,11 +987,15 @@ def approve_booking(booking_id: int):
         venue, conflicts = _locked_venue_and_conflicts(booking)
         if conflicts:
             raise _clash(venue, conflicts)
+        # The event's first confirmed venue is its venue; later ones leave it (SCRUM-85 A4).
+        first_venue = VenueBooking.query.filter_by(event_id=event.id,
+                                                   status=CONFIRMED).first() is None
 
         booking.status = CONFIRMED
         booking.decided_at = datetime.utcnow()
         booking.decided_by_id = user.id
-        event.venue_id = venue.id
+        if first_venue:
+            event.venue_id = venue.id
         try:
             # Written now, so the database rule is checked before anything is announced.
             db.session.flush()
@@ -1317,8 +1318,15 @@ CANCELLATION_NOTIFICATION = "venue_booking_cancelled"
 STAFF_EMAIL_FOOTER = "Sign in to ConnectSphere to see the venue requests."
 
 
-def _cancellable_booking(user, booking_id):
-    """The booking and its event, locked, if `user` may cancel it now (A1, A2, A6, A7).
+# The only field a cancellation takes: other bookings of the event to cancel too (SCRUM-85 A6).
+CANCEL_FIELDS = {"also_cancel"}
+# The same answer for another event's booking and an unknown one, so neither is revealed.
+NOT_THIS_EVENTS_BOOKINGS = "Choose only other venue bookings of this event to cancel too."
+
+
+def _cancelling_booking(user, booking_id):
+    """The booking and its event, locked, if `user` may cancel the event's bookings
+    (A1, A6, A7).
 
     Locked, so a cancellation and a Venue Staff decision happen one at a time.
     """
@@ -1331,16 +1339,83 @@ def _cancellable_booking(user, booking_id):
     if event is None or not is_current_coordinator(user, event):
         raise _Rejected(
             "Only the event's assigned coordinator can cancel its venue bookings.", 403)
-    if booking.status not in CANCELLABLE_STATUSES:
-        raise _Rejected(f"This booking is {booking.status}, so it can't be cancelled.",
-                        409, reason="not_cancellable")
     return booking, event
 
 
-def _release_event_venue(event, booking, previous_status):
-    """Approving set the event's venue (SCRUM-40 A4), so cancelling it clears it (A3, Q3)."""
-    if previous_status == CONFIRMED and event.venue_id == booking.venue_id:
-        event.venue_id = None
+def _also_cancel_ids(body):
+    """The ids of the event's other bookings the coordinator chose to cancel too; none
+    when there is no body (SCRUM-85 A6)."""
+    if body is None:
+        return []
+    if not isinstance(body, dict):
+        raise _Rejected("Send the cancellation as JSON.", 400)
+    for key in body:
+        if key not in CANCEL_FIELDS:
+            raise _Rejected(f"{key} is not part of a cancellation.", 400, field=key)
+    ids = body.get("also_cancel", [])
+    if not isinstance(ids, list) or not all(_is_id(value) for value in ids):
+        raise _Rejected("List the other bookings to cancel too by their ids.", 400,
+                        field="also_cancel")
+    return ids
+
+
+def _other_bookings(event, booking, ids):
+    """The event's other bookings with these ids, locked, in id order (SCRUM-85 A6)."""
+    ids = sorted(set(ids) - {booking.id})
+    if not ids:
+        return []
+    others = (VenueBooking.query
+              .filter(VenueBooking.id.in_(ids), VenueBooking.event_id == event.id)
+              .order_by(VenueBooking.id).with_for_update().populate_existing().all())
+    if len(others) != len(ids):
+        raise _Rejected(NOT_THIS_EVENTS_BOOKINGS, 400, field="also_cancel")
+    return others
+
+
+def _require_cancellable(booking):
+    if booking.status not in CANCELLABLE_STATUSES:
+        raise _Rejected(f"This booking is {booking.status}, so it can't be cancelled.",
+                        409, reason="not_cancellable")
+
+
+def _release_event_venue(event, released):
+    """Approving made the event's first confirmed venue its venue (SCRUM-40 A4, SCRUM-85
+    A4). When `released` ((booking, previous status) pairs) leaves no confirmed booking
+    there, it moves to the venue of the earliest confirmed booking left, or is cleared
+    (A3, Q3; SCRUM-85 Q3)."""
+    if event.venue_id is None or not any(
+            previous == CONFIRMED and booking.venue_id == event.venue_id
+            for booking, previous in released):
+        return
+    remaining = (VenueBooking.query.filter_by(event_id=event.id, status=CONFIRMED)
+                 .order_by(VenueBooking.start_time, VenueBooking.id).all())
+    if any(booking.venue_id == event.venue_id for booking in remaining):
+        return
+    event.venue_id = remaining[0].venue_id if remaining else None
+
+
+def _names(words):
+    """'A', 'A and B' or 'A, B and C', each name once, in order."""
+    words = list(dict.fromkeys(words))
+    return words[0] if len(words) == 1 else f"{', '.join(words[:-1])} and {words[-1]}"
+
+
+def _cancellation_message(user, event, released, venues):
+    """What Venue Staff are told: every booking cancelled, with its previous status."""
+    if len(released) == 1:
+        booking, previous = released[0]
+        return (
+            f'{user.email} cancelled the {previous} booking of {venues[booking.venue_id].name} '
+            f'for "{event.title}" ({_period_text(booking.start_time, booking.end_time)}). '
+            "The venue is free again for that time."
+        )
+    described = [
+        f"the {previous} booking of {venues[booking.venue_id].name} "
+        f"({_period_text(booking.start_time, booking.end_time)})"
+        for booking, previous in released
+    ]
+    return (f'{user.email} cancelled {len(released)} venue bookings for "{event.title}": '
+            f"{'; '.join(described)}. The venues are free again for those times.")
 
 
 def _notify_venue_staff(message, event_id):
@@ -1359,24 +1434,29 @@ def _notify_venue_staff(message, event_id):
 @jwt_required()
 def cancel_booking(booking_id: int):
     try:
-        # Load the user first, then the record, then check permission (AGENTS.md, A6).
+        # Load the user first, then the record, then check permission (AGENTS.md, A6),
+        # then the body (SCRUM-85 A6), then whether every booking can be cancelled.
         user = _require_viewer(roles=None)
-        booking, event = _cancellable_booking(user, booking_id)
-        venue = db.session.get(Venue, booking.venue_id)
+        booking, event = _cancelling_booking(user, booking_id)
+        others = _other_bookings(event, booking, _also_cancel_ids(request.get_json(silent=True)))
+        cancelling = [booking, *others]
+        for each in cancelling:
+            _require_cancellable(each)
+        venues = {each.venue_id: db.session.get(Venue, each.venue_id) for each in cancelling}
 
-        # The row and its other columns are kept; only the status changes (A3).
-        previous_status = booking.status
-        booking.status = CANCELLED
-        _release_event_venue(event, booking, previous_status)
-        message = (
-            f'{user.email} cancelled the {previous_status} booking of {venue.name} for '
-            f'"{event.title}" ({_period_text(booking.start_time, booking.end_time)}). '
-            "The venue is free again for that time."
-        )
+        # The rows and their other columns are kept; only the status changes (A3). All of
+        # them are cancelled together, or none is (SCRUM-85 A6, Q5).
+        released = [(each, each.status) for each in cancelling]
+        for each in cancelling:
+            each.status = CANCELLED
+        _release_event_venue(event, released)
+        message = _cancellation_message(user, event, released, venues)
         # Saved in the same commit as the cancellation, so neither exists without the other.
         staff_addresses = _notify_venue_staff(message, event.id)
         payload = _booking_decision_payload(booking)
-        title, venue_name, event_id = event.title, venue.name, event.id
+        also_cancelled = [_booking_decision_payload(other) for other in others]
+        title, event_id = event.title, event.id
+        venue_names = _names([venues[each.venue_id].name for each in cancelling])
         db.session.commit()
     except _Rejected as rejected:
         return _error(rejected.message, rejected.status_code, **rejected.extra)
@@ -1387,14 +1467,19 @@ def cancel_booking(booking_id: int):
             503, retryable=True,
         )
 
-    subject = f"Venue booking cancelled for {title}: {venue_name}"
+    if others:
+        subject = f"Venue bookings cancelled for {title}: {venue_names}"
+        confirmation = (f"You cancelled the bookings of {venue_names} for {title}. The venues "
+                        "are free again for those times, and Venue Staff have been notified.")
+    else:
+        subject = f"Venue booking cancelled for {title}: {venue_names}"
+        confirmation = (f"You cancelled the booking of {venue_names} for {title}. The venue is "
+                        "free again for that time, and Venue Staff have been notified.")
     queued = [_queue_email(address, subject, f"{message}\n\n{STAFF_EMAIL_FOOTER}", event_id)
               for address in staff_addresses]
     return jsonify({
-        "message": (
-            f"You cancelled the booking of {venue_name} for {title}. The venue is free again "
-            "for that time, and Venue Staff have been notified."
-        ),
+        "message": confirmation,
         "booking": payload,
+        "also_cancelled": also_cancelled,
         "notification": {"in_app": True, "email_queued": all(queued)},
     })

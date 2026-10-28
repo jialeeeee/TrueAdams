@@ -7,7 +7,7 @@ criteria it checks. Assumptions A1-A10 and questions Q1-Q8 are defined there.
 Model (db/venue_booking_requests.sql): new VenueBooking columns
     venue_requirements  Text, the requirements Venue Staff assess the request against
     requested_by_id     FK users.id, the coordinator who made the request
-    plus a unique index allowing one `pending` booking per event (A6).
+    (SCRUM-85 removed the unique index that allowed one `pending` booking per event.)
     The existing `created_at` is the time of the request.
 
 Endpoints
@@ -16,7 +16,8 @@ Endpoints
         201 {"message", "booking"}
         401 session · 403 not a coordinator / not this event's coordinator
         400 {"error", "fields": {field: problem}} missing or invalid details (all at once)
-        404 unknown event / venue · 409 event not approved, or a request already pending
+        404 unknown event / venue · 409 event not approved, or the event's own pending
+        request at the same venue and time (SCRUM-85 A2)
         503 {"error", "retryable": true} if saving fails
     GET  /api/venues/bookings   200 {"bookings": [booking], "message"}  Venue Staff only;
                                 pending requests, oldest first
@@ -466,21 +467,13 @@ class NotConfirmedTests(BookingRequestTestCase):
                 self.assertEqual(response.status_code, 201, response.get_json())
 
 
-# ---------- One pending request per event (A6) ----------
+# ---------- Requests after earlier ones (A6, changed by SCRUM-85) ----------
 
 
 class OnePendingRequestTests(BookingRequestTestCase):
-    # TC-39-23 · AC1, AC4 (Q6) — a second request while one is pending is refused.
-    def test_second_request_while_one_is_pending_is_refused(self):
-        self.submit()
-        before = [(b.id, b.venue_id, b.status) for b in self.bookings_for("E1")]
-
-        for venue in ("fully_recorded", "recorded_as_none"):
-            with self.subTest(venue=venue):
-                body = self.assert_error(self.submit(self.valid(venue=venue)), 409)
-                self.assertIn("pending", body["error"].lower())
-
-        self.assertEqual([(b.id, b.venue_id, b.status) for b in self.bookings_for("E1")], before)
+    # TC-39-23 (a second request while one is pending is refused) is replaced by
+    # SCRUM-85: an event can have several pending requests, so see
+    # test_several_venues.py (TC-85-01, 03).
 
     # TC-39-24 · AC1 — a new request is allowed once the earlier one is no longer pending.
     def test_new_request_allowed_once_earlier_one_is_not_pending(self):
@@ -489,18 +482,8 @@ class OnePendingRequestTests(BookingRequestTestCase):
 
         self.assertEqual(self.submit().status_code, 201)
 
-    # TC-39-25 · AC4 (data integrity) — the database allows one pending request per event.
-    def test_database_allows_only_one_pending_request_per_event(self):
-        self.seed_booking("E1", "fully_recorded", "pending",
-                          datetime(2027, 3, 12, 16, 0), datetime(2027, 3, 12, 22, 0))
-
-        self.db.session.add(VenueBooking(
-            event_id=self.events["E1"].id, venue_id=self.venues["recorded_as_none"].id,
-            status="pending", start_time=datetime(2027, 3, 12, 16, 0),
-            end_time=datetime(2027, 3, 12, 22, 0)))
-        with self.assertRaises(IntegrityError):
-            self.db.session.commit()
-        self.db.session.rollback()
+    # TC-39-25 (the database allows one pending request per event) is replaced by
+    # SCRUM-85 TC-85-05: the database allows several.
 
 
 # ---------- AC6: failures ----------
@@ -550,15 +533,17 @@ class FailureTests(BookingRequestTestCase):
         self.assertIs(body.get("retryable"), True)
         self.assertNotIn("bookings", body)
 
-    # TC-39-30 · AC4, AC6 (Q6) — a submission that loses a race reports the pending request.
-    def test_submission_losing_a_race_reports_the_pending_request(self):
+    # TC-39-30 · AC4, AC6 — a save the database refuses is reported as not sent. Since
+    # SCRUM-85 there is no one-pending index for it to be about.
+    def test_save_refused_by_the_database_is_reported_as_not_sent(self):
         refused = IntegrityError("INSERT INTO venue_bookings ...", {},
-                                 Exception("duplicate key: venue_bookings_one_pending_per_event"))
+                                 Exception("violates foreign key constraint"))
         with mock.patch.object(self.db.session, "commit", side_effect=refused):
             response = self.submit()
 
-        body = self.assert_error(response, 409)
-        self.assertIn("pending", body["error"].lower())
+        body = self.assert_error(response, 503)
+        self.assertIs(body.get("retryable"), True)
+        self.assertRegex(body["error"].lower(), r"not sent")
         self.assertNotIn("booking", body)
         self.assert_nothing_saved()
 

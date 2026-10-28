@@ -24,7 +24,7 @@ These are the team's current reading of the story, agreed with the scrum lead on
 - **A3 — Times:** the requested start and end are prefilled from the event's proposed times, and the coordinator may change them, for example to add setup or teardown time. They are Singapore time without a time zone, like the event's own times. The end must be after the start, and the start must not be in the past. *(Q3, Q5)*
 - **A4 — Venue requirements:** required. They are prefilled from the event's venue requirements and may be edited. Text is trimmed, and is at most 5,000 characters (the editing limit from SCRUM-53).
 - **A5 — Conflicts and suitability are not checked here:** a request is accepted even if the period overlaps a confirmed booking or a block, falls outside the venue's operating hours, or the event is larger than the venue's capacity, and even for a venue marked as not currently bookable. Venue Staff decide (venue booking approval). Conflict detection and suitability checking are separate core features. *(Q4, Q7)*
-- **A6 — One pending request per event:** an event can have at most one `pending` venue request, for any venue. A new request is allowed once the earlier one is no longer pending (for example rejected). The database enforces this with a unique index, so two simultaneous submissions cannot both succeed. *(Q6)*
+- **A6 — One pending request per event:** an event can have at most one `pending` venue request, for any venue. A new request is allowed once the earlier one is no longer pending (for example rejected). The database enforces this with a unique index, so two simultaneous submissions cannot both succeed. *(Q6)* **Replaced by [SCRUM-85](SCRUM-85-several-venues-for-one-event.md) A1–A2** (Week 7 customer change 3): an event can have several pending requests, one per venue and time; the index was dropped (`db/several_venues_per_event.sql`).
 - **A7 — Not a confirmed booking:** a request is saved with status `pending`. It does not set the event's venue, and it does not block the venue's time: availability (SCRUM-36) and search (SCRUM-37) count only `confirmed` bookings.
 - **A8 — Venue Staff:** every user with the role `venue_staff` can see every pending request, since venues are not yet assigned to staff. They are not notified; they see the requests in their list. *(Q8)*
 - **A9 — All problems at once:** every missing or invalid field is reported together under `fields`, so the coordinator can correct them in one go.
@@ -228,20 +228,14 @@ A **valid request** for E1 is: Aurora Ballroom, 12 Mar 2027 16:00–22:30 (setup
 
 ## One pending request per event
 
-**TC-39-23 · A second request while one is pending is refused**
-- **Traces to:** AC1, AC4 · **Type:** Negative (business rule) · **Depends on:** Q6
-- **Steps:** Request Aurora for E1. Then request Aurora again, and Civic Hall, for E1.
-- **Expected result:** HTTP 409 saying a request is already pending for this event. Exactly one pending request exists, unchanged.
+**TC-39-23 · A second request while one is pending is refused** — *replaced by [SCRUM-85](SCRUM-85-several-venues-for-one-event.md) TC-85-01 and 03: another venue is accepted; only the same venue at an overlapping time is refused.*
 
 **TC-39-24 · A new request is allowed once the earlier one is no longer pending**
 - **Traces to:** AC1 · **Type:** Happy path
 - **Preconditions:** E1 has a rejected request for Civic Hall.
 - **Expected result:** Requesting Aurora for E1 gives HTTP 201.
 
-**TC-39-25 · The database allows only one pending request per event**
-- **Traces to:** AC4 · **Type:** Boundary (data integrity)
-- **Steps:** Insert two pending bookings for E1 directly.
-- **Expected result:** The second insert is refused by the unique index (`IntegrityError`).
+**TC-39-25 · The database allows only one pending request per event** — *replaced by [SCRUM-85](SCRUM-85-several-venues-for-one-event.md) TC-85-05: the database allows several.*
 
 ## AC6 — Failures
 
@@ -261,10 +255,11 @@ A **valid request** for E1 is: Aurora Ballroom, 12 Mar 2027 16:00–22:30 (setup
 - **Preconditions:** Reading venue bookings fails (in automated tests, queries on `venue_bookings` raise `OperationalError`).
 - **Expected result:** HTTP 503 with `retryable: true`. No `bookings` list is returned, so the failure is never shown as "no pending requests".
 
-**TC-39-30 · A submission that loses a race reports the pending request**
-- **Traces to:** AC4, AC6 · **Type:** Negative (concurrency) · **Depends on:** Q6
-- **Preconditions:** Saving is refused by the one-pending-request index, as when two submissions for one event arrive together (in automated tests, the commit raises `IntegrityError`).
-- **Expected result:** HTTP 409 saying a request is already pending, not a 503 or a success. Nothing from this submission is saved.
+**TC-39-30 · A save the database refuses is reported as not sent** (changed by [SCRUM-85](SCRUM-85-several-venues-for-one-event.md), which removed the one-pending-request index)
+- **Traces to:** AC4, AC6 · **Type:** Negative (failure)
+- **Preconditions:** The database refuses the save (in automated tests, the commit raises `IntegrityError`).
+- **Expected result:** HTTP 503 with `retryable: true`, saying the request was not sent. Nothing from this submission is saved.
+- **Automated:** `test_save_refused_by_the_database_is_reported_as_not_sent`
 
 **TC-39-28 · Frontend keeps the entered information after a failure**
 - **Traces to:** AC6 · **Type:** Negative (frontend)
@@ -303,6 +298,6 @@ A **valid request** for E1 is: Aurora Ballroom, 12 Mar 2027 16:00–22:30 (setup
 | Q3 | May the requested times differ from the event's proposed times, e.g. for setup and teardown (assumed yes)? Should there be a limit? | A3, TC-39-09 |
 | Q4 | Should a request be refused when the venue already has a confirmed booking or block at that time, or is too small, or is that left to Venue Staff (assumed)? | A5, TC-39-22 |
 | Q5 | Must the requested start be in the future (assumed), or some days ahead? | A3, TC-39-13 |
-| Q6 | Can a coordinator ask several venues at once for the same event? Assumed not: one pending request per event. | A6, TC-39-23 |
+| Q6 | Can a coordinator ask several venues at once for the same event? Assumed not: one pending request per event. **Answered: yes** (Week 7 customer change 3, [SCRUM-85](SCRUM-85-several-venues-for-one-event.md)). | A6, TC-39-23 |
 | Q7 | Should venues marked as not currently bookable be requestable (assumed yes, Venue Staff decide)? | A5, TC-39-22 |
 | Q8 | Are venues assigned to particular Venue Staff, and should staff be notified of new requests? Assumed: all staff see all requests, no notification. | A8, TC-39-17 |

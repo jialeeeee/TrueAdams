@@ -25,7 +25,7 @@ from ..models import (
 )
 from ..registrations.routes import REGISTERED, REGISTRABLE_STATUS, WITHDRAWN, singapore_now
 from ..resources import availability, reservations as reserving
-from ..venues.scheduling import BLOCKING_BOOKING_STATUS, overlapping
+from ..venues.scheduling import BLOCKING_BOOKING_STATUS, TENTATIVE_STATUS, overlapping
 from . import change_requests, equipment, suitability
 from .permissions import (
     COORDINATOR_ROLE,
@@ -357,7 +357,38 @@ def _planning_payload(event):
         "id": event.id,
         **fields,
         "not_recorded": [name for name in PLANNING_FIELDS if fields[name] is None],
+        "venue_bookings": _planning_venue_bookings(event),
     }
+
+
+def _planning_venue_bookings(event):
+    """Every venue booking of the event, whatever its status, in time order (SCRUM-85 A7).
+
+    An expired hold blocks nothing (SCRUM-87), so it is marked as expired rather than
+    shown as a live hold.
+    """
+    bookings = (VenueBooking.query.filter_by(event_id=event.id)
+                .order_by(VenueBooking.start_time, VenueBooking.id).all())
+    venue_ids = {booking.venue_id for booking in bookings}
+    venues = ({venue.id: venue for venue in Venue.query.filter(Venue.id.in_(venue_ids))}
+              if venue_ids else {})
+    now = singapore_now()
+    listed = []
+    for booking in bookings:
+        venue = venues[booking.venue_id]
+        held = booking.status == TENTATIVE_STATUS and booking.hold_expires_at is not None
+        listed.append({
+            "id": booking.id,
+            "venue": {"id": venue.id, "name": venue.name, "location": _recorded(venue.location)},
+            "start_time": _isoformat(booking.start_time),
+            "end_time": _isoformat(booking.end_time),
+            "setup_minutes": booking.setup_minutes or 0,
+            "turnaround_minutes": booking.turnaround_minutes or 0,
+            "status": booking.status,
+            "hold_expires_at": _isoformat(booking.hold_expires_at) if held else None,
+            "hold_expired": booking.hold_expires_at <= now if held else None,
+        })
+    return listed
 
 
 @events_bp.get("/<int:event_id>/planning")

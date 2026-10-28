@@ -387,8 +387,8 @@ class BlockingTests(HoldTestCase):
                 "E3", "fully_recorded", "confirmed", H2_START, H2_END),
             "block": lambda: self.add_block("fully_recorded", "Electrical works",
                                             H2_START, H2_END),
-            "event's confirmed venue": lambda: self.add_booking(
-                "E1", "recorded_as_none", "confirmed", P1_START, P1_END),
+            # The event's confirmed venue elsewhere no longer clashes: an event can have
+            # several venues (SCRUM-85 TC-85-10).
         }
         for name, add in clashes.items():
             with self.subTest(clash=name):
