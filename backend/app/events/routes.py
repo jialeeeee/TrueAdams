@@ -173,6 +173,8 @@ def list_events():
 
 # SCRUM-90 AC3: only Safety Officers may read the safety queue, including no admin override.
 SAFETY_CHECK_VIEWER_ROLES = {"safety_officer"}
+# SCRUM-91 AC4: safety approval has no admin or coordinator override.
+SAFETY_CHECK_APPROVER_ROLES = {"safety_officer"}
 
 
 def _safety_schedule_covered(event, bookings):
@@ -203,6 +205,65 @@ def _safety_check_payload(event, venues, equipment_lines):
     }
 
 
+def _safety_check_items(events):
+    """Reuse SCRUM-90 readiness for both the queue and SCRUM-91 approval."""
+    event_ids = {event.id for event in events}
+    items = []
+    if event_ids:
+        # Read only confirmed bookings for current candidates and their date range.
+        # Use booked times here: setup/turnaround do not cover event activities.
+        bookings = VenueBooking.query.filter_by(status=BLOCKING_BOOKING_STATUS).filter(
+            VenueBooking.event_id.in_(event_ids),
+            VenueBooking.start_time < max(event.end_time for event in events),
+            VenueBooking.end_time > min(event.start_time for event in events)).all()
+        requirements = EquipmentRequirement.query.filter(
+            EquipmentRequirement.event_id.in_(event_ids)).all()
+        reservations = EquipmentReservation.query.filter_by(status=reserving.RESERVED).filter(
+            EquipmentReservation.event_id.in_(event_ids)).all()
+        venue_ids = {booking.venue_id for booking in bookings}
+        venues = {venue.id: venue for venue in Venue.query.filter(Venue.id.in_(venue_ids)).all()}
+
+        event_venues = {}
+        event_bookings = {}
+        events_by_id = {event.id: event for event in events}
+        for booking in bookings:
+            event = events_by_id[booking.event_id]
+            # The batch date range can include another event's obsolete periods.
+            # Only booked activities overlapping this event belong in its row.
+            if booking.end_time <= event.start_time or booking.start_time >= event.end_time:
+                continue
+            event_bookings.setdefault(booking.event_id, []).append(booking)
+            venue = venues[booking.venue_id]
+            event_venues.setdefault(booking.event_id, {})[venue.id] = {
+                "id": venue.id, "name": venue.name,
+            }
+        event_requirements = {}
+        for requirement in requirements:
+            event_requirements.setdefault(requirement.event_id, []).append(requirement)
+        reserved = {}
+        for reservation in reservations:
+            key = (reservation.event_id, reservation.requirement_id)
+            reserved[key] = reserved.get(key, 0) + reservation.quantity
+
+        for event in events:
+            if not _safety_schedule_covered(event, event_bookings.get(event.id, [])):
+                continue
+            needed = event_requirements.get(event.id, [])
+            # SCRUM-90 A1/Q1: an unprocessed organiser note is not "no equipment".
+            if not needed and (event.equipment_requirements or "").strip():
+                continue
+            equipment_lines = [{
+                "equipment_type": requirement.equipment_type,
+                "quantity": requirement.quantity,
+                "reserved_quantity": reserved.get((event.id, requirement.id), 0),
+            } for requirement in needed]
+            if any(line["reserved_quantity"] < line["quantity"] for line in equipment_lines):
+                continue
+            items.append(_safety_check_payload(
+                event, list(event_venues[event.id].values()), equipment_lines))
+    return items
+
+
 @events_bp.get("/safety-checks")
 @jwt_required()
 def list_safety_checks():
@@ -218,61 +279,9 @@ def list_safety_checks():
         events = Event.query.filter(
             Event.end_time > singapore_now(),
             *[Event.status != status for status in EQUIPMENT_CLOSED_STATUSES]).all()
-        events = [event for event in events if event.start_time is not None]
-        event_ids = {event.id for event in events}
-        items = []
-        if event_ids:
-            # Read only confirmed bookings for current candidates and their date range.
-            # Use booked times here: setup/turnaround do not cover event activities.
-            bookings = VenueBooking.query.filter_by(status=BLOCKING_BOOKING_STATUS).filter(
-                VenueBooking.event_id.in_(event_ids),
-                VenueBooking.start_time < max(event.end_time for event in events),
-                VenueBooking.end_time > min(event.start_time for event in events)).all()
-            requirements = EquipmentRequirement.query.filter(
-                EquipmentRequirement.event_id.in_(event_ids)).all()
-            reservations = EquipmentReservation.query.filter_by(status=reserving.RESERVED).filter(
-                EquipmentReservation.event_id.in_(event_ids)).all()
-            venue_ids = {booking.venue_id for booking in bookings}
-            venues = {venue.id: venue for venue in Venue.query.filter(Venue.id.in_(venue_ids)).all()}
-
-            event_venues = {}
-            event_bookings = {}
-            events_by_id = {event.id: event for event in events}
-            for booking in bookings:
-                event = events_by_id[booking.event_id]
-                # The batch date range can include another event's obsolete periods.
-                # Only booked activities overlapping this event belong in its row.
-                if booking.end_time <= event.start_time or booking.start_time >= event.end_time:
-                    continue
-                event_bookings.setdefault(booking.event_id, []).append(booking)
-                venue = venues[booking.venue_id]
-                event_venues.setdefault(booking.event_id, {})[venue.id] = {
-                    "id": venue.id, "name": venue.name,
-                }
-            event_requirements = {}
-            for requirement in requirements:
-                event_requirements.setdefault(requirement.event_id, []).append(requirement)
-            reserved = {}
-            for reservation in reservations:
-                key = (reservation.event_id, reservation.requirement_id)
-                reserved[key] = reserved.get(key, 0) + reservation.quantity
-
-            for event in events:
-                if not _safety_schedule_covered(event, event_bookings.get(event.id, [])):
-                    continue
-                needed = event_requirements.get(event.id, [])
-                # SCRUM-90 A1/Q1: an unprocessed organiser note is not "no equipment".
-                if not needed and (event.equipment_requirements or "").strip():
-                    continue
-                equipment_lines = [{
-                    "equipment_type": requirement.equipment_type,
-                    "quantity": requirement.quantity,
-                    "reserved_quantity": reserved.get((event.id, requirement.id), 0),
-                } for requirement in needed]
-                if any(line["reserved_quantity"] < line["quantity"] for line in equipment_lines):
-                    continue
-                items.append(_safety_check_payload(
-                    event, list(event_venues[event.id].values()), equipment_lines))
+        events = [event for event in events
+                  if event.start_time is not None and event.safety_decision != "approved"]
+        items = _safety_check_items(events)
     except SQLAlchemyError:
         db.session.rollback()
         return _error("The safety check list could not be loaded. Please try again.",
@@ -280,6 +289,74 @@ def list_safety_checks():
 
     return jsonify({"events": items, "message": None if items else
                     "There are no events awaiting a safety check."})
+
+
+def _safety_decision_payload(event):
+    officer = db.session.get(User, event.safety_decided_by_id)
+    return {
+        "decision": event.safety_decision,
+        "officer": _user_summary(officer) if officer else None,
+        "comment": event.safety_comment,
+        "decided_at": _isoformat(event.safety_decided_at),
+    }
+
+
+@events_bp.post("/<int:event_id>/safety-checks/approve")
+@jwt_required()
+def approve_safety_check(event_id):
+    """SCRUM-91: save safety approval without changing the event's lifecycle status."""
+    try:
+        user = _current_user()
+        if user is None:
+            return _error("Your session is no longer valid. Please log in again.", 401)
+        # Serialize decisions so a double submission cannot overwrite the officer
+        # or create a second notification for the same approval.
+        event = db.session.get(Event, event_id, with_for_update=True)
+        if event is None:
+            return _error("Event not found.", 404)
+        if user.role not in SAFETY_CHECK_APPROVER_ROLES:
+            return _error("Only Safety Officers can approve a safety check.", 403)
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            return _error("Send the approval as a JSON object.", 400)
+        comment = body.get("comment")
+        if comment is not None and not isinstance(comment, str):
+            return _error("The comment must be text.", 400, field="comment")
+        comment = (comment or "").strip() or None
+        if event.safety_decision == "approved":
+            return _error("This safety check is already approved.", 409)
+        if (event.status in EQUIPMENT_CLOSED_STATUSES or event.start_time is None
+                or event.end_time is None or event.end_time <= singapore_now()
+                or not _safety_check_items([event])):
+            return _error("This event is no longer awaiting a safety check. Refresh the list.", 409)
+
+        coordinator = db.session.get(User, event.coordinator_id) if event.coordinator_id else None
+        event.safety_decision = "approved"
+        event.safety_decided_by_id = user.id
+        event.safety_comment = comment
+        event.safety_decided_at = datetime.utcnow()
+        message = (f'The safety check for "{event.title}" was approved by {user.email} '
+                   f"on {_singapore_time(event.safety_decided_at)}.")
+        if comment:
+            message += f" Comment: {comment}"
+        if coordinator:
+            db.session.add(Notification(recipient_id=coordinator.id, event_id=event.id,
+                                        kind="safety_approved", message=message))
+        # Read reply/email values before commit expires the ORM objects. Approval
+        # and in-app notification are saved together; queue email only afterward.
+        payload = _safety_decision_payload(event)
+        to_address = coordinator.email if coordinator else None
+        title = event.title
+        db.session.commit()
+    except SQLAlchemyError:
+        db.session.rollback()
+        return _error("The safety decision was not saved. Please try again.", 503, retryable=True)
+
+    email_queued = (_queue_email(to_address, f"Safety check approved: {title}", message, event_id)
+                    if to_address else False)
+    return jsonify({"message": "Safety check approved.", "safety_check": payload,
+                    "notification": {"in_app": to_address is not None,
+                                     "email_queued": email_queued}})
 
 
 @events_bp.post("/")
@@ -358,6 +435,9 @@ def _planning_payload(event):
         **fields,
         "not_recorded": [name for name in PLANNING_FIELDS if fields[name] is None],
         "venue_bookings": _planning_venue_bookings(event),
+        # Add only recorded safety decisions; preserve the existing payload for
+        # events with no safety check (SCRUM-91 AC2).
+        **({"safety_check": _safety_decision_payload(event)} if event.safety_decision else {}),
     }
 
 
