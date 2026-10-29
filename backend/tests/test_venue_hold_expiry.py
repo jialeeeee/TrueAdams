@@ -80,6 +80,13 @@ class HoldExpiryTestCase(HoldTestCase):
     def notices(self, user, kind):
         return [n for n in self.notifications_for(user) if n.kind == kind]
 
+    def emails_to(self, *users):
+        """(subject, body) of each email queued to these seeded users. The check runs over
+        every hold, so real holds in a shared database may be emailed about too."""
+        addresses = {self.users[user].email for user in users}
+        return [call.args[1:] for call in self.queue_email.call_args_list
+                if call.args[0] in addresses]
+
     def warn(self, booking):
         """Record that the coordinator was already warned about this hold."""
         booking.hold_warned_at = HELD_AT
@@ -318,7 +325,7 @@ class ExpiredTests(HoldExpiryTestCase):
 
         self.assertEqual(self.stored("P1")["status"], "confirmed")
         self.assertEqual(self.notifications_for("alice"), [])
-        self.queue_email.assert_not_called()
+        self.assertEqual(self.emails_to("alice"), [])
 
 
 # ---------- AC3: the coordinator is notified ----------
@@ -338,13 +345,12 @@ class NotificationTests(HoldExpiryTestCase):
                      "2027-03-02 12:00"):
             self.assertIn(text, notice.message)
         self.assertRegex(notice.message.lower(), r"confirm")
-        self.queue_email.assert_called_once()
-        to_address, subject, body = self.queue_email.call_args.args
-        self.assertEqual(to_address, self.users["alice"].email)
+        [(subject, body)] = self.emails_to("alice")
         self.assertIn("Aurora Ballroom", subject)
         self.assertIn("2027-03-02 12:00", body)
         self.assertIsNotNone(self.stored("P1")["hold_warned_at"])
         self.assertEqual(self.notifications_for("ben"), [])
+        self.assertEqual(self.emails_to("ben"), [])
         self.assertIsNone(self.stored("P2")["hold_warned_at"])
 
     # TC-86-17 · AC3 — the warning is sent once.
@@ -355,7 +361,7 @@ class NotificationTests(HoldExpiryTestCase):
         self.run_check()
 
         self.assertEqual(self.kinds("alice"), [EXPIRING])
-        self.queue_email.assert_called_once()
+        self.assertEqual(len(self.emails_to("alice")), 1)
 
     # TC-86-18 · AC3, AC4 — the coordinator is told when the hold expires.
     def test_coordinator_is_told_when_the_hold_expires(self):
@@ -370,9 +376,7 @@ class NotificationTests(HoldExpiryTestCase):
                      "2027-03-01 12:00"):
             self.assertIn(text, notice.message)
         self.assertRegex(notice.message.lower(), r"new venue request")
-        self.queue_email.assert_called_once()
-        to_address, _, body = self.queue_email.call_args.args
-        self.assertEqual(to_address, self.users["alice"].email)
+        [(_, body)] = self.emails_to("alice")
         self.assertIn("2027-03-01 12:00", body)
         self.assertRegex(body.lower(), r"new venue request")
 
@@ -384,7 +388,7 @@ class NotificationTests(HoldExpiryTestCase):
         self.run_check()
 
         self.assertEqual(self.kinds("alice"), ["venue_hold_placed"])
-        self.queue_email.assert_not_called()
+        self.assertEqual(self.emails_to("alice"), [])
 
     # TC-86-20 · AC3 (Q3) — changing the expiry makes the warning due again, or not.
     def test_changing_the_expiry_rearms_the_warning(self):
@@ -435,7 +439,7 @@ class NotificationTests(HoldExpiryTestCase):
 
         self.assertEqual(self.stored("P1")["status"], "tentative")
         self.assertEqual(self.notifications_for("alice"), [])
-        self.queue_email.assert_not_called()
+        self.assertEqual(self.emails_to("alice"), [])
 
         self.run_check()
         self.assertEqual(self.stored("P1")["status"], "expired")
@@ -450,7 +454,7 @@ class NotificationTests(HoldExpiryTestCase):
         self.run_check()
 
         self.assertEqual(self.stored(hold)["status"], "expired")
-        self.queue_email.assert_not_called()
+        self.assertEqual(self.emails_to(*self.users), [])
 
     # TC-86-25 · AC3 (Q2) — the check runs every 5 minutes.
     def test_check_runs_every_five_minutes(self):
