@@ -65,8 +65,8 @@ These are the team's current reading of the story, agreed with the scrum lead on
   - The pending list (SCRUM-39/40) gains an expiry field and "Place tentative hold" for each request.
   - A new **Tentative holds** page lists unexpired holds, soonest expiry first, and lets Venue Staff change each expiry.
 - **A9 — Out of scope:**
-  - **Confirming a hold:** SCRUM-40's Approve still accepts only pending requests, so a hold is refused there. Confirming one is a separate story.
-  - **What happens when a hold expires,** including notifying the coordinator then (Week 7 change 4). Until that is built, an expired hold stays `tentative` but blocks nothing and isn't listed. *(Q4)*
+  - **Confirming a hold:** SCRUM-40's Approve still accepts only pending requests, so a hold is refused there. The event's coordinator confirms one instead (SCRUM-86).
+  - **What happens when a hold expires,** including notifying the coordinator then (Week 7 change 4). An expired hold blocks nothing and isn't listed. SCRUM-86 shows it as `expired` from its expiry, records that, and notifies the coordinator. *(Q4)*
   - **The coordinator's venue request page** shows a hold and its expiry since the reopening (A10), but the coordinator can't confirm or extend a hold there.
 - **A10 — The coordinator sees the hold (AC5, since reopening):** in-app notifications have no screen yet (a separate story), so the expiry is also shown where the coordinator already follows the event's venue bookings, the list from SCRUM-69/94 (`GET /api/venues/bookings?event_id=`):
   - each booking gains `hold`: `{"expires_at", "expired"}` for a tentative booking and `null` otherwise;
@@ -520,5 +520,5 @@ Rechecking the other criteria found no gaps (AC1–AC4, AC6, AC7: cases 01–21 
 | Q1 | Can a hold's expiry be later than the booking's start? Assumed not: a hold can't outlast the time it holds. | A2, TC-87-07, 10 |
 | Q2 | Should venue search leave out a venue that is held for the searched time (assumed), or still list it? **Answered 28 Oct 2026 by AC8: leave it out.** | A3, TC-87-22, 39–41 |
 | Q3 | Should the coordinator be told when Venue Staff change a hold's expiry (assumed), or only when it is placed? | A6, TC-87-24 |
-| Q4 | What happens when a hold expires: is the coordinator warned beforehand, and does the request go back to pending or close? How is a hold confirmed? (Week 7 change 4; separate stories.) Until then, an expired hold blocks nothing and can't be changed. | A9, TC-87-12, 16, 21, 33 |
+| Q4 | What happens when a hold expires: is the coordinator warned beforehand, and does the request go back to pending or close? How is a hold confirmed? (Week 7 change 4.) **Answered by SCRUM-86 (29 Oct 2026):** the coordinator is warned 24 hours before and told when it expires, an expired hold is Expired (a new request is needed), and the event's coordinator confirms a hold. | A9, TC-87-12, 16, 21, 33 |
 | Q5 | Where should the coordinator see a hold's expiry while in-app notifications have no screen? Assumed: on their list of the event's venue bookings, with an expired hold marked as expired. | A10, TC-87-43, 44 |

@@ -2,7 +2,7 @@
 
 **User story:** As an Event Coordinator, I want to confirm a tentative hold before it expires, or be told when it expires, so that venues are not blocked by plans that never get confirmed.
 
-**Created:** 29 Oct 2026 · **Status of all cases:** Written, automated tests failing (TDD, red) · **Automated tests:** `backend/tests/test_venue_hold_expiry.py`, `frontend/src/pages/VenueBookingRequestPage.test.jsx` · **Related:** Week 7 customer change 4 (tentative venue holds expire), SCRUM-87 (placing a hold), SCRUM-40 (approving a request), SCRUM-41 (conflict checks), SCRUM-85 (several venues for one event), SCRUM-94 (cancelling a booking), SCRUM-64 (calendar rules)
+**Created:** 29 Oct 2026 · **Status of all cases:** Automated cases pass (29 Oct 2026, local PostgreSQL built from the models, with db/venue_hold_expiry.sql's column + Vitest); frontend cases 32–34 also to be checked manually in the browser, and the beat schedule with `docker compose up` · **Automated tests:** `backend/tests/test_venue_hold_expiry.py`, `frontend/src/pages/VenueBookingRequestPage.test.jsx` · **Related:** Week 7 customer change 4 (tentative venue holds expire), SCRUM-87 (placing a hold), SCRUM-40 (approving a request), SCRUM-41 (conflict checks), SCRUM-85 (several venues for one event), SCRUM-94 (cancelling a booking), SCRUM-64 (calendar rules)
 
 ## Acceptance criteria
 
@@ -28,7 +28,7 @@ These are the team's current reading of the story, agreed with the scrum lead on
 - **A2 — The same checks as approving:**
   - The event must still be approved (SCRUM-40 A4).
   - Conflicts are checked again with the booking and venue rows locked (SCRUM-40 A7). Something may have been recorded over the hold since it was placed, such as a block. The hold itself is never a conflict. *(Q1)*
-  - If conflicts can't be checked, nothing is confirmed (SCRUM-41 A5). If the database rule refuses the save, it is a conflict (SCRUM-41 A4).
+  - If conflicts can't be checked, or the save fails for any reason, nothing is confirmed and the hold stays tentative (SCRUM-41 A5, AC6).
 - **A3 — Expired (AC2, AC4):**
   - A hold has expired from its expiry itself, by Singapore time (SCRUM-87 A3).
   - From that moment its status is shown as `expired`, even before the expiry check has recorded it.
@@ -173,8 +173,8 @@ SCRUM-87's VH-SEED (SCRUM-40's VA-SEED), reset before **every** test case:
 **TC-86-11 · At its expiry the hold is Expired, before the check runs**
 - **Traces to:** AC2 · **Type:** Boundary
 - **Preconditions:** H1 expires at 2027-03-01 12:00, exactly now. The expiry check hasn't run.
-- **Steps:** As `alice`, list E1's venue bookings. As `gus`, list the holds.
-- **Expected result:**
+- **Steps:** As `alice`, list E1's venue bookings. As `gus`, list the holds. Run the expiry check, then list both again.
+- **Expected result:** Both times:
   - P1 has status `expired` and `hold: {"expires_at": "2027-03-01T12:00:00", "expired": true}`.
   - H1 isn't among the holds.
   - (The calendar already shows an expired hold's time as available: TC-87-21.)
