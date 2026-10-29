@@ -2885,7 +2885,14 @@ EQUIPMENT_NOT_SAVED = ("The equipment requirement was not saved, and the recorde
                        "requirements are unchanged. Please try again.")
 EQUIPMENT_NOT_REMOVED = ("The equipment requirement was not removed, and the recorded "
                          "requirements are unchanged. Please try again.")
-ARRANGEMENT_NOT_SAVED = "The arrangement status was not saved. Please try again."
+# Says that nothing changed, as a failed requirement save does (SCRUM-97 AC3, A8).
+ARRANGEMENT_NOT_SAVED = ("The arrangement was not saved, and the recorded requirements are "
+                         "unchanged. Please try again.")
+# The coordinator changed the requirement after Technical Support opened it, so the update
+# would describe details they never saw (SCRUM-97 A5, open question Q3).
+ARRANGEMENT_DETAILS_CHANGED = ("The coordinator has changed this requirement since you opened "
+                               "it, so your update was not saved. It is now {name}: check the "
+                               "new details and update it again.")
 
 
 def _equipment_event(event_id, allowed, denied, hide_drafts=False):
@@ -3147,16 +3154,33 @@ def update_equipment_arrangement(event_id: int, requirement_id: int):
     """Technical Support Staff record how arranging a requirement is going (AC4). They
     can't mark it reserved or fulfilled: that is SCRUM-44 (AC6)."""
     try:
-        user, event = _equipment_event(event_id, is_tech_staff, EQUIPMENT_TECH_ONLY)
-        requirement = _event_requirement(event, requirement_id)
+        # A draft is the organiser's own, as when viewing (SCRUM-97 A6, SCRUM-96 A3).
+        user, event = _equipment_event(event_id, is_tech_staff, EQUIPMENT_TECH_ONLY,
+                                       hide_drafts=True)
+        # Locked, so the coordinator's edit, which resets the arrangement (A8), can't land
+        # between the check below and this save (SCRUM-97 A5).
+        requirement = _event_requirement(event, requirement_id, lock=True)
         _require_equipment_open(event)
-        values, problems = equipment.parse_arrangement(_equipment_body("arrangement"))
+        body = _equipment_body("arrangement")
+        values, problems = equipment.parse_arrangement(body)
         if problems:
             raise _Rejected(EQUIPMENT_INVALID, 422, fields=problems)
-        for name, value in values.items():
-            setattr(requirement, name, value)
-        requirement.arrangement_updated_by_id = user.id
-        requirement.arrangement_updated_at = datetime.utcnow()
+        name = equipment.describe(requirement.quantity, requirement.equipment_type)
+        # The page sends the last_saved_at it showed; older clients may not (SCRUM-97 A5).
+        if ("last_saved_at" in body
+                and body["last_saved_at"] != _isoformat(requirement.last_saved_at)):
+            raise _Rejected(ARRANGEMENT_DETAILS_CHANGED.format(name=name), 409, reload=True)
+        # Unchanged, it keeps who updated it and when: pressing Update again must not
+        # make someone look responsible for an arrangement they didn't touch (SCRUM-97 A4).
+        if any(getattr(requirement, column) != value for column, value in values.items()):
+            for column, value in values.items():
+                setattr(requirement, column, value)
+            requirement.arrangement_updated_by_id = user.id
+            requirement.arrangement_updated_at = datetime.utcnow()
+            label = equipment.status_label(values["status"])
+            message = f"Arrangement status updated to {label}."
+        else:
+            message = f"No changes were made to the arrangement for {name}."
         requirement_id = requirement.id
         db.session.commit()
     except _Rejected as rejected:
@@ -3165,8 +3189,7 @@ def update_equipment_arrangement(event_id: int, requirement_id: int):
         db.session.rollback()
         return _error(ARRANGEMENT_NOT_SAVED, 503, retryable=True)
 
-    label = equipment.status_label(values["status"])
-    return _saved_reply(user, event, f"Arrangement status updated to {label}.", requirement_id)
+    return _saved_reply(user, event, message, requirement_id)
 
 
 @events_bp.get("/equipment-requests")

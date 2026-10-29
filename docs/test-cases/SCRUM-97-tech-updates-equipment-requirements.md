@@ -67,7 +67,7 @@ Requirements recorded by alice for G1: **2 × Wireless microphone** ("Lapel, wit
 **TC-97-05 · An update for details the coordinator has since changed is refused**
 - **Traces to:** AC1, AC2 · **Type:** Negative (business rule) · **Depends on:** A5
 - **Steps:** hana opens G1 (noting the microphones' `last_saved_at`). alice changes the quantity to 5. hana sends Being arranged with the note and the old `last_saved_at`.
-- **Expected result:** HTTP 409 saying the update was not saved and naming the requirement as it is now (5 × Wireless microphone), with `reload: true`. Stored: quantity 5, status Requested, no note, no who or when. Sending again with the new `last_saved_at` is HTTP 200.
+- **Expected result:** HTTP 409 saying the update was not saved and naming the requirement as it is now (5 × Wireless microphone), with `reload: true`. Stored: quantity 5, status Requested, no note, no who or when. Sending again with the new `last_saved_at` is HTTP 200, and the requirement was read with `SELECT … FOR UPDATE` before it was saved. An update without `last_saved_at` (an older page) is HTTP 200.
 - **Automated:** `test_tc_97_05_an_update_for_changed_details_is_refused`
 
 **TC-97-06 · Only the arrangement can be changed this way**

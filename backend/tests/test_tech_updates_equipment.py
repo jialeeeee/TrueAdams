@@ -18,6 +18,7 @@ import unittest
 from datetime import datetime
 from unittest import mock
 
+from sqlalchemy import event as sa_event
 from sqlalchemy.exc import SQLAlchemyError
 
 from app import tasks
@@ -203,9 +204,32 @@ class UpdateTests(TechUpdateTestCase):
         self.assertEqual((before["status"], before["arrangement_note"],
                           before["arrangement_updated_by_id"]), ("requested", None, None))
 
-        again = self.update(mic_id, status="being_arranged", note=NOTE)
+        seen = self.seen(mic_id)
+        statements = []
+
+        def record(conn, cursor, statement, parameters, context, executemany):
+            statements.append(statement)
+
+        self.db.session.expire_all()
+        sa_event.listen(self.db.engine, "before_cursor_execute", record)
+        try:
+            again = self.update(mic_id, status="being_arranged", note=NOTE, last_saved_at=seen)
+        finally:
+            sa_event.remove(self.db.engine, "before_cursor_execute", record)
         self.assertEqual(again.status_code, 200, again.get_json())
         self.assertEqual(self.row(mic_id)["status"], "being_arranged")
+        # Locked before it is checked, so the coordinator's edit can't land in between.
+        lock = next((i for i, s in enumerate(statements)
+                     if "FROM equipment_requirements" in s and "FOR UPDATE" in s), None)
+        save = next(i for i, s in enumerate(statements)
+                    if s.startswith("UPDATE equipment_requirements"))
+        self.assertIsNotNone(lock, "the requirement was never read with SELECT ... FOR UPDATE")
+        self.assertLess(lock, save)
+
+        # Without last_saved_at (an older page), the update is checked as before.
+        older = self.arrange(mic_id, status="unavailable")
+        self.assertEqual(older.status_code, 200, older.get_json())
+        self.assertEqual(self.row(mic_id)["status"], "unavailable")
 
     # TC-97-06 · AC1, AC2 (A2)
     def test_tc_97_06_only_the_arrangement_can_be_changed(self):
