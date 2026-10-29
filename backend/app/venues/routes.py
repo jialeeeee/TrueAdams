@@ -1517,6 +1517,17 @@ def cancel_booking(booking_id: int):
 HOLD_CONFIRMED_NOTIFICATION = "venue_hold_confirmed"
 
 
+def _refuse_if_expired(booking):
+    """Refuse a hold that has expired (AC4): nothing is held any more, so the venue must be
+    asked for again."""
+    if scheduling.current_status(booking, singapore_now()) == EXPIRED:
+        venue = db.session.get(Venue, booking.venue_id)
+        raise _Rejected(
+            f"This hold expired on {_when(booking.hold_expires_at)} (Singapore time), so it "
+            f"can't be confirmed. Submit a new venue request for {venue.name}.",
+            409, reason="expired")
+
+
 @venues_bp.post("/bookings/<int:booking_id>/confirm")
 @jwt_required()
 def confirm_hold(booking_id: int):
@@ -1525,17 +1536,10 @@ def confirm_hold(booking_id: int):
         user = _require_viewer(roles=None)
         booking, event = _cancelling_booking(
             user, booking_id, "Only the event's assigned coordinator can confirm its venue holds.")
-        status = scheduling.current_status(booking, singapore_now())
-        if status not in HOLD_STATUSES:
+        if booking.status not in HOLD_STATUSES:
             raise _Rejected(f"This booking is {booking.status}, so there is no hold to confirm.",
                             409, reason="not_a_hold")
-        if status == EXPIRED:
-            # AC4: nothing is held any more, so the venue must be asked for again.
-            venue = db.session.get(Venue, booking.venue_id)
-            raise _Rejected(
-                f"This hold expired on {_when(booking.hold_expires_at)} (Singapore time), so it "
-                f"can't be confirmed. Submit a new venue request for {venue.name}.",
-                409, reason="expired")
+        _refuse_if_expired(booking)
         if event.status != REQUESTABLE_EVENT_STATUS:
             raise _Rejected(
                 f"The event is {event.status}, so its venue hold can't be confirmed.",
@@ -1548,6 +1552,8 @@ def confirm_hold(booking_id: int):
         # The event's first confirmed venue is its venue (A1; SCRUM-85 A4).
         first_venue = VenueBooking.query.filter_by(event_id=event.id,
                                                    status=CONFIRMED).first() is None
+        # The hold may have expired while the venue was locked and checked (PR review).
+        _refuse_if_expired(booking)
 
         booking.status = CONFIRMED
         booking.decided_at = datetime.utcnow()
