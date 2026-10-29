@@ -2,7 +2,7 @@
 
 **User story:** As a Technical Support Staff member, I want to update an event's equipment requirements as arrangements are made, so that the record shows what has been arranged.
 
-**Created:** 30 Oct 2026 · **Status of all cases:** written test-first; not yet passing · **Automated tests:** `backend/tests/test_tech_updates_equipment.py`, `frontend/src/pages/EquipmentRequirementsPage.test.jsx` (the "SCRUM-97" block) · **Endpoint:** `PATCH /api/events/<id>/equipment-requirements/<requirement_id>/arrangement` (built by SCRUM-42) · **Related:** SCRUM-42 (records the requirements and first let Technical Support update the arrangement: AC4, TC-42-21 to 23, 28), SCRUM-96 (Technical Support view the requirements on the same page), SCRUM-44 (reserving equipment, which is not done here)
+**Created:** 30 Oct 2026 · **Status of all cases:** automated cases pass (30 Oct 2026, local PostgreSQL as in CI, Supabase + Vitest); end-to-end check passed in the browser, see [the DoD evidence](../evidence/SCRUM-97-dod-evidence.md) · **Automated tests:** `backend/tests/test_tech_updates_equipment.py`, `frontend/src/pages/EquipmentRequirementsPage.test.jsx` (the "SCRUM-97" block) · **Endpoint:** `PATCH /api/events/<id>/equipment-requirements/<requirement_id>/arrangement` (built by SCRUM-42) · **Related:** SCRUM-42 (records the requirements and first let Technical Support update the arrangement: AC4, TC-42-21 to 23, 28), SCRUM-96 (Technical Support view the requirements on the same page), SCRUM-44 (reserving equipment, which is not done here)
 
 ## Acceptance criteria
 

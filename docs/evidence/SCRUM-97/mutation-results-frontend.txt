@@ -1,0 +1,11 @@
+baseline: all frontend tests pass
+F1 | Who updated the arrangement and when is not shown | AC1 | CAUGHT | shows a refusal and leaves the requirements as they were, shows the update, who made it and when once it is saved, shows who updated each arrangement and when, and sends the details it showed
+F2 | The time is shown as raw UTC text | AC1 | CAUGHT | shows a refusal and leaves the requirements as they were, shows the update, who made it and when once it is saved, shows who updated each arrangement and when, and sends the details it showed
+F3 | The wrong person is named | AC1 | CAUGHT | shows a refusal and leaves the requirements as they were, shows the update, who made it and when once it is saved, shows who updated each arrangement and when, and sends the details it showed
+F4 | The details shown are not sent with the update | AC1 | CAUGHT | lets Technical Support Staff update the arrangement status, shows who updated each arrangement and when, and sends the details it showed
+F5 | A refusal for changed details doesn't show the new details | AC1 | CAUGHT | reloads the new details when the coordinator changed the requirement
+F6 | The requirement looks updated before the server agrees | AC2, AC3 | CAUGHT | keeps the requirements and the entry when a save fails, and saves on trying again, says the requirements are unchanged when there is no reply, shows a refusal and leaves the requirements as they were
+F7 | A failed update shows no error | AC2, AC3 | CAUGHT | keeps the requirements and the entry when a save fails, and saves on trying again, reloads the new details when the coordinator changed the requirement, says the requirements are unchanged when there is no reply, shows a refusal and leaves the requirements as they were, shows why an arrangement update failed
+F8 | The server's explanation is ignored | AC2, AC3 | CAUGHT | keeps the requirements and the entry when a save fails, and saves on trying again, reloads the new details when the coordinator changed the requirement, shows a refusal and leaves the requirements as they were, shows why an arrangement update failed
+F9 | With no reply, the page doesn't say the requirements are unchanged | AC3 | CAUGHT | says the requirements are unchanged when there is no reply
+after restore: all pass
