@@ -263,12 +263,17 @@ class ExpiredTests(HoldExpiryTestCase):
     def test_hold_is_expired_from_its_expiry(self):
         self.make_hold("P1", expires_at=NOW)
 
-        listed = self.coordinator_list()[self.bookings["P1"].id]
+        for label in ("before the check", "once recorded"):
+            with self.subTest(hold=label):
+                if label == "once recorded":
+                    self.run_check()
+                listed = self.coordinator_list()[self.bookings["P1"].id]
 
-        self.assertEqual(listed["status"], "expired")
-        self.assertEqual(listed["hold"], {"expires_at": "2027-03-01T12:00:00", "expired": True})
-        held = [h["id"] for h in self.holds().get_json()["holds"]]
-        self.assertNotIn(self.bookings["P1"].id, held)
+                self.assertEqual(listed["status"], "expired")
+                self.assertEqual(listed["hold"],
+                                 {"expires_at": "2027-03-01T12:00:00", "expired": True})
+                held = [h["id"] for h in self.holds().get_json()["holds"]]
+                self.assertNotIn(self.bookings["P1"].id, held)
 
     # TC-86-12 · AC2 (boundary) — the expiry check records expired holds.
     def test_expiry_check_records_expired_holds(self):

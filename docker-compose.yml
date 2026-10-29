@@ -19,3 +19,11 @@ services:
     depends_on:
       - redis
     command: celery -A celery_worker.celery worker --loglevel=info
+
+  # SCRUM-86: runs the tentative hold expiry check every 5 minutes (app/venues/hold_expiry.py).
+  celery-beat:
+    build: ./backend
+    env_file: ./backend/.env
+    depends_on:
+      - redis
+    command: celery -A celery_worker.celery beat --loglevel=info

@@ -5,7 +5,7 @@ from flask import Blueprint, current_app, jsonify, request
 from flask_jwt_extended import get_jwt_identity, jwt_required
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
-from . import scheduling
+from . import hold_expiry, scheduling
 from .. import tasks
 from ..events.permissions import is_current_coordinator
 from ..extensions import db
@@ -679,7 +679,8 @@ def _booking_payload(booking):
     requester = db.session.get(User, booking.requested_by_id)
     return {
         "id": booking.id,
-        "status": booking.status,
+        # SCRUM-86 A3: a hold is Expired from its expiry, before the check records it.
+        "status": scheduling.current_status(booking, singapore_now()),
         "event": {"id": event.id, "title": event.title,
                   "expected_attendance": event.expected_attendance},
         "venue": {"id": venue.id, "name": venue.name, "location": _recorded(venue.location)},
@@ -888,7 +889,9 @@ def _approval_conflicts(booking):
     Venue Staff also see these in the pending list before approving (SCRUM-41 A2).
     """
     start, end = scheduling.occupied(booking)
-    return _conflicts_for(booking.venue_id, start, end)
+    # A hold being confirmed is never its own conflict (SCRUM-86 A2).
+    return [conflict for conflict in _conflicts_for(booking.venue_id, start, end)
+            if (conflict["type"], conflict["id"]) != ("hold", booking.id)]
 
 
 def _conflicts_for(venue_id, start, end):
@@ -920,11 +923,13 @@ def _clash(venue, conflicts, refused="approved"):
         f"at {venue.name}.", 409, reason="conflict", conflicts=conflicts)
 
 
-def _locked_venue_and_conflicts(booking, outcome="the booking was not approved"):
+def _locked_venue_and_conflicts(booking, outcome="the booking was not approved",
+                                state=PENDING):
     """Lock the booking's venue, then find its conflicts (A7; SCRUM-41 A5).
 
     Without a completed check the booking is never confirmed or held, so a database
-    failure here is reported as availability that could not be verified.
+    failure here is reported as availability that could not be verified, with the
+    `state` the booking is still in.
     """
     try:
         venue = db.session.get(Venue, booking.venue_id, with_for_update=True)
@@ -933,7 +938,7 @@ def _locked_venue_and_conflicts(booking, outcome="the booking was not approved")
         db.session.rollback()
         raise _Rejected(
             f"The venue's availability could not be verified, so {outcome}. It is still "
-            "pending. Please try again.", 503, retryable=True,
+            f"{state}. Please try again.", 503, retryable=True,
         ) from None
 
 
@@ -1126,6 +1131,9 @@ def reject_booking(booking_id: int):
 # ---------- Tentative holds (SCRUM-87) ----------
 
 TENTATIVE = scheduling.TENTATIVE_STATUS
+EXPIRED = scheduling.EXPIRED_STATUS
+# A hold is tentative until it expires, then expired (SCRUM-86 A3).
+HOLD_STATUSES = {TENTATIVE, EXPIRED}
 HOLD_PLACED_NOTIFICATION = "venue_hold_placed"
 HOLD_CHANGED_NOTIFICATION = "venue_hold_expiry_changed"
 # The only field a hold or a change of its expiry takes (A2).
@@ -1167,8 +1175,9 @@ def _hold_payload(booking):
 
 def _coordinator_hold(booking):
     """What the coordinator sees of a hold: its expiry and whether that has passed, by
-    A3's rule; None for any other booking (A10, open question Q5)."""
-    if booking.status != TENTATIVE:
+    A3's rule; None for any other booking (A10, open question Q5). A hold recorded as
+    expired keeps its expiry (SCRUM-86 A3)."""
+    if booking.status not in HOLD_STATUSES:
         return None
     return {"expires_at": booking.hold_expires_at.isoformat(),
             "expired": booking.hold_expires_at <= singapore_now()}
@@ -1204,6 +1213,8 @@ def place_hold(booking_id: int):
         booking.held_at = datetime.utcnow()
         booking.held_by_id = user.id
         booking.hold_expires_at = expires_at
+        # SCRUM-86 A4: this notice gives an expiry within 24 hours, if it is one.
+        booking.hold_warned_at = hold_expiry.warned_at(expires_at, singapore_now())
         coordinator = db.session.get(User, event.coordinator_id)
         message = (
             f'{user.email} placed a tentative hold on {venue.name} for "{event.title}" '
@@ -1249,17 +1260,22 @@ def change_hold_expiry(booking_id: int):
         if booking is None:
             raise _Rejected("Booking request not found.", 404)
         expires_at = _hold_expiry(request.get_json(silent=True), booking)
-        if booking.status != TENTATIVE:
+        status = scheduling.current_status(booking, singapore_now())
+        if status not in HOLD_STATUSES:
             raise _Rejected(
                 "This booking is not a tentative hold, so it has no expiry to change.",
                 409, reason="not_a_hold")
         previous = booking.hold_expires_at
-        if previous <= singapore_now():
+        # Expired, whether or not the expiry check has recorded it yet (SCRUM-86 A3).
+        if status == EXPIRED:
             raise _Rejected(
                 f"This hold expired on {_when(previous)}, so its expiry can no longer be "
                 "changed.", 409, reason="expired")
 
         booking.hold_expires_at = expires_at
+        # SCRUM-86 A4: a new expiry makes the 24-hour warning due again, unless this
+        # notice already gives one within 24 hours.
+        booking.hold_warned_at = hold_expiry.warned_at(expires_at, singapore_now())
         event = db.session.get(Event, booking.event_id)
         venue = db.session.get(Venue, booking.venue_id)
         coordinator = db.session.get(User, event.coordinator_id)
@@ -1334,9 +1350,11 @@ CANCEL_FIELDS = {"also_cancel"}
 NOT_THIS_EVENTS_BOOKINGS = "Choose only other venue bookings of this event to cancel too."
 
 
-def _cancelling_booking(user, booking_id):
+def _cancelling_booking(user, booking_id,
+                        denied="Only the event's assigned coordinator can cancel its venue "
+                               "bookings."):
     """The booking and its event, locked, if `user` may cancel the event's bookings
-    (A1, A6, A7).
+    (A1, A6, A7), or confirm its holds (SCRUM-86 A6), else `denied`.
 
     Locked, so a cancellation and a Venue Staff decision happen one at a time.
     """
@@ -1347,8 +1365,7 @@ def _cancelling_booking(user, booking_id):
     event = db.session.get(Event, booking.event_id, with_for_update=True,
                            populate_existing=True) if booking.event_id else None
     if event is None or not is_current_coordinator(user, event):
-        raise _Rejected(
-            "Only the event's assigned coordinator can cancel its venue bookings.", 403)
+        raise _Rejected(denied, 403)
     return booking, event
 
 
@@ -1428,14 +1445,14 @@ def _cancellation_message(user, event, released, venues):
             f"{'; '.join(described)}. The venues are free again for those times.")
 
 
-def _notify_venue_staff(message, event_id):
+def _notify_venue_staff(message, event_id, kind=CANCELLATION_NOTIFICATION):
     """Add an in-app notification for every Venue Staff member; return their addresses.
 
     Venue Staff aren't linked to venues, so all of them are told (A4, open question Q4).
     """
     staff = User.query.filter(User.role.in_(BOOKING_REVIEWER_ROLES)).all()
     for member in staff:
-        db.session.add(Notification(recipient_id=member.id, kind=CANCELLATION_NOTIFICATION,
+        db.session.add(Notification(recipient_id=member.id, kind=kind,
                                     message=message, event_id=event_id))
     return [member.email for member in staff]
 
@@ -1491,5 +1508,77 @@ def cancel_booking(booking_id: int):
         "message": confirmation,
         "booking": payload,
         "also_cancelled": also_cancelled,
+        "notification": {"in_app": True, "email_queued": all(queued)},
+    })
+
+
+# ---------- The coordinator confirms a hold (SCRUM-86) ----------
+
+HOLD_CONFIRMED_NOTIFICATION = "venue_hold_confirmed"
+
+
+@venues_bp.post("/bookings/<int:booking_id>/confirm")
+@jwt_required()
+def confirm_hold(booking_id: int):
+    try:
+        # The user, then the booking and its event (locked), then permission (A6).
+        user = _require_viewer(roles=None)
+        booking, event = _cancelling_booking(
+            user, booking_id, "Only the event's assigned coordinator can confirm its venue holds.")
+        status = scheduling.current_status(booking, singapore_now())
+        if status not in HOLD_STATUSES:
+            raise _Rejected(f"This booking is {booking.status}, so there is no hold to confirm.",
+                            409, reason="not_a_hold")
+        if status == EXPIRED:
+            # AC4: nothing is held any more, so the venue must be asked for again.
+            venue = db.session.get(Venue, booking.venue_id)
+            raise _Rejected(
+                f"This hold expired on {_when(booking.hold_expires_at)} (Singapore time), so it "
+                f"can't be confirmed. Submit a new venue request for {venue.name}.",
+                409, reason="expired")
+        if event.status != REQUESTABLE_EVENT_STATUS:
+            raise _Rejected(
+                f"The event is {event.status}, so its venue hold can't be confirmed.",
+                409, reason="event_not_approved")
+        # Checked again, as for an approval: something may have been recorded since (A2).
+        venue, conflicts = _locked_venue_and_conflicts(booking, "the hold was not confirmed",
+                                                       state=TENTATIVE)
+        if conflicts:
+            raise _clash(venue, conflicts, refused="confirmed")
+        # The event's first confirmed venue is its venue (A1; SCRUM-85 A4).
+        first_venue = VenueBooking.query.filter_by(event_id=event.id,
+                                                   status=CONFIRMED).first() is None
+
+        booking.status = CONFIRMED
+        booking.decided_at = datetime.utcnow()
+        booking.decided_by_id = user.id
+        if first_venue:
+            event.venue_id = venue.id
+        message = (
+            f'{user.email} confirmed the tentative hold on {venue.name} for "{event.title}" '
+            f"({_period_text(booking.start_time, booking.end_time)}). It is now a confirmed "
+            "booking."
+        )
+        # Saved in the same commit as the confirmation (A5).
+        staff_addresses = _notify_venue_staff(message, event.id, HOLD_CONFIRMED_NOTIFICATION)
+        payload = _booking_decision_payload(booking)
+        title, venue_name, event_id = event.title, venue.name, event.id
+        db.session.commit()
+    except _Rejected as rejected:
+        return _error(rejected.message, rejected.status_code, **rejected.extra)
+    except SQLAlchemyError:
+        db.session.rollback()
+        return _error(
+            "The confirmation was not saved, so the hold is still tentative. Please try again.",
+            503, retryable=True,
+        )
+
+    queued = [_queue_email(address, f"Tentative hold confirmed: {venue_name} for {title}",
+                           f"{message}\n\n{STAFF_EMAIL_FOOTER}", event_id)
+              for address in staff_addresses]
+    return jsonify({
+        "message": (f"You confirmed {venue_name} for {title}. It is now a confirmed booking, "
+                    "and Venue Staff have been notified."),
+        "booking": payload,
         "notification": {"in_app": True, "email_queued": all(queued)},
     })

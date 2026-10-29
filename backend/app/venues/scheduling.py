@@ -14,6 +14,9 @@ from ..models import VenueBlock, VenueBooking
 BLOCKING_BOOKING_STATUS = "confirmed"
 # A tentative hold blocks its time too, but only until it expires (SCRUM-87 A3).
 TENTATIVE_STATUS = "tentative"
+# A hold whose expiry has passed (SCRUM-86 AC2). The expiry check records it, and until
+# then a tentative hold past its expiry is shown as expired anyway (current_status).
+EXPIRED_STATUS = "expired"
 
 AVAILABLE = "available"
 UNAVAILABLE = "unavailable"
@@ -116,6 +119,14 @@ def unexpired_holds(now):
     """Tentative holds whose expiry is later than `now`; at its expiry a hold has expired."""
     return VenueBooking.query.filter(VenueBooking.status == TENTATIVE_STATUS,
                                      VenueBooking.hold_expires_at > now)
+
+
+def current_status(booking, now):
+    """The booking's status now: a tentative hold has expired from its expiry itself,
+    even before the expiry check records it (SCRUM-86 A3)."""
+    if booking.status == TENTATIVE_STATUS and booking.hold_expires_at <= now:
+        return EXPIRED_STATUS
+    return booking.status
 
 
 def holds(venue_ids, start, end, now):

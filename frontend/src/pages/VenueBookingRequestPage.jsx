@@ -12,6 +12,7 @@ const NOT_LOADED = "The event or venues could not be loaded. Check your connecti
 const NOT_SENT = "Your venue request was not sent. Check your connection and try again.";
 const OUTCOMES_NOT_LOADED = "Saved venue outcomes could not be loaded. Check your connection and try again.";
 const NOT_CANCELLED = "The booking was not cancelled. Check your connection and try again.";
+const NOT_CONFIRMED = "The hold was not confirmed. Check your connection and try again.";
 // SCRUM-94 AC1: the statuses a coordinator can cancel. Must match CANCELLABLE_STATUSES
 // in backend/app/venues/routes.py.
 const CANCELLABLE = ["pending", "tentative", "confirmed"];
@@ -66,7 +67,8 @@ function freshForm(event) {
 // SCRUM-94: the event's bookings, except rejections (listed with their reasons below), each
 // pending, tentative or confirmed one with Cancel booking and a confirmation step (AC2, A5).
 // SCRUM-85 A6, A8: the step also offers the event's other live bookings, unticked.
-function VenueBookings({ bookings, onCancel }) {
+// SCRUM-86: an unexpired hold can also be confirmed (AC1); an expired one can't (AC4).
+function VenueBookings({ bookings, onCancel, onConfirm }) {
   const [confirming, setConfirming] = useState(null);
   const [alsoCancel, setAlsoCancel] = useState([]);
   if (bookings.length === 0) return null;
@@ -93,6 +95,9 @@ function VenueBookings({ bookings, onCancel }) {
           <li key={booking.id}>
             <p>{`${booking.venue.name}, ${asPeriod(booking)}`}</p>
             <p>{`Status: ${bookingStatus(booking)}`}</p>
+            {booking.status === "tentative" && booking.hold && !booking.hold.expired && (
+              <button type="button" onClick={() => onConfirm(booking)}>Confirm booking</button>
+            )}
             {CANCELLABLE.includes(booking.status) && (
               <button type="button" onClick={() => startConfirming(booking)}>Cancel booking</button>
             )}
@@ -145,6 +150,9 @@ export default function VenueBookingRequestPage() {
   // SCRUM-94: the outcome of cancelling a booking.
   const [cancelMessage, setCancelMessage] = useState("");
   const [cancelError, setCancelError] = useState("");
+  // SCRUM-86: the outcome of confirming a hold.
+  const [confirmMessage, setConfirmMessage] = useState("");
+  const [confirmError, setConfirmError] = useState("");
 
   // SCRUM-69: recover decisions from request rows, independently of notifications.
   const loadOutcomes = useCallback(async () => {
@@ -198,6 +206,22 @@ export default function VenueBookingRequestPage() {
     } catch (failure) {
       // The booking is unchanged (AC6), so it stays listed and can be cancelled again.
       setCancelError(explain(failure, NOT_CANCELLED));
+    }
+  };
+
+  const confirmHold = async (booking) => {
+    setConfirmMessage("");
+    setConfirmError("");
+    try {
+      const response = await apiClient.post(`/venues/bookings/${booking.id}/confirm`);
+      setConfirmMessage(response.data.message);
+      // Confirming can make the venue the event's venue (SCRUM-86 A1), so reload both.
+      load();
+    } catch (failure) {
+      setConfirmError(explain(failure, NOT_CONFIRMED));
+      // A refusal means the hold isn't as listed, e.g. it has expired (AC4): show it as it
+      // is now. After a failed save it is unchanged and can be confirmed again (AC6).
+      if (failure.response?.status === 409) loadOutcomes();
     }
   };
 
@@ -269,8 +293,10 @@ export default function VenueBookingRequestPage() {
       )}
       {cancelMessage && <p role="status">{cancelMessage}</p>}
       {cancelError && <p role="alert">{cancelError}</p>}
+      {confirmMessage && <p role="status">{confirmMessage}</p>}
+      {confirmError && <p role="alert">{confirmError}</p>}
       <VenueBookings bookings={bookings.filter((booking) => booking.status !== "rejected")}
-        onCancel={cancelBooking} />
+        onCancel={cancelBooking} onConfirm={confirmHold} />
       {rejections.length > 0 && (
         <section aria-label="Previous venue decisions">
           <h2>Previous venue decisions</h2>
