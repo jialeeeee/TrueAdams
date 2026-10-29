@@ -29,7 +29,7 @@ npm run dev                                   # http://localhost:5173, proxies /
 npm test                                      # Vitest, run once
 
 # Everything except the frontend
-docker compose up --build                     # backend (gunicorn) + worker + Redis
+docker compose up --build                     # backend (gunicorn) + worker + beat + Redis
 ```
 
 - CI ([.github/workflows/tests.yml](.github/workflows/tests.yml)) runs **only the backend tests**, on Python 3.12, on pushes and PRs to `main`, in two jobs:

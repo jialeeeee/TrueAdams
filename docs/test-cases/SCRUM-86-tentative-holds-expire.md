@@ -2,7 +2,7 @@
 
 **User story:** As an Event Coordinator, I want to confirm a tentative hold before it expires, or be told when it expires, so that venues are not blocked by plans that never get confirmed.
 
-**Created:** 29 Oct 2026 · **Status of all cases:** Automated cases pass (29 Oct 2026, local PostgreSQL built from the models, with db/venue_hold_expiry.sql's column + Vitest); frontend cases 32–34 also to be checked manually in the browser, and the beat schedule with `docker compose up` · **Automated tests:** `backend/tests/test_venue_hold_expiry.py`, `frontend/src/pages/VenueBookingRequestPage.test.jsx` · **Related:** Week 7 customer change 4 (tentative venue holds expire), SCRUM-87 (placing a hold), SCRUM-40 (approving a request), SCRUM-41 (conflict checks), SCRUM-85 (several venues for one event), SCRUM-94 (cancelling a booking), SCRUM-64 (calendar rules)
+**Created:** 29 Oct 2026 · **Status of all cases:** Automated cases pass (29 Oct 2026, local PostgreSQL built from the models, with db/venue_hold_expiry.sql's column + Vitest); frontend cases 32–34 also to be checked manually in the browser; the beat schedule checked under Docker on 29 Oct 2026 (TC-86-36) · **Automated tests:** `backend/tests/test_venue_hold_expiry.py`, `frontend/src/pages/VenueBookingRequestPage.test.jsx` · **Related:** Week 7 customer change 4 (tentative venue holds expire), SCRUM-87 (placing a hold), SCRUM-40 (approving a request), SCRUM-41 (conflict checks), SCRUM-85 (several venues for one event), SCRUM-94 (cancelling a booking), SCRUM-64 (calendar rules)
 
 ## Acceptance criteria
 
@@ -294,6 +294,21 @@ SCRUM-87's VH-SEED (SCRUM-40's VA-SEED), reset before **every** test case:
 - **Expected result:** Celery beat's schedule has `check-hold-expiries`, running the registered task `tasks.check_hold_expiries` every 300 seconds.
 - **Automated:** `test_check_runs_every_five_minutes`
 
+**TC-86-36 · Under Docker, beat runs the check and the worker carries it out**
+- **Traces to:** AC3 · **Type:** Manual (infrastructure) · **Added:** 29 Oct 2026, PR review
+- **Preconditions:**
+  - `docker compose` with the project's `docker-compose.yml`, all services reaching Redis as `redis://redis:6379/0`.
+  - The worker and beat point at a throwaway Postgres, not Supabase, with emails to an unreachable SMTP host.
+  - Two seeded holds: one expired a minute ago, one expiring in 6 hours.
+- **Steps:** Start `celery-worker` and `celery-beat`, and wait for the first scheduled run (5 minutes after beat starts).
+- **Expected result:**
+  - The worker connects to `redis://redis:6379/0`.
+  - Beat logs "Sending due task check-hold-expiries".
+  - The worker logs `tasks.check_hold_expiries … succeeded`.
+  - The expired hold is `expired`, with a `venue_hold_expired` notification.
+  - The other hold has `hold_warned_at` set, with a `venue_hold_expiring` notification.
+- **Result (29 Oct 2026):** as expected. The first run came at 17:21:50 Singapore time and succeeded in 0.56 s. Its two emails were queued and then failed, only because SMTP pointed at `smtp.invalid` on purpose.
+
 ## AC4 — An expired hold can't be confirmed
 
 **TC-86-26 · Confirming an expired hold is refused**
@@ -400,7 +415,7 @@ SCRUM-87's VH-SEED (SCRUM-40's VA-SEED), reset before **every** test case:
 |----|-----------|
 | AC1 | 01, 02, 03, 04, 05, 06, 07, 08, 09, 10, 32 |
 | AC2 | 11, 12, 13, 14, 15, 24, 33; calendar TC-87-21 |
-| AC3 | 16, 17, 18, 19, 20, 21, 22, 23, 24, 25 |
+| AC3 | 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 36 |
 | AC4 | 18, 26, 33, 34, 35 |
 | AC5 | 27, 28 |
 | AC6 | 29, 30, 34 |
@@ -412,7 +427,7 @@ SCRUM-87's VH-SEED (SCRUM-40's VA-SEED), reset before **every** test case:
 | Negative | 05, 06, 07, 08, 09, 13, 14, 15, 17, 22, 23, 26, 27, 28, 29, 30 |
 | Boundary | 03, 11, 12, 16, 19, 20, 21, 24, 31, 35 |
 | Concurrency | 10 |
-| Configuration | 25 |
+| Configuration | 25, 36 (manual) |
 | Frontend | 32, 33, 34 |
 
 ## Open questions for the customer

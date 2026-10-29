@@ -78,7 +78,7 @@ cp .env.example .env
 npm run dev
 ```
 
-Or bring up backend + worker + Redis together:
+Or bring up backend + worker + beat + Redis together (inside Docker they reach Redis as the `redis` service, whatever `.env` says):
 
 ```bash
 docker compose up --build
