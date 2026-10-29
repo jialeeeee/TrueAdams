@@ -175,8 +175,17 @@ def list_events():
 SAFETY_CHECK_VIEWER_ROLES = {"safety_officer"}
 # SCRUM-91 AC4: safety approval has no admin or coordinator override.
 SAFETY_CHECK_APPROVER_ROLES = {"safety_officer"}
+# SCRUM-92: these outcomes await an actual assigned-coordinator correction.
+NEGATIVE_SAFETY_DECISIONS = {"rejected", "changes_requested"}
 # SCRUM-93: confirmation follows the approved planning/booking stage, once only.
 CONFIRMABLE_EVENT_STATUS = "approved"
+
+
+def _awaiting_safety_correction(event):
+    """SCRUM-92 AC4: draft saves cannot update an approved-stage event's clock."""
+    return event.safety_decision in NEGATIVE_SAFETY_DECISIONS and (
+        event.safety_decided_at is None or event.last_saved_at is None
+        or event.last_saved_at <= event.safety_decided_at)
 
 
 def _safety_schedule_covered(event, bookings):
@@ -287,7 +296,8 @@ def list_safety_checks():
             Event.end_time > singapore_now(),
             *[Event.status != status for status in EQUIPMENT_CLOSED_STATUSES]).all()
         events = [event for event in events
-                  if event.start_time is not None and event.safety_decision != "approved"]
+                  if event.start_time is not None and event.safety_decision != "approved"
+                  and not _awaiting_safety_correction(event)]
         items = _safety_check_items(events)
     except SQLAlchemyError:
         db.session.rollback()
@@ -334,6 +344,7 @@ def approve_safety_check(event_id):
             return _error("This safety check is already approved.", 409)
         if (event.status in EQUIPMENT_CLOSED_STATUSES or event.start_time is None
                 or event.end_time is None or event.end_time <= singapore_now()
+                or _awaiting_safety_correction(event)
                 or not _safety_check_items([event])):
             return _error("This event is no longer awaiting a safety check. Refresh the list.", 409)
 
@@ -362,6 +373,63 @@ def approve_safety_check(event_id):
     email_queued = (_queue_email(to_address, f"Safety check approved: {title}", message, event_id)
                     if to_address else False)
     return jsonify({"message": "Safety check approved.", "safety_check": payload,
+                    "notification": {"in_app": to_address is not None,
+                                     "email_queued": email_queued}})
+
+
+@events_bp.post("/<int:event_id>/safety-checks/reject", defaults={"decision": "rejected"})
+@events_bp.post("/<int:event_id>/safety-checks/request-changes",
+                defaults={"decision": "changes_requested"})
+@jwt_required()
+def record_negative_safety_decision(event_id, decision):
+    """SCRUM-92: return safety arrangements to the existing approved planning stage."""
+    try:
+        user = _current_user()
+        if user is None:
+            return _error("Your session is no longer valid. Please log in again.", 401)
+        event = db.session.get(Event, event_id, with_for_update=True)
+        if event is None:
+            return _error("Event not found.", 404)
+        if user.role not in SAFETY_CHECK_APPROVER_ROLES:
+            return _error("Only Safety Officers can reject or request safety changes.", 403)
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            return _error("Send the safety decision as a JSON object.", 400)
+        comment = body.get("comment")
+        if not isinstance(comment, str) or not comment.strip():
+            return _error("Enter a comment explaining the safety problems or required changes.",
+                          400, field="comment")
+        comment = comment.strip()
+        if (event.safety_decision == "approved" or _awaiting_safety_correction(event)
+                or event.status in EQUIPMENT_CLOSED_STATUSES or event.start_time is None
+                or event.end_time is None or event.end_time <= singapore_now()
+                or not _safety_check_items([event])):
+            return _error("This event is no longer awaiting a safety check. Refresh the list.", 409)
+
+        coordinator = db.session.get(User, event.coordinator_id) if event.coordinator_id else None
+        event.status = CONFIRMABLE_EVENT_STATUS  # SCRUM-92 A2: Planning maps to approved.
+        event.safety_decision = decision
+        event.safety_decided_by_id = user.id
+        event.safety_comment = comment
+        event.safety_decided_at = datetime.utcnow()
+        outcome = "rejected" if decision == "rejected" else "changes requested"
+        message = (f'Safety decision for "{event.title}": {outcome}. Recorded by {user.email} '
+                   f"on {_singapore_time(event.safety_decided_at)}. Comment: {comment}")
+        if coordinator:
+            db.session.add(Notification(recipient_id=coordinator.id, event_id=event.id,
+                                        kind=f"safety_{decision}", message=message))
+        payload = _safety_decision_payload(event)
+        to_address = coordinator.email if coordinator else None
+        title = event.title
+        db.session.commit()
+    except SQLAlchemyError:
+        db.session.rollback()
+        return _error("The safety decision was not saved. Please try again.", 503, retryable=True)
+
+    email_queued = (_queue_email(to_address, f"Safety check {outcome}: {title}", message, event_id)
+                    if to_address else False)
+    feedback = "Safety check rejected." if decision == "rejected" else "Safety changes requested."
+    return jsonify({"message": feedback, "safety_check": payload,
                     "notification": {"in_app": to_address is not None,
                                      "email_queued": email_queued}})
 
@@ -758,6 +826,11 @@ def update_planning(event_id: int):
         if review and not changes:
             return _error(review["message"], 409, **extra)
 
+        # SCRUM-92 AC4: only a real, permitted coordinator edit after a negative
+        # safety decision counts. Decision saves and no-op PATCHes leave this alone.
+        if (event.safety_decision in NEGATIVE_SAFETY_DECISIONS
+                and any(value != _saved_value(event, name) for name, value in changes.items())):
+            event.last_saved_at = datetime.utcnow()
         for name, value in changes.items():
             setattr(event, name, value)
         db.session.commit()

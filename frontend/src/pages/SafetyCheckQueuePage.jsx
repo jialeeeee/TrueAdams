@@ -24,6 +24,7 @@ export default function SafetyCheckQueuePage() {
       const response = await apiClient.get("/events/safety-checks");
       if (attempt !== loadAttempt.current) return;
       setResult(response.data);
+      setApprovals({}); // SCRUM-92: a corrected event may return for another decision.
     } catch (failure) {
       if (attempt !== loadAttempt.current) return;
       setLoadError({ message: explain(failure, NOT_LOADED), retryable: canRetry(failure) });
@@ -34,11 +35,16 @@ export default function SafetyCheckQueuePage() {
     load();
   }, [load]);
 
-  const approve = async (eventId) => {
-    setApprovals((previous) => ({ ...previous, [eventId]: { pending: true } }));
+  const saveDecision = async (eventId, action = "approve") => {
     const comment = (comments[eventId] || "").trim();
+    if (action !== "approve" && !comment) {
+      setApprovals((previous) => ({ ...previous,
+        [eventId]: { error: "Enter a comment explaining the safety problems or required changes." } }));
+      return;
+    }
+    setApprovals((previous) => ({ ...previous, [eventId]: { pending: true } }));
     try {
-      const response = await apiClient.post(`/events/${eventId}/safety-checks/approve`,
+      const response = await apiClient.post(`/events/${eventId}/safety-checks/${action}`,
         comment ? { comment } : {});
       setApprovals((previous) => ({ ...previous,
         [eventId]: { saved: true, message: response.data.message } }));
@@ -79,14 +85,23 @@ export default function SafetyCheckQueuePage() {
                   {approvals[event.id]?.saved ? (
                     <p role="status">{approvals[event.id].message}</p>
                   ) : (
-                    <form onSubmit={(submit) => { submit.preventDefault(); approve(event.id); }}>
-                      <label htmlFor={`safety-comment-${event.id}`}>Comment (optional)</label>
+                    <form onSubmit={(submit) => { submit.preventDefault(); saveDecision(event.id); }}>
+                      <label htmlFor={`safety-comment-${event.id}`}>Comment (optional for approval)</label>
+                      <p>A comment is required to Reject or Request Changes. For Request Changes, explain what must change.</p>
                       <textarea id={`safety-comment-${event.id}`} value={comments[event.id] || ""}
                         disabled={approvals[event.id]?.pending}
                         onChange={(change) => setComments((previous) => ({ ...previous,
                           [event.id]: change.target.value }))} />
                       <button type="submit" disabled={approvals[event.id]?.pending}>
                         {approvals[event.id]?.pending ? "Saving…" : "Approve safety check"}
+                      </button>
+                      <button type="button" disabled={approvals[event.id]?.pending}
+                        onClick={() => saveDecision(event.id, "reject")}>
+                        Reject safety check
+                      </button>
+                      <button type="button" disabled={approvals[event.id]?.pending}
+                        onClick={() => saveDecision(event.id, "request-changes")}>
+                        Request Changes
                       </button>
                       {approvals[event.id]?.error && <p role="alert">{approvals[event.id].error}</p>}
                     </form>

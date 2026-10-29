@@ -6,6 +6,7 @@ const LABELS = {
   approved: "Approved",
   confirmed: "Confirmed",
   rejected: "Rejected",
+  changes_requested: "Changes requested",
   cancelled: "Cancelled",
 };
 
