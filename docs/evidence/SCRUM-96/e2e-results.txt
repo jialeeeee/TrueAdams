@@ -1,0 +1,7 @@
+PASS E2E-01 Technical Support open the gala from Equipment requests and see each type, quantity and technical requirements (AC1)
+PASS E2E-02 Technical Support record an arrangement and see it when they open the event again (AC1, story)
+PASS E2E-03 The organiser and another coordinator are refused without Retry or details, and nothing changes (AC2)
+PASS E2E-04 A draft's equipment page is "Event not found." for Technical Support, without its title or note (AC1, AC2)
+PASS E2E-05 When the requirements can't be loaded, the page says why and Retry loads them (AC3)
+
+5/5 passed

@@ -1,0 +1,22 @@
+baseline: all backend tests pass
+B1 | Technical requirements are left out | AC1 | CAUGHT | test_tc_96_01_technical_support_see_types_quantities_and_technical_requirements, test_tc_96_04_technical_support_see_what_has_been_arranged, test_tc_96_12_trying_again_loads_the_requirements
+B2 | Every quantity is shown as 1 | AC1 | CAUGHT | test_tc_96_01_technical_support_see_types_quantities_and_technical_requirements, test_tc_96_02_every_event_that_has_left_draft_can_be_opened, test_tc_96_04_technical_support_see_what_has_been_arranged, test_tc_96_12_trying_again_loads_the_requirements
+B3 | Requirements are listed newest first | AC1 | CAUGHT | test_tc_96_01_technical_support_see_types_quantities_and_technical_requirements, test_tc_96_12_trying_again_loads_the_requirements
+B4 | The organiser's note is left out | AC1 | CAUGHT | test_tc_96_01_technical_support_see_types_quantities_and_technical_requirements
+B5 | Technical Support's arrangement note is left out | AC1 | CAUGHT | test_tc_96_04_technical_support_see_what_has_been_arranged
+B6 | Technical Support are not offered arrangement updates | AC1 | CAUGHT | test_tc_96_01_technical_support_see_types_quantities_and_technical_requirements, test_tc_96_02_every_event_that_has_left_draft_can_be_opened
+B7 | Cancelled and rejected events can't be opened | AC1 | CAUGHT | test_tc_96_02_every_event_that_has_left_draft_can_be_opened
+B8 | A draft's equipment page is shown | AC1, AC2 | CAUGHT | test_tc_96_05_a_drafts_equipment_requirements_are_not_found
+B9 | The view doesn't ask for drafts to be hidden | AC1, AC2 | CAUGHT | test_tc_96_05_a_drafts_equipment_requirements_are_not_found
+B10 | Anyone signed in may view | AC2 | CAUGHT | test_tc_96_06_everyone_else_is_refused_without_details, test_tc_96_07_a_refused_view_changes_nothing, test_tc_96_08_the_stored_role_decides_on_every_request
+B11 | Every coordinator may view every event | AC2 | CAUGHT | test_tc_96_06_everyone_else_is_refused_without_details, test_tc_96_07_a_refused_view_changes_nothing, test_tc_96_08_the_stored_role_decides_on_every_request
+B12 | Venue Staff count as Technical Support | AC2 | CAUGHT | test_tc_96_06_everyone_else_is_refused_without_details, test_tc_96_07_a_refused_view_changes_nothing
+B13 | Admins and Coordinator Leads may view | AC2 | CAUGHT | test_tc_96_06_everyone_else_is_refused_without_details, test_tc_96_07_a_refused_view_changes_nothing
+B14 | A refusal names the event | AC2 | CAUGHT | test_tc_96_06_everyone_else_is_refused_without_details, test_tc_96_08_the_stored_role_decides_on_every_request
+B15 | A refused view changes the event | AC2 | CAUGHT | test_tc_96_07_a_refused_view_changes_nothing
+B16 | Viewing adds a notification | AC2 | CAUGHT | test_tc_96_07_a_refused_view_changes_nothing
+B17 | A deleted user's token is refused as 403, not 401 | AC2 | CAUGHT | test_tc_96_09_signed_out_users_and_unknown_events
+B18 | A failed load is reported as an empty list | AC3 | CAUGHT | test_tc_96_10_a_failed_read_of_the_requirements_is_a_failure, test_tc_96_11_a_failed_read_of_the_event_is_a_failure, test_tc_96_12_trying_again_loads_the_requirements
+B19 | A failed load is not marked retryable | AC3 | CAUGHT | test_tc_96_10_a_failed_read_of_the_requirements_is_a_failure, test_tc_96_11_a_failed_read_of_the_event_is_a_failure, test_tc_96_12_trying_again_loads_the_requirements
+B20 | A failed load is reported as "Event not found." | AC3 | CAUGHT | test_tc_96_10_a_failed_read_of_the_requirements_is_a_failure, test_tc_96_11_a_failed_read_of_the_event_is_a_failure, test_tc_96_12_trying_again_loads_the_requirements
+after restore: all pass
