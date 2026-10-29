@@ -2888,13 +2888,15 @@ EQUIPMENT_NOT_REMOVED = ("The equipment requirement was not removed, and the rec
 ARRANGEMENT_NOT_SAVED = "The arrangement status was not saved. Please try again."
 
 
-def _equipment_event(event_id, allowed, denied):
-    """The caller and the event, checked in the order 401, 404, 403 (A11)."""
+def _equipment_event(event_id, allowed, denied, hide_drafts=False):
+    """The caller and the event, checked in the order 401, 404, 403 (A11). With
+    hide_drafts, a draft is not found, as an unknown ID is: it is still the organiser's
+    own (SCRUM-96 A3, SCRUM-74 A2)."""
     user = _current_user()
     if user is None:
         raise _Rejected("Your session is no longer valid. Please log in again.", 401)
     event = db.session.get(Event, event_id) if event_id <= DB_INTEGER_MAX else None
-    if event is None:
+    if event is None or (hide_drafts and event.status == DRAFT_STATUS):
         raise _Rejected(EVENT_NOT_FOUND, 404)
     if not allowed(user, event):
         raise _Rejected(denied, 403)
@@ -3028,7 +3030,8 @@ def _saved_reply(user, event, confirmation, requirement_id=None, status_code=200
 @jwt_required()
 def get_equipment_requirements(event_id: int):
     try:
-        user, event = _equipment_event(event_id, can_view_equipment, EQUIPMENT_VIEW_DENIED)
+        user, event = _equipment_event(event_id, can_view_equipment, EQUIPMENT_VIEW_DENIED,
+                                       hide_drafts=True)
         payload = _equipment_page(user, event)
     except _Rejected as rejected:
         return _error(rejected.message, rejected.status_code, **rejected.extra)
