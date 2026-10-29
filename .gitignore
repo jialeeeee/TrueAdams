@@ -3,6 +3,8 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+# Celery beat's record of when it last ran each task (SCRUM-86)
+celerybeat-schedule*
 
 # Node
 node_modules/

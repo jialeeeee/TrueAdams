@@ -62,6 +62,13 @@ cd backend
 celery -A celery_worker.celery worker --loglevel=info
 ```
 
+Celery beat, which runs the tentative hold expiry check every 5 minutes (SCRUM-86); the worker above carries out each check:
+
+```bash
+cd backend
+celery -A celery_worker.celery beat --loglevel=info
+```
+
 Frontend:
 
 ```bash
@@ -71,7 +78,7 @@ cp .env.example .env
 npm run dev
 ```
 
-Or bring up backend + worker + Redis together:
+Or bring up backend + worker + beat + Redis together (inside Docker they reach Redis as the `redis` service, whatever `.env` says):
 
 ```bash
 docker compose up --build

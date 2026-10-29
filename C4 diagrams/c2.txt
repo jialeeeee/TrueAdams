@@ -19,7 +19,8 @@ workspace "ConnectSphere" "Container Diagram for the ConnectSphere Platform" {
 
             # Core Execution Layer
             monolithApp = container "ConnectSphere Monolithic Application" "Hosts core web application, API routes, and domain modules (Auth, Events, Venues, Resources, Registrations, Notifications)." "Python / Flask" "CoreApp"
-            celeryWorker = container "Celery Worker Process" "Executes asynchronous background tasks such as compiling and sending notification emails." "Python / Celery" "Worker"
+            celeryWorker = container "Celery Worker Process" "Executes asynchronous background tasks, such as compiling and sending notification emails and checking tentative venue holds for expiry." "Python / Celery" "Worker"
+            celeryBeat = container "Celery Beat Scheduler" "Queues timed background tasks, such as the tentative venue hold expiry check every 5 minutes." "Python / Celery" "Worker"
 
             # Data & Messaging Layer
             supabaseDb = container "Supabase Database & Storage" "Relational database storing system entities (Events, Event equipment requirements, Venues, Venue bookings and unavailability blocks, Resources, their unavailability periods and reservations for events, Users, Clarification questions, Reassignment requests, Event change requests, In-app notifications) and static assets." "Managed PostgreSQL / Supabase" "Database"
@@ -39,8 +40,9 @@ workspace "ConnectSphere" "Container Diagram for the ConnectSphere Platform" {
         monolithApp -> redisBroker "Queues background tasks" "Redis Protocol"
 
         # Background Processing & Notification Flow
+        celeryBeat -> redisBroker "Queues timed tasks" "Redis Protocol"
         redisBroker -> celeryWorker "Delivers tasks to" "Redis Protocol"
-        celeryWorker -> supabaseDb "Reads task data" "SQL / TCP"
+        celeryWorker -> supabaseDb "Reads & writes task data" "SQL / TCP"
         celeryWorker -> emailSystem "Dispatches emails via" "SMTP / HTTP"
     }
 

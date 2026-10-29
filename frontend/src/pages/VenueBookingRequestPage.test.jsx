@@ -571,3 +571,110 @@ describe("SCRUM-87 the coordinator sees a hold's expiry", () => {
     expect(bookingItem("Civic Hall, 2027-03-14 10:00").textContent).toContain("Status: Confirmed");
   });
 });
+
+// SCRUM-86: TC-86-32 to 34 in docs/test-cases/SCRUM-86-tentative-holds-expire.md.
+// The API contract mirrors backend/tests/test_venue_hold_expiry.py.
+describe("SCRUM-86 the coordinator confirms a tentative hold", () => {
+  const CIVIC = { id: 4, name: "Civic Hall", location: "12 Civic Road" };
+  const AURORA = { id: 3, name: "Aurora Ballroom", location: "Level 3, Marina Tower" };
+  const booking = (id, status, venue, start, end, hold = null) => ({
+    id, status, venue, event: { id: 7, title: "Harbour Lights Festival" },
+    start_time: start, end_time: end, rejection_reason: null, decided_at: null, decided_by: null,
+    hold,
+  });
+  const HELD = booking(11, "tentative", AURORA, "2027-03-12T16:00:00", "2027-03-12T22:30:00",
+    { expires_at: "2027-03-01T17:00:00", expired: false });
+  const LAPSED = booking(12, "expired", CIVIC, "2027-03-13T10:00:00", "2027-03-13T12:00:00",
+    { expires_at: "2027-03-01T12:00:00", expired: true });
+  const PENDING = booking(13, "pending", CIVIC, "2027-03-14T10:00:00", "2027-03-14T12:00:00");
+  const CONFIRMED = booking(14, "confirmed", CIVIC, "2027-03-15T10:00:00", "2027-03-15T12:00:00");
+  const CANCELLED = booking(15, "cancelled", CIVIC, "2027-03-16T10:00:00", "2027-03-16T12:00:00");
+  const CONFIRMED_MESSAGE =
+    "You confirmed Aurora Ballroom for Harbour Lights Festival. It is now a confirmed booking, and Venue Staff have been notified.";
+
+  function mockBookings(bookings) {
+    apiClient.get.mockImplementation((url) => {
+      if (url === "/events/7/planning") return Promise.resolve({ data: planning({ venue: null }) });
+      if (url === "/venues/") return Promise.resolve({ data: VENUES });
+      if (url === "/venues/bookings") return Promise.resolve({ data: { bookings, message: null } });
+      return Promise.reject(new Error(`unexpected GET ${url}`));
+    });
+  }
+
+  async function renderBookings(bookings = [HELD, LAPSED, PENDING, CONFIRMED, CANCELLED]) {
+    mockBookings(bookings);
+    const user = renderPage();
+    await screen.findByRole("region", { name: "Venue bookings" });
+    return user;
+  }
+
+  const bookingItem = (text) =>
+    within(screen.getByRole("region", { name: "Venue bookings" }))
+      .getAllByRole("listitem").find((item) => item.textContent.includes(text));
+  const heldItem = () => bookingItem("Aurora Ballroom, 2027-03-12 16:00");
+  const confirmButton = (item) => within(item).queryByRole("button", { name: "Confirm booking" });
+
+  // TC-86-32 · AC1
+  it("confirms an unexpired hold", async () => {
+    const user = await renderBookings();
+    apiClient.post.mockResolvedValue({
+      data: { message: CONFIRMED_MESSAGE, booking: { ...HELD, status: "confirmed", hold: null },
+        notification: { in_app: true, email_queued: true } },
+    });
+    mockBookings([{ ...HELD, status: "confirmed", hold: null }, LAPSED, PENDING, CONFIRMED, CANCELLED]);
+
+    await user.click(confirmButton(heldItem()));
+
+    expect((await screen.findByRole("status")).textContent).toBe(CONFIRMED_MESSAGE);
+    expect(apiClient.post.mock.calls).toEqual([["/venues/bookings/11/confirm"]]);
+    await waitFor(() => expect(heldItem().textContent).toContain("Status: Confirmed"));
+    expect(confirmButton(heldItem())).toBeNull();
+  });
+
+  // TC-86-33 · AC2, AC4
+  it("offers Confirm booking only for an unexpired hold", async () => {
+    await renderBookings();
+
+    expect(confirmButton(heldItem())).toBeTruthy();
+    const lapsed = bookingItem("Civic Hall, 2027-03-13 10:00");
+    expect(lapsed.textContent).toContain("Status: Hold expired on 2027-03-01 12:00");
+    expect(within(lapsed).queryByRole("button", { name: "Cancel booking" })).toBeNull();
+    for (const text of ["Civic Hall, 2027-03-13", "Civic Hall, 2027-03-14", "Civic Hall, 2027-03-15",
+      "Civic Hall, 2027-03-16"]) {
+      expect(confirmButton(bookingItem(text))).toBeNull();
+    }
+  });
+
+  // TC-86-34 · AC4 — refused: the list is read again and shows the hold has expired.
+  it("explains a refused confirmation and shows the hold as it now is", async () => {
+    const expired = "This hold expired on 2027-03-01 17:00 (Singapore time), so it can't be confirmed. Submit a new venue request for Aurora Ballroom.";
+    const user = await renderBookings([HELD]);
+    apiClient.post.mockRejectedValueOnce(httpFailure(409, { error: expired, reason: "expired" }));
+    mockBookings([{ ...HELD, status: "expired", hold: { ...HELD.hold, expired: true } }]);
+
+    await user.click(confirmButton(heldItem()));
+
+    expect((await screen.findByRole("alert")).textContent).toBe(expired);
+    await waitFor(() => expect(heldItem().textContent).toContain("Status: Hold expired on 2027-03-01 17:00"));
+    expect(confirmButton(heldItem())).toBeNull();
+  });
+
+  // TC-86-34 · AC6 — failed: the hold is unchanged and can be confirmed again.
+  it("keeps the hold when saving the confirmation fails, so it can be tried again", async () => {
+    const notSaved = "The confirmation was not saved, so the hold is still tentative. Please try again.";
+    const user = await renderBookings([HELD]);
+    apiClient.post
+      .mockRejectedValueOnce(httpFailure(503, { error: notSaved, retryable: true }))
+      .mockResolvedValueOnce({ data: { message: CONFIRMED_MESSAGE,
+        booking: { ...HELD, status: "confirmed", hold: null },
+        notification: { in_app: true, email_queued: true } } });
+
+    await user.click(confirmButton(heldItem()));
+
+    expect((await screen.findByRole("alert")).textContent).toBe(notSaved);
+    expect(heldItem().textContent).toContain("Status: Tentative hold until 2027-03-01 17:00");
+    await user.click(confirmButton(heldItem()));
+    expect((await screen.findByRole("status")).textContent).toBe(CONFIRMED_MESSAGE);
+    expect(apiClient.post).toHaveBeenCalledTimes(2);
+  });
+});

@@ -9,6 +9,7 @@ from .registrations.routes import registrations_bp
 # Imported for its rule that releases equipment reservations on saving (SCRUM-44 A10).
 from .resources import release  # noqa: F401
 from .resources.routes import resources_bp
+from .venues.hold_expiry import HOLD_CHECK_INTERVAL_SECONDS
 from .venues.routes import venues_bp
 
 
@@ -22,6 +23,13 @@ def create_app(config_class=Config):
     celery.conf.update(
         broker_url=app.config["CELERY_BROKER_URL"],
         result_backend=app.config["CELERY_RESULT_BACKEND"],
+        # SCRUM-86: Celery beat runs the tentative hold expiry check on a timer.
+        beat_schedule={
+            "check-hold-expiries": {
+                "task": "tasks.check_hold_expiries",
+                "schedule": HOLD_CHECK_INTERVAL_SECONDS,
+            },
+        },
     )
 
     app.register_blueprint(auth_bp, url_prefix="/api/auth")

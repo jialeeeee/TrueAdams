@@ -20,6 +20,7 @@ coverage run -m unittest && coverage report
 
 # Celery worker (needs Redis: docker compose up redis)
 celery -A celery_worker.celery worker --loglevel=info
+celery -A celery_worker.celery beat --loglevel=info   # timed tasks (hold expiry check)
 
 # Frontend (from frontend/)
 npm install
@@ -28,7 +29,7 @@ npm run dev                                   # http://localhost:5173, proxies /
 npm test                                      # Vitest, run once
 
 # Everything except the frontend
-docker compose up --build                     # backend (gunicorn) + worker + Redis
+docker compose up --build                     # backend (gunicorn) + worker + beat + Redis
 ```
 
 - CI ([.github/workflows/tests.yml](.github/workflows/tests.yml)) runs **only the backend tests**, on Python 3.12, on pushes and PRs to `main`, in two jobs:
@@ -50,7 +51,7 @@ React SPA → Flask monolith → Supabase Postgres, with Celery + Redis for back
 | Shared domain logic | e.g. [backend/app/venues/scheduling.py](backend/app/venues/scheduling.py) | Pull logic out of `routes.py` when two stories need it (availability and search both use `scheduling`). |
 | Models | [backend/app/models.py](backend/app/models.py) | All SQLAlchemy models in one file. Must match the Supabase tables exactly (see Schema). |
 | Config | [backend/app/config.py](backend/app/config.py) | `Config` reads `backend/.env`; `TestConfig` is the test suite's. Never hardcode secrets or URLs. |
-| Background jobs | [backend/app/tasks.py](backend/app/tasks.py) | Celery tasks (currently `send_notification_email`). Registered via `celery_worker.py`. |
+| Background jobs | [backend/app/tasks.py](backend/app/tasks.py) | Celery tasks: `send_notification_email`, and `check_hold_expiries` (SCRUM-86), which Celery beat runs every 5 minutes from `beat_schedule` in `create_app`. Registered via `celery_worker.py`. A timed task does its work in a module of its own (e.g. `venues/hold_expiry.py`) and is tested by calling the task with "now" patched. |
 | Schema changes | `backend/db/*.sql` | Hand-run SQL scripts, one per story. No migration tool. |
 | Frontend pages | `frontend/src/pages/<Name>Page.jsx` + `<Name>Page.test.jsx` | One page per screen, route added in [App.jsx](frontend/src/App.jsx) (and the nav if users reach it directly). |
 | API calls | [frontend/src/api/client.js](frontend/src/api/client.js) | Always use this axios client. It adds the bearer token from `sessionStorage["access_token"]`. |
@@ -84,7 +85,8 @@ Check in this order and return the first failure: **401** (no valid user) → **
 ### Data meaning
 - **NULL means "not recorded".** For venue characteristics an empty list, `False` or `0` is a recorded fact, so those columns have no defaults and the API distinguishes them (`not_recorded` lists, `_recorded()` helper).
 - **Times:** event, booking and block times are Singapore local time stored as naive `timestamp`s; audit timestamps (`created_at`, `last_saved_at`, `submitted_at`, `decided_at`, `coordinator_assigned_at`) are naive UTC from `datetime.utcnow()`. Periods are half-open `[start, end)`, so touching periods do not overlap. Use `scheduling.overlapping()` rather than writing your own comparison.
-- Event statuses in use: `draft`, `submitted`, `under_review`, `approved`, `rejected`, `cancelled`. Only confirmed `VenueBooking`s block a venue.
+- Event statuses in use: `draft`, `submitted`, `under_review`, `approved`, `rejected`, `cancelled`.
+- Venue booking statuses: `pending`, `tentative` (a hold, SCRUM-87), `expired` (SCRUM-86), `confirmed`, `rejected`, `cancelled`. Confirmed bookings block a venue, and so do tentative holds until their expiry. A hold is expired from its expiry even before the expiry check records it, so read a booking's status through `scheduling.current_status()`.
 
 ### Editing an event's planning information (SCRUM-53 / SCRUM-52)
 `PATCH /api/events/<id>` saves "normal" fields (`NORMAL_FIELD_VALIDATORS`) directly and refuses "restricted" fields (`RESTRICTED_FIELD_LABELS`: venue, times, expected attendance, venue requirements, registration requirement), returning `requires_review` instead. **When you add a field to `Event`, decide which list it belongs to** (or leave it non-editable) and update the SCRUM-53/52 test cases; past merges did this explicitly.

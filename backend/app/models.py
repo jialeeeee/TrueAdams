@@ -157,6 +157,9 @@ class VenueBooking(db.Model):
     held_at = db.Column(db.DateTime)
     held_by_id = db.Column(db.Integer, db.ForeignKey("users.id"))
     hold_expires_at = db.Column(db.DateTime)
+    # SCRUM-86: when (naive UTC) the coordinator was told the hold expires within 24
+    # hours, so they are told once. NULL while that is still due.
+    hold_warned_at = db.Column(db.DateTime)
     # SCRUM-84: minutes of setup before and turnaround after the event. The venue is
     # occupied from start_time - setup to end_time + turnaround, which the database works
     # out (occupied_start/occupied_end) so the no-overlap rule can use it.
