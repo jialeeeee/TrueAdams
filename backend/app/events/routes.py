@@ -175,6 +175,8 @@ def list_events():
 SAFETY_CHECK_VIEWER_ROLES = {"safety_officer"}
 # SCRUM-91 AC4: safety approval has no admin or coordinator override.
 SAFETY_CHECK_APPROVER_ROLES = {"safety_officer"}
+# SCRUM-93: confirmation follows the approved planning/booking stage, once only.
+CONFIRMABLE_EVENT_STATUS = "approved"
 
 
 def _safety_schedule_covered(event, bookings):
@@ -203,6 +205,14 @@ def _safety_check_payload(event, venues, equipment_lines):
         "expected_attendance": event.expected_attendance,
         "equipment": equipment_lines,
     }
+
+
+def _equipment_fully_reserved(event, requirements, reserved):
+    """SCRUM-90/93: active quantities must cover every recorded requirement."""
+    # SCRUM-90 A1/Q1: an unprocessed organiser note is not "no equipment".
+    return (bool(requirements) or not (event.equipment_requirements or "").strip()) and all(
+        reserved.get((event.id, requirement.id), 0) >= requirement.quantity
+        for requirement in requirements)
 
 
 def _safety_check_items(events):
@@ -249,16 +259,13 @@ def _safety_check_items(events):
             if not _safety_schedule_covered(event, event_bookings.get(event.id, [])):
                 continue
             needed = event_requirements.get(event.id, [])
-            # SCRUM-90 A1/Q1: an unprocessed organiser note is not "no equipment".
-            if not needed and (event.equipment_requirements or "").strip():
+            if not _equipment_fully_reserved(event, needed, reserved):
                 continue
             equipment_lines = [{
                 "equipment_type": requirement.equipment_type,
                 "quantity": requirement.quantity,
                 "reserved_quantity": reserved.get((event.id, requirement.id), 0),
             } for requirement in needed]
-            if any(line["reserved_quantity"] < line["quantity"] for line in equipment_lines):
-                continue
             items.append(_safety_check_payload(
                 event, list(event_venues[event.id].values()), equipment_lines))
     return items
@@ -357,6 +364,64 @@ def approve_safety_check(event_id):
     return jsonify({"message": "Safety check approved.", "safety_check": payload,
                     "notification": {"in_app": to_address is not None,
                                      "email_queued": email_queued}})
+
+
+def _confirmation_payload(event, coordinator):
+    return {"coordinator": _user_summary(coordinator),
+            "confirmed_at": _isoformat(event.confirmed_at)}
+
+
+@events_bp.post("/<int:event_id>/confirm")
+@jwt_required()
+def confirm_event(event_id):
+    """SCRUM-93: confirm arrangements and record attribution in one transaction."""
+    try:
+        user = _current_user()
+        if user is None:
+            return _error("Your session is no longer valid. Please log in again.", 401)
+        event = db.session.get(Event, event_id, with_for_update=True, populate_existing=True)
+        if event is None:
+            return _error("Event not found.", 404)
+        if not _is_current_coordinator(user, event):
+            return _error("Only the event's coordinator can confirm it.", 403)
+        if event.status != CONFIRMABLE_EVENT_STATUS:
+            return _error(f"This event is {event.status}, so it cannot be confirmed.", 409)
+
+        # The main venue alone cannot establish readiness for multiple venues.
+        bookings = VenueBooking.query.filter_by(
+            event_id=event.id, status=BLOCKING_BOOKING_STATUS).all()
+        requirements = EquipmentRequirement.query.filter_by(event_id=event.id).all()
+        reservations = EquipmentReservation.query.filter_by(
+            event_id=event.id, status=reserving.RESERVED).all()
+        reserved = {}
+        for reservation in reservations:
+            key = (event.id, reservation.requirement_id)
+            reserved[key] = reserved.get(key, 0) + reservation.quantity
+        missing = []
+        if (event.start_time is None or event.end_time is None
+                or not _safety_schedule_covered(event, bookings)):
+            missing.append("Confirmed venue booking")
+        if not _equipment_fully_reserved(event, requirements, reserved):
+            missing.append("Reserved equipment")
+        # SCRUM-91 AC3: enforce the persisted decision, independent of the UI.
+        if event.safety_decision != "approved":
+            missing.append("Approved safety check")
+        if missing:
+            return _error("Cannot confirm. Missing: " + ", ".join(missing) + ".", 409,
+                          missing=missing)
+
+        event.status = "confirmed"
+        event.confirmed_by_id = user.id
+        event.confirmed_at = datetime.utcnow()
+        # Capture reply values before commit expires the ORM objects.
+        payload = _confirmation_payload(event, user)
+        db.session.commit()
+    except SQLAlchemyError:
+        db.session.rollback()
+        return _error("The event was not confirmed. Please try again.", 503, retryable=True)
+
+    return jsonify({"status": "confirmed", "message": "Event confirmed.",
+                    "confirmation": payload})
 
 
 @events_bp.post("/")

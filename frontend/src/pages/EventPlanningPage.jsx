@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import apiClient from "../api/client.js";
 import formatSavedAt from "../utils/formatSavedAt.js";
@@ -95,10 +95,17 @@ export default function EventPlanningPage() {
   const { eventId } = useParams();
   const [event, setEvent] = useState(null);
   const [loadError, setLoadError] = useState(null);
+  const [confirmation, setConfirmation] = useState(null);
+  const [confirming, setConfirming] = useState(false);
+  const confirmationRequest = useRef(null);
 
   const load = useCallback(async () => {
+    // SCRUM-93: a new event invalidates confirmation replies for the previous one.
+    confirmationRequest.current = null;
+    setConfirming(false);
     setLoadError(null);
     setEvent(null);
+    setConfirmation(null);
     try {
       const response = await apiClient.get(`/events/${eventId}/planning`);
       setEvent(response.data);
@@ -112,7 +119,29 @@ export default function EventPlanningPage() {
 
   useEffect(() => {
     load();
+    return () => { confirmationRequest.current = null; };
   }, [load]);
+
+  const confirm = async () => {
+    const request = { eventId };
+    confirmationRequest.current = request;
+    const isStale = () => confirmationRequest.current !== request;
+    setConfirming(true);
+    setConfirmation(null);
+    try {
+      const response = await apiClient.post(`/events/${eventId}/confirm`, {});
+      if (isStale()) return;
+      setEvent((current) => ({ ...current, status: response.data.status }));
+      setConfirmation({ message: response.data.message });
+    } catch (failure) {
+      if (isStale()) return;
+      const error = failure.response?.data?.error;
+      setConfirmation({ error: true, message: typeof error === "string" && error.trim()
+        ? error : "The event was not confirmed. Please try again." });
+    } finally {
+      if (!isStale()) setConfirming(false);
+    }
+  };
 
   const back = <Link to="/events/managed">Back to my managed events</Link>;
 
@@ -134,6 +163,15 @@ export default function EventPlanningPage() {
       <h1>{event.title || NOT_RECORDED}</h1>
       <p>{`Status: ${statusLabel(event.status)}`}</p>
       <p>{`Coordinator: ${display("coordinator", event.coordinator)}`}</p>
+      {/* Planning access already requires the current coordinator (SCRUM-93). */}
+      {event.status === "approved" && (
+        <button type="button" onClick={confirm} disabled={confirming}>
+          {confirming ? "Confirming…" : "Mark event Confirmed"}
+        </button>
+      )}
+      {confirmation && (
+        <p role={confirmation.error ? "alert" : "status"}>{confirmation.message}</p>
+      )}
       {/* SCRUM-39: only approved events proceed to venue booking (A2). */}
       {event.status === "approved" && (
         <Link to={`/events/${event.id}/venue-request`}>Request a venue</Link>

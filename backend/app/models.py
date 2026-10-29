@@ -83,6 +83,10 @@ class Event(db.Model):
     safety_decided_by_id = db.Column(db.Integer, db.ForeignKey("users.id"))
     safety_comment = db.Column(db.Text)
     safety_decided_at = db.Column(db.DateTime)  # Naive UTC.
+    # SCRUM-93: confirmation is separate from request/safety approval. Audit only;
+    # neither field is editable through normal planning PATCH.
+    confirmed_by_id = db.Column(db.Integer, db.ForeignKey("users.id"))
+    confirmed_at = db.Column(db.DateTime)  # Naive UTC.
     # When (naive UTC) and by which coordinator the review was started, moving the
     # request to under_review (SCRUM-31, reopened). Records, not editable fields.
     review_started_at = db.Column(db.DateTime)
