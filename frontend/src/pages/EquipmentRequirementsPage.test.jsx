@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import apiClient from "../api/client.js";
+import formatSavedAt from "../utils/formatSavedAt.js";
 import EquipmentRequirementsPage from "./EquipmentRequirementsPage.jsx";
 
 // Frontend cases TC-42-30 to TC-42-37, 41 and 42 in docs/test-cases/SCRUM-42-equipment-requirements.md.
@@ -326,8 +327,9 @@ describe("SCRUM-42 AC4/AC6 Technical Support Staff update the arrangements", () 
     await user.type(screen.getByLabelText("Note for 2 × Wireless microphone"), "Two lapel mics held");
     await user.click(screen.getByRole("button", { name: "Update 2 × Wireless microphone" }));
 
+    // With the details it showed, so a change by the coordinator is noticed (SCRUM-97 A5).
     expect(apiClient.patch).toHaveBeenCalledWith("/events/7/equipment-requirements/11/arrangement", {
-      status: "being_arranged", note: "Two lapel mics held",
+      status: "being_arranged", note: "Two lapel mics held", last_saved_at: MIC.last_saved_at,
     });
     expect((await screen.findByRole("status")).textContent).toContain("Arrangement status updated to Being arranged.");
     expect(within(list()).getAllByRole("listitem")[0].textContent).toContain("Status: Being arranged");
@@ -623,5 +625,158 @@ describe("SCRUM-96 Technical Support view an event's equipment requirements", ()
     await user.click(screen.getByRole("button", { name: "Retry" }));
     expect(await screen.findByText("2 × Wireless microphone")).toBeTruthy();
     expect(apiClient.get).toHaveBeenCalledTimes(3);
+  });
+});
+
+// SCRUM-97: Technical Support update an event's equipment requirements. Frontend cases
+// TC-97-14 to 19 in docs/test-cases/SCRUM-97-tech-updates-equipment-requirements.md; the API
+// side is backend/tests/test_tech_updates_equipment.py.
+describe("SCRUM-97 Technical Support update an event's equipment requirements", () => {
+  const HANA = { id: 9, email: "hana.tech@connectsphere.test" };
+  const TOM = { id: 10, email: "tom.tech@connectsphere.test" };
+  const ARRANGED = { ...PROJECTOR, arrangement_updated_by: HANA, arrangement_updated_at: "2026-10-29T06:30:00.123456" };
+  const PAGE_97 = { ...TECH_PAGE, requirements: [MIC, ARRANGED] };
+  const NOT_SAVED = "The arrangement was not saved, and the recorded requirements are unchanged. Please try again.";
+  const items = () => within(list()).getAllByRole("listitem");
+  const updatedBy = (who, at) => `Arrangement updated by ${who.email} on ${formatSavedAt(at)}`;
+  const micStatus = () => screen.getByLabelText("Arrangement status for 2 × Wireless microphone");
+  const micNote = () => screen.getByLabelText("Note for 2 × Wireless microphone");
+  const updateMic = () => screen.getByRole("button", { name: "Update 2 × Wireless microphone" });
+
+  async function enterMic(user) {
+    await user.selectOptions(await screen.findByLabelText("Arrangement status for 2 × Wireless microphone"), "being_arranged");
+    await user.type(micNote(), "Two lapel mics held");
+  }
+
+  // TC-97-14 · AC1
+  it("shows who updated each arrangement and when, and sends the details it showed", async () => {
+    apiClient.get.mockResolvedValue({ data: PAGE_97 });
+    apiClient.patch.mockReturnValue(new Promise(() => {}));
+    const user = renderPage();
+
+    expect(await screen.findByText(updatedBy(HANA, ARRANGED.arrangement_updated_at))).toBeTruthy();
+    expect(within(items()[1]).getByText(updatedBy(HANA, ARRANGED.arrangement_updated_at))).toBeTruthy();
+    // Never updated: nobody is named.
+    expect(within(items()[0]).queryByText(/Arrangement updated by/)).toBeNull();
+
+    await enterMic(user);
+    await user.click(updateMic());
+
+    expect(apiClient.patch).toHaveBeenCalledWith("/events/7/equipment-requirements/11/arrangement", {
+      status: "being_arranged", note: "Two lapel mics held", last_saved_at: MIC.last_saved_at,
+    });
+  });
+
+  // TC-97-15 · AC1
+  it("shows the update, who made it and when once it is saved", async () => {
+    const at = "2026-10-30T03:15:00.000001";
+    const updated = {
+      ...MIC, status: "being_arranged", status_label: "Being arranged", arrangement_note: "Two lapel mics held",
+      arrangement_updated_by: TOM, arrangement_updated_at: at,
+    };
+    apiClient.get.mockResolvedValue({ data: PAGE_97 });
+    apiClient.patch.mockResolvedValue({
+      data: { ...PAGE_97, requirements: [updated, ARRANGED], requirement: updated, saved: true,
+              confirmation: "Arrangement status updated to Being arranged." },
+    });
+    const user = renderPage();
+
+    await enterMic(user);
+    await user.click(updateMic());
+
+    expect((await screen.findByRole("status")).textContent).toBe("Arrangement status updated to Being arranged.");
+    const mic = items()[0];
+    expect(within(mic).getByText("Status: Being arranged")).toBeTruthy();
+    expect(within(mic).getByText("Note from Technical Support: Two lapel mics held")).toBeTruthy();
+    expect(within(mic).getByText(updatedBy(TOM, at))).toBeTruthy();
+    expect(within(items()[1]).getByText(updatedBy(HANA, ARRANGED.arrangement_updated_at))).toBeTruthy();
+  });
+
+  // TC-97-16 · AC2
+  it("shows a refusal and leaves the requirements as they were", async () => {
+    const refusal = "Only Technical Support Staff can update equipment arrangements.";
+    apiClient.get.mockResolvedValue({ data: PAGE_97 });
+    apiClient.patch.mockRejectedValue(failed(403, { error: refusal }));
+    const user = renderPage();
+
+    await enterMic(user);
+    await user.click(updateMic());
+
+    expect((await screen.findByRole("alert")).textContent).toBe(refusal);
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(within(items()[0]).getByText("Status: Requested")).toBeTruthy();
+    expect(within(items()[0]).queryByText(/Note from Technical Support/)).toBeNull();
+    expect(within(items()[0]).queryByText(/Arrangement updated by/)).toBeNull();
+    expect(within(items()[1]).getByText(updatedBy(HANA, ARRANGED.arrangement_updated_at))).toBeTruthy();
+  });
+
+  // TC-97-17 · AC3
+  it("keeps the requirements and the entry when a save fails, and saves on trying again", async () => {
+    const updated = { ...MIC, status: "being_arranged", status_label: "Being arranged", arrangement_note: "Two lapel mics held",
+                      arrangement_updated_by: HANA, arrangement_updated_at: "2026-10-30T03:15:00" };
+    apiClient.get.mockResolvedValue({ data: PAGE_97 });
+    apiClient.patch
+      .mockRejectedValueOnce(failed(503, { error: NOT_SAVED, retryable: true }))
+      .mockResolvedValueOnce({
+        data: { ...PAGE_97, requirements: [updated, ARRANGED], requirement: updated, saved: true,
+                confirmation: "Arrangement status updated to Being arranged." },
+      });
+    const user = renderPage();
+
+    await enterMic(user);
+    await user.click(updateMic());
+
+    expect((await screen.findByRole("alert")).textContent).toBe(NOT_SAVED);
+    expect(within(items()[0]).getByText("Status: Requested")).toBeTruthy();
+    expect(within(items()[1]).getByText("Status: Being arranged")).toBeTruthy();
+    expect(within(items()[1]).getByText("Note from Technical Support: Held at the AV store")).toBeTruthy();
+    // What was chosen and typed stays, so pressing Update again tries again.
+    expect(micStatus().value).toBe("being_arranged");
+    expect(micNote().value).toBe("Two lapel mics held");
+
+    await user.click(updateMic());
+
+    expect((await screen.findByRole("status")).textContent).toBe("Arrangement status updated to Being arranged.");
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(within(items()[0]).getByText("Status: Being arranged")).toBeTruthy();
+    expect(apiClient.patch).toHaveBeenCalledTimes(2);
+    expect(apiClient.patch.mock.calls[1]).toEqual(apiClient.patch.mock.calls[0]);
+  });
+
+  // TC-97-18 · AC3
+  it("says the requirements are unchanged when there is no reply", async () => {
+    apiClient.get.mockResolvedValue({ data: PAGE_97 });
+    apiClient.patch.mockRejectedValue(Object.assign(new Error("Network Error"), { request: {} }));
+    const user = renderPage();
+
+    await enterMic(user);
+    await user.click(updateMic());
+
+    expect((await screen.findByRole("alert")).textContent).toBe(
+      "The arrangement was not saved, and the recorded requirements are unchanged. Check your connection and try again.",
+    );
+    expect(within(items()[0]).getByText("Status: Requested")).toBeTruthy();
+    expect(micNote().value).toBe("Two lapel mics held");
+  });
+
+  // TC-97-19 · AC1 (A5)
+  it("reloads the new details when the coordinator changed the requirement", async () => {
+    const changedMessage = "The coordinator has changed this requirement since you opened it, so your update was not saved. "
+      + "It is now 5 × Wireless microphone: check the new details and update it again.";
+    const changed = { ...MIC, quantity: 5, last_saved_at: "2026-10-30T02:00:00" };
+    apiClient.get
+      .mockResolvedValueOnce({ data: PAGE_97 })
+      .mockResolvedValueOnce({ data: { ...PAGE_97, requirements: [changed, ARRANGED] } });
+    apiClient.patch.mockRejectedValue(failed(409, { error: changedMessage, reload: true }));
+    const user = renderPage();
+
+    await enterMic(user);
+    await user.click(updateMic());
+
+    expect((await screen.findByRole("alert")).textContent).toBe(changedMessage);
+    expect(await screen.findByText("5 × Wireless microphone")).toBeTruthy();
+    expect(screen.queryByText("2 × Wireless microphone")).toBeNull();
+    expect(apiClient.get).toHaveBeenCalledTimes(2);
+    expect(within(items()[0]).getByText("Status: Requested")).toBeTruthy();
   });
 });
