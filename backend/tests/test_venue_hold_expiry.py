@@ -35,6 +35,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from app import local_time, tasks
 from app.extensions import celery
 from app.models import VenueBooking
+from app.venues import scheduling
 from tests.test_venue_booking_conflicts import BLOCKS
 from tests.test_venue_holds import (EXPIRED_AT, EXPIRY_AT, H2_END, H2_START, HELD_AT, NOW,
                                     HoldTestCase)
@@ -480,6 +481,24 @@ class ExpiredConfirmTests(HoldExpiryTestCase):
                 self.assertIn("2027-03-01 12:00", body["error"])
                 self.assertRegex(body["error"].lower(), r"new venue request")
                 self.assert_not_confirmed(status=status)
+
+    # TC-86-35 · AC4 (boundary, PR review) — the hold expires while it is being confirmed.
+    def test_hold_expiring_during_confirmation_is_not_confirmed(self):
+        self.make_hold("P1", expires_at=NOW)
+        clock = [NOW - timedelta(minutes=1)]
+        read_blocks = scheduling.blocks
+
+        def slow_conflict_check(*args):
+            clock[0] = NOW  # The expiry passes while the conflicts are being read.
+            return read_blocks(*args)
+
+        with mock.patch("app.venues.routes.singapore_now", side_effect=lambda: clock[0]), \
+                mock.patch.object(scheduling, "blocks", side_effect=slow_conflict_check):
+            response = self.confirm()
+
+        body = self.assert_error(response, 409, reason="expired")
+        self.assertIn("2027-03-01 12:00", body["error"])
+        self.assert_not_confirmed()
 
 
 # ---------- AC5: only the event's coordinator ----------

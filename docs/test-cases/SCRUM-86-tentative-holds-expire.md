@@ -307,6 +307,16 @@ SCRUM-87's VH-SEED (SCRUM-40's VA-SEED), reset before **every** test case:
   - P1 isn't confirmed, E1 has no venue, and nobody is notified.
 - **Automated:** `test_expired_hold_cannot_be_confirmed`
 
+**TC-86-35 · The hold expires while it is being confirmed**
+- **Traces to:** AC4 · **Type:** Boundary (concurrency) · **Added:** 29 Oct 2026, PR review
+- **Preconditions:** H1 expires at 2027-03-01 12:00. The clock reads 11:59 when the confirmation starts and 12:00 by the time its conflict check has run (locking the venue and reading the conflicts takes time).
+- **Steps:** As `alice`, confirm H1.
+- **Expected result:**
+  - HTTP 409, `reason: "expired"`, naming the expiry.
+  - P1 isn't confirmed, E1 has no venue, and nobody is notified.
+  - The expiry is checked again just before the hold is confirmed, so passing the first check is not enough.
+- **Automated:** `test_hold_expiring_during_confirmation_is_not_confirmed`
+
 ## AC5 — Only the event's coordinator
 
 **TC-86-27 · Anyone else is denied**
@@ -391,7 +401,7 @@ SCRUM-87's VH-SEED (SCRUM-40's VA-SEED), reset before **every** test case:
 | AC1 | 01, 02, 03, 04, 05, 06, 07, 08, 09, 10, 32 |
 | AC2 | 11, 12, 13, 14, 15, 24, 33; calendar TC-87-21 |
 | AC3 | 16, 17, 18, 19, 20, 21, 22, 23, 24, 25 |
-| AC4 | 18, 26, 33, 34 |
+| AC4 | 18, 26, 33, 34, 35 |
 | AC5 | 27, 28 |
 | AC6 | 29, 30, 34 |
 | AC7 | 31 |
@@ -400,7 +410,7 @@ SCRUM-87's VH-SEED (SCRUM-40's VA-SEED), reset before **every** test case:
 |------|-----------|
 | Happy path | 01, 02, 04, 18 |
 | Negative | 05, 06, 07, 08, 09, 13, 14, 15, 17, 22, 23, 26, 27, 28, 29, 30 |
-| Boundary | 03, 11, 12, 16, 19, 20, 21, 24, 31 |
+| Boundary | 03, 11, 12, 16, 19, 20, 21, 24, 31, 35 |
 | Concurrency | 10 |
 | Configuration | 25 |
 | Frontend | 32, 33, 34 |
