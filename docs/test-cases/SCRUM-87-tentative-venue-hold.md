@@ -2,7 +2,7 @@
 
 **User story:** As Venue Staff, I want to approve a venue booking request as a tentative hold with an expiry date and time that I set, so that the coordinator can finalise the event without the venue being held indefinitely.
 
-**Created:** 17 Oct 2026 · **Status of all cases:** Automated cases pass (17 Oct 2026, local PostgreSQL with db/venue_booking_holds.sql applied + Vitest); frontend cases 34–38 also to be checked manually in the browser · **Automated tests:** `backend/tests/test_venue_holds.py`, `frontend/src/pages/VenueBookingRequestsPage.test.jsx`, `frontend/src/pages/TentativeHoldsPage.test.jsx`, `frontend/src/pages/VenueAvailabilityPage.test.jsx` · **Related:** Week 7 customer change 4 (tentative venue holds expire), SCRUM-40 (approving a request), SCRUM-41 (conflict checks), SCRUM-64 (calendar rules), SCRUM-37 (venue search)
+**Created:** 17 Oct 2026 · **Reopened:** 28 Oct 2026, AC5 and AC8 (see the section on the reopening) · **Status of all cases:** Automated cases pass (17 Oct 2026, local PostgreSQL with db/venue_booking_holds.sql applied + Vitest; TC-87-39 to 44 on 28 Oct 2026); frontend cases 34–38 and 44 also to be checked manually in the browser · **Automated tests:** `backend/tests/test_venue_holds.py`, `frontend/src/pages/VenueBookingRequestsPage.test.jsx`, `frontend/src/pages/TentativeHoldsPage.test.jsx`, `frontend/src/pages/VenueAvailabilityPage.test.jsx`, `frontend/src/pages/VenueBookingRequestPage.test.jsx` · **Related:** Week 7 customer change 4 (tentative venue holds expire), SCRUM-40 (approving a request), SCRUM-41 (conflict checks), SCRUM-64 (calendar rules), SCRUM-37 (venue search), SCRUM-69 and SCRUM-94 (the coordinator's list of the event's venue bookings)
 
 ## Acceptance criteria
 
@@ -12,9 +12,10 @@
 | AC2 | Venue Staff must set the expiry date and time, which must be in the future. The system does not set a fixed duration. |
 | AC3 | Venue Staff can change the expiry of a hold before it expires. |
 | AC4 | An unexpired hold blocks the slot for conflict checks and shows as Tentative on the availability calendar. |
-| AC5 | The coordinator is notified that the hold was placed, with its expiry. |
+| AC5 | The coordinator is notified that the hold was placed, with its expiry. *(listed as new on reopening, 28 Oct 2026)* |
 | AC6 | Only Venue Staff can place a hold or change its expiry. Anyone else is denied and nothing changes. |
 | AC7 | If saving fails, no hold is created or changed and an error is shown. |
+| AC8 | Venue search leaves out a venue that has an unexpired hold overlapping the requested period. *(added on reopening, 28 Oct 2026)* |
 
 ## Working assumptions
 
@@ -35,7 +36,7 @@ These are the team's current reading of the story, agreed with the scrum lead on
 - **A3 — When a hold counts:** a hold is unexpired while its expiry is later than the current Singapore time. At the expiry itself it has expired. An unexpired hold:
   - **conflicts** with approving, or holding, another request whose period overlaps it at the same venue. It is listed with the other conflicts (SCRUM-41), with its event and expiry. Periods are half-open, so touching periods don't conflict.
   - **appears on the calendar** (SCRUM-64) as a "hold" period with its expiry. The time it covers is shown as **tentative**, or as unavailable when something else also makes it unavailable (e.g. outside operating hours).
-  - **leaves the venue out of search** (SCRUM-37) for an overlapping time. *(Q2)*
+  - **leaves the venue out of search** (SCRUM-37) for an overlapping time. *(AC8 since reopening; Q2 answered)*
 
   An expired hold does none of these.
 - **A4 — The same checks as approving:**
@@ -66,7 +67,11 @@ These are the team's current reading of the story, agreed with the scrum lead on
 - **A9 — Out of scope:**
   - **Confirming a hold:** SCRUM-40's Approve still accepts only pending requests, so a hold is refused there. Confirming one is a separate story.
   - **What happens when a hold expires,** including notifying the coordinator then (Week 7 change 4). Until that is built, an expired hold stays `tentative` but blocks nothing and isn't listed. *(Q4)*
-  - **The coordinator's venue request page** doesn't show holds.
+  - **The coordinator's venue request page** shows a hold and its expiry since the reopening (A10), but the coordinator can't confirm or extend a hold there.
+- **A10 — The coordinator sees the hold (AC5, since reopening):** in-app notifications have no screen yet (a separate story), so the expiry is also shown where the coordinator already follows the event's venue bookings, the list from SCRUM-69/94 (`GET /api/venues/bookings?event_id=`):
+  - each booking gains `hold`: `{"expires_at", "expired"}` for a tentative booking and `null` otherwise;
+  - `expired` is decided by the server with A3's rule (expired from the expiry itself), so the page never compares times in the browser;
+  - the page shows an unexpired hold as "Tentative hold until 2027-03-01 17:00 (Singapore time)" and an expired one as "Hold expired on 2027-03-01 17:00". *(Q5)*
 
 ## Endpoints under test
 
@@ -84,6 +89,8 @@ These are the team's current reading of the story, agreed with the scrum lead on
 - **All three:** **401** without a valid session, and **403** for anyone who isn't Venue Staff. The two `/hold` endpoints also return **404** for an unknown booking.
 - **The `hold` payload** is SCRUM-39's booking payload (status `tentative`) plus `"hold": {"held_at", "held_by": {"id", "email"}, "expires_at"}`.
 - **A hold conflict** (SCRUM-41 list, SCRUM-40/87 refusals) is `{"type": "hold", "id", "start", "end", "event": {"id", "title"} | null, "expires_at"}`.
+- **`GET /api/venues/bookings?event_id=<id>`** (SCRUM-69's list for the event's coordinator), since reopening: each booking also has `"hold": {"expires_at", "expired"} | null` (A10).
+- **`GET /api/venues/search`** (SCRUM-37) with a date, start and end: a venue with an unexpired hold overlapping that period isn't in `venues` (AC8). **503** `{"error", "retryable": true}` and no `venues` if the holds can't be read.
 - **On the calendar** (SCRUM-64), a hold period is `{"type": "hold", "id", "start", "end", "reason": null, "expires_at"}`. Slots gain:
   - the status `"tentative"`;
   - the cause `"hold"`, ordered `booking`, `block`, `hold`, `outside_operating_hours`.
@@ -290,7 +297,7 @@ SCRUM-40's VA-SEED, reset before **every** test case:
 - **Automated:** `test_calendar_ignores_an_expired_hold`
 
 **TC-87-22 · Venue search leaves out a venue held for the searched time**
-- **Traces to:** AC4 · **Type:** Negative · **Depends on:** Q2
+- **Traces to:** AC4, AC8 · **Type:** Negative · **Depends on:** Q2 (answered by AC8)
 - **Steps:** As `alice`, search for 12 Mar 2027 18:00–20:00, with H2 unexpired and then expired.
 - **Expected result:** Aurora Ballroom isn't found while H2 is unexpired, and is found once it has expired.
 - **Automated:** `test_search_leaves_out_a_venue_held_for_the_time`
@@ -421,6 +428,70 @@ SCRUM-40's VA-SEED, reset before **every** test case:
 
 ---
 
+## Reopened 28 Oct 2026 — AC5 and AC8
+
+The reopened story lists AC5 (the coordinator is notified, with the expiry) and AC8 (venue search leaves out a held venue) as new. The other criteria are unchanged.
+
+**Both were already built.** AC5's wording matches the criterion these cases were written against, and AC8 is assumption A3's search rule, which the customer has now confirmed (Q2 answered). The existing cases already show:
+
+| AC | What is already shown | Automated |
+|----|-----------------------|-----------|
+| AC5 | Placing a hold gives the event's coordinator one in-app notification and one queued email naming the venue, the period and the expiry, and nobody else is told. The hold stands if the email can't be queued. | TC-87-23, 25 · `test_coordinator_is_notified_of_the_hold_and_its_expiry`, `test_hold_stands_when_the_email_cannot_be_queued` |
+| AC8 | A venue with an unexpired hold for the searched time is left out, and found again once the hold has expired. | TC-87-22 · `test_search_leaves_out_a_venue_held_for_the_time` |
+
+Rechecking the other criteria found no gaps (AC1–AC4, AC6, AC7: cases 01–21 and 26–38).
+
+**The gaps:**
+- **AC8:** search had no boundary cases. Nothing checked touching holds, other venues' holds, a hold expiring exactly now, or a hold's setup and turnaround time. Nothing checked a search whose holds can't be read either.
+- **AC5:** no case shows that the notification goes to the event's *current* coordinator rather than the one who asked for the venue.
+- **AC5:** the coordinator can't see the expiry in the app. Notifications have no screen yet, and their list of the event's bookings only said "Tentative", even after the hold expired. The scrum lead chose to show the expiry there (A10). A notifications screen is left to a separate story.
+
+**TC-87-39 · Search: touching holds, other venues' holds and a hold expiring now don't leave a venue out**
+- **Traces to:** AC8 · **Type:** Boundary
+- **Preconditions:** Unexpired holds at Aurora Ballroom on 12 Mar 2027, 16:00–18:00 and 20:00–22:00 (touching). An unexpired hold at Civic Hall, 18:00–20:00. A hold at Aurora Ballroom, 18:00–20:00, expiring at 2027-03-01 12:00, exactly now.
+- **Steps:** As `alice`, search for 12 Mar 2027 18:00–20:00.
+- **Expected result:** Aurora Ballroom is found.
+- **Automated:** `test_search_keeps_venues_whose_holds_do_not_overlap_or_have_expired`
+
+**TC-87-40 · Search: a hold's setup and turnaround time count**
+- **Traces to:** AC8 · **Type:** Boundary
+- **Preconditions:** An unexpired hold at Aurora Ballroom on 12 Mar 2027, 20:30–22:00, with 45 minutes' setup, so it occupies the venue from 19:45 (SCRUM-84 A1).
+- **Steps:** As `alice`, search for 12 Mar 2027 18:00–20:00.
+- **Expected result:** Aurora Ballroom isn't found.
+- **Automated:** `test_search_counts_a_holds_setup_and_turnaround`
+
+**TC-87-41 · Search when the holds can't be read**
+- **Traces to:** AC8 · **Type:** Negative (failure)
+- **Preconditions:** Reading the unexpired holds fails with a database error.
+- **Steps:** As `alice`, search for 12 Mar 2027 18:00–20:00.
+- **Expected result:** HTTP 503 with `retryable: true` and no `venues`. A venue is never offered when its holds weren't checked (AGENTS.md: a failure is never reported as available).
+- **Automated:** `test_search_fails_when_holds_cannot_be_read`
+
+**TC-87-42 · The event's current coordinator is notified**
+- **Traces to:** AC5 · **Type:** Happy path
+- **Preconditions:** P1 was requested by alice. A Coordinator Lead has since reassigned E1 to ben (SCRUM-82).
+- **Steps:** As `gus`, place the hold from TC-87-01.
+- **Expected result:** ben gets the `venue_hold_placed` notification and the email, with the expiry. alice gets neither.
+- **Automated:** `test_the_events_current_coordinator_is_notified`
+
+**TC-87-43 · The coordinator's list of the event's bookings shows each hold's expiry**
+- **Traces to:** AC5 · **Type:** Happy path · **Depends on:** Q5
+- **Preconditions:** P1 is an unexpired hold (expiry 2027-03-01 17:00). E1 also has a hold at Civic Hall on 13 Mar 2027, 10:00–12:00, that expired exactly now (2027-03-01 12:00), and a confirmed booking at Civic Hall on 14 Mar 2027, 10:00–12:00.
+- **Steps:** As `alice`, list E1's venue bookings.
+- **Expected result:**
+  - P1 has `hold: {"expires_at": "2027-03-01T17:00:00", "expired": false}`.
+  - The Civic Hall hold has `hold: {"expires_at": "2027-03-01T12:00:00", "expired": true}`.
+  - The confirmed booking has `hold: null`.
+- **Automated:** `test_coordinator_sees_each_holds_expiry`
+
+**TC-87-44 · Frontend: the coordinator's page shows the hold's expiry**
+- **Traces to:** AC5 · **Type:** Frontend · **Depends on:** Q5
+- **Steps:** Open E1's venue request page with the bookings from TC-87-43.
+- **Expected result:** P1 reads "Status: Tentative hold until 2027-03-01 17:00 (Singapore time)". The expired hold reads "Status: Hold expired on 2027-03-01 12:00". The confirmed booking reads "Status: Confirmed".
+- **Automated:** "shows each hold with its expiry" (`VenueBookingRequestPage.test.jsx`)
+
+---
+
 ## Traceability matrix
 
 | AC | Test cases |
@@ -429,23 +500,25 @@ SCRUM-40's VA-SEED, reset before **every** test case:
 | AC2 | 01, 05, 06, 07, 08, 10, 34, 35 |
 | AC3 | 09, 10, 11, 12, 24, 31, 32, 36, 37 |
 | AC4 | 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 35, 38 |
-| AC5 | 23, 24, 25 |
+| AC5 | 23, 24, 25, 42, 43, 44 |
 | AC6 | 26, 27, 28 |
 | AC7 | 19, 29, 30, 32, 35, 37 |
+| AC8 | 22, 39, 40, 41 |
 
 | Type | Test cases |
 |------|-----------|
-| Happy path | 01, 08, 09, 20, 23, 24, 31, 34, 36, 37, 38 |
-| Negative | 02, 03, 04, 05, 10, 11, 13, 14, 17, 19, 22, 25, 26, 27, 28, 29, 30, 32, 33, 35, 37 |
-| Boundary | 06, 07, 12, 15, 16, 21 |
+| Happy path | 01, 08, 09, 20, 23, 24, 31, 34, 36, 37, 38, 42, 43 |
+| Negative | 02, 03, 04, 05, 10, 11, 13, 14, 17, 19, 22, 25, 26, 27, 28, 29, 30, 32, 33, 35, 37, 41 |
+| Boundary | 06, 07, 12, 15, 16, 21, 39, 40 |
 | Concurrency | 18 |
-| Frontend | 34, 35, 36, 37, 38 |
+| Frontend | 34, 35, 36, 37, 38, 44 |
 
 ## Open questions for the customer
 
 | # | Question | Affects |
 |---|----------|---------|
 | Q1 | Can a hold's expiry be later than the booking's start? Assumed not: a hold can't outlast the time it holds. | A2, TC-87-07, 10 |
-| Q2 | Should venue search leave out a venue that is held for the searched time (assumed), or still list it? | A3, TC-87-22 |
+| Q2 | Should venue search leave out a venue that is held for the searched time (assumed), or still list it? **Answered 28 Oct 2026 by AC8: leave it out.** | A3, TC-87-22, 39–41 |
 | Q3 | Should the coordinator be told when Venue Staff change a hold's expiry (assumed), or only when it is placed? | A6, TC-87-24 |
 | Q4 | What happens when a hold expires: is the coordinator warned beforehand, and does the request go back to pending or close? How is a hold confirmed? (Week 7 change 4; separate stories.) Until then, an expired hold blocks nothing and can't be changed. | A9, TC-87-12, 16, 21, 33 |
+| Q5 | Where should the coordinator see a hold's expiry while in-app notifications have no screen? Assumed: on their list of the event's venue bookings, with an expired hold marked as expired. | A10, TC-87-43, 44 |
