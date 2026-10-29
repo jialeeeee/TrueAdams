@@ -532,3 +532,96 @@ describe("SCRUM-42 read-only and failures", () => {
     expect(screen.queryByLabelText("Equipment type")).toBeNull();
   });
 });
+
+// SCRUM-96: Technical Support view an event's equipment requirements. Frontend cases
+// TC-96-13 to 16 in docs/test-cases/SCRUM-96-tech-views-equipment-requirements.md; the API
+// side is backend/tests/test_tech_views_equipment.py.
+describe("SCRUM-96 Technical Support view an event's equipment requirements", () => {
+  const items = () => within(list()).getAllByRole("listitem");
+
+  // TC-96-13 · AC1
+  it("shows Technical Support each requirement's type, quantity and technical requirements", async () => {
+    apiClient.get.mockResolvedValue({ data: TECH_PAGE });
+    renderPage();
+
+    expect(await screen.findByRole("heading", { name: "Charity Gala" })).toBeTruthy();
+    expect(apiClient.get).toHaveBeenCalledWith("/events/7/equipment-requirements");
+    expect(items()).toHaveLength(2);
+    expect(within(items()[0]).getByText("2 × Wireless microphone")).toBeTruthy();
+    expect(within(items()[0]).getByText("Technical requirements: Lapel, with spare batteries")).toBeTruthy();
+    expect(within(items()[0]).getByText("Status: Requested")).toBeTruthy();
+    expect(within(items()[1]).getByText("1 × Projector")).toBeTruthy();
+    expect(within(items()[1]).getByText("Technical requirements: None recorded")).toBeTruthy();
+    expect(within(items()[1]).getByText("Status: Being arranged")).toBeTruthy();
+    expect(screen.getByText("From the organiser's request: Two wireless microphones and a projector")).toBeTruthy();
+    // They view and arrange; recording and editing are the coordinator's (SCRUM-42).
+    expect(screen.queryByLabelText("Equipment type")).toBeNull();
+    expect(screen.queryByRole("button", { name: /^(Edit|Remove) / })).toBeNull();
+    expect(screen.getByLabelText("Arrangement status for 2 × Wireless microphone")).toBeTruthy();
+  });
+
+  // TC-96-14 · AC2
+  it("shows a refusal or a missing event without Retry", async () => {
+    for (const [status, message] of [
+      [403, "You are not allowed to view this event's equipment requirements."],
+      [404, "Event not found."],
+    ]) {
+      apiClient.get.mockReset();
+      apiClient.get.mockRejectedValue(failed(status, { error: message }));
+      const { unmount } = render(
+        <MemoryRouter initialEntries={["/events/7/equipment"]} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+          <Routes>
+            <Route path="/events/:eventId/equipment" element={<EquipmentRequirementsPage />} />
+          </Routes>
+        </MemoryRouter>,
+      );
+
+      expect((await screen.findByRole("alert")).textContent).toBe(message);
+      expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+      expect(screen.queryByRole("list", { name: "Recorded equipment requirements" })).toBeNull();
+      expect(screen.queryByRole("heading", { name: "Charity Gala" })).toBeNull();
+      unmount();
+    }
+  });
+
+  // TC-96-15 · AC3
+  it("explains a failed load and loads the requirements on Retry", async () => {
+    const outage = "The equipment requirements could not be loaded. Please try again.";
+    apiClient.get
+      .mockRejectedValueOnce(failed(503, { error: outage, retryable: true }))
+      .mockResolvedValueOnce({ data: TECH_PAGE });
+    const user = renderPage();
+
+    expect((await screen.findByRole("alert")).textContent).toBe(outage);
+    expect(screen.queryByRole("list", { name: "Recorded equipment requirements" })).toBeNull();
+    // A failed load is never shown as "nothing recorded".
+    expect(screen.queryByText("No equipment requirements have been recorded for this event.")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+
+    expect(await screen.findByText("2 × Wireless microphone")).toBeTruthy();
+    expect(screen.getByText("1 × Projector")).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(apiClient.get).toHaveBeenCalledTimes(2);
+    expect(apiClient.get).toHaveBeenLastCalledWith("/events/7/equipment-requirements");
+  });
+
+  // TC-96-16 · AC3
+  it("asks to check the connection when there is no reply, and keeps Retry until a load works", async () => {
+    const noReply = Object.assign(new Error("Network Error"), { request: {} });
+    apiClient.get
+      .mockRejectedValueOnce(noReply)
+      .mockRejectedValueOnce(noReply)
+      .mockResolvedValueOnce({ data: TECH_PAGE });
+    const user = renderPage();
+
+    const connection = "The equipment requirements could not be loaded. Check your connection and try again.";
+    expect((await screen.findByRole("alert")).textContent).toBe(connection);
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    await vi.waitFor(() => expect(apiClient.get).toHaveBeenCalledTimes(2));
+    expect((await screen.findByRole("alert")).textContent).toBe(connection);
+
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByText("2 × Wireless microphone")).toBeTruthy();
+    expect(apiClient.get).toHaveBeenCalledTimes(3);
+  });
+});
