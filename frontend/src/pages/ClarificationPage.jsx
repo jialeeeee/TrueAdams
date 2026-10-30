@@ -34,12 +34,14 @@ export default function ClarificationPage() {
   const [confirmation, setConfirmation] = useState("");
   const [emailNote, setEmailNote] = useState("");
   const [edits, setEdits] = useState({});
+  const [resubmissionClosed, setResubmissionClosed] = useState(false);
 
   const load = useCallback(async () => {
     setLoadError("");
     try {
       const response = await apiClient.get(url);
       setThread(response.data);
+      setResubmissionClosed(false);
       setEdits(Object.fromEntries(EDIT_FIELDS.map(([name]) => [name, response.data.editable_fields?.[name] ?? ""])));
     } catch (failure) {
       setLoadError(serverError(failure, "The questions could not be loaded. Please try again."));
@@ -56,7 +58,7 @@ export default function ClarificationPage() {
 
   const handleSubmit = async (event) => {
     event.preventDefault();
-    if (!canSend) return;
+    if (!canSend || resubmissionClosed) return;
     setSending(true);
     setSendError("");
     setConfirmation("");
@@ -94,6 +96,17 @@ export default function ClarificationPage() {
           : "Your question was not sent. Check your connection and try again."),
         ...Object.values(failure.response?.data?.fields ?? {})].join(" "),
       );
+      if (thread.can_resubmit && failure.response?.status === 409) {
+        // Reconcile eligibility without reinitializing either typed input.
+        setResubmissionClosed(true);
+        try {
+          const response = await apiClient.get(url);
+          setThread(response.data);
+          setResubmissionClosed(response.data.can_resubmit !== true);
+        } catch {
+          // Keep the action stopped if current eligibility cannot be confirmed.
+        }
+      }
     } finally {
       setSending(false);
     }
@@ -113,6 +126,7 @@ export default function ClarificationPage() {
   }
 
   const { event, clarifications } = thread;
+  const replying = thread.can_resubmit || resubmissionClosed;
 
   return (
     <section>
@@ -136,25 +150,25 @@ export default function ClarificationPage() {
         </ol>
       )}
 
-      {(thread.can_resubmit || thread.can_send !== false) && <form onSubmit={handleSubmit}>
-        {thread.can_resubmit && EDIT_FIELDS.map(([name, label]) => (
+      {(replying || thread.can_send !== false) && <form onSubmit={handleSubmit}>
+        {replying && EDIT_FIELDS.map(([name, label]) => (
           <div key={name}>
             <label htmlFor={`reply-${name}`}>{label}</label>
             {name === "title" ? (
-              <input id={`reply-${name}`} value={edits[name] ?? ""} disabled={sending}
+              <input id={`reply-${name}`} value={edits[name] ?? ""} disabled={sending || resubmissionClosed}
                 onChange={(e) => setEdits((current) => ({ ...current, [name]: e.target.value }))} />
             ) : (
-              <textarea id={`reply-${name}`} rows={3} value={edits[name] ?? ""} disabled={sending}
+              <textarea id={`reply-${name}`} rows={3} value={edits[name] ?? ""} disabled={sending || resubmissionClosed}
                 onChange={(e) => setEdits((current) => ({ ...current, [name]: e.target.value }))} />
             )}
           </div>
         ))}
-        <label htmlFor="clarification-question">{thread.can_resubmit ? "Your reply" : "Your question"}</label>
+        <label htmlFor="clarification-question">{replying ? "Your reply" : "Your question"}</label>
         <textarea
           id="clarification-question"
           rows={6}
           value={question}
-          disabled={sending}
+          disabled={sending || resubmissionClosed}
           onChange={(e) => setQuestion(e.target.value)}
         />
         <p>{`${words} / ${MAX_WORDS} words`}</p>
@@ -163,7 +177,7 @@ export default function ClarificationPage() {
             That is over the 1,000-word limit. Remove {over} word{over === 1 ? "" : "s"} to send.
           </p>
         )}
-        <button type="submit" disabled={!canSend}>{thread.can_resubmit ? "Resubmit for review" : "Send question"}</button>
+        <button type="submit" disabled={!canSend || resubmissionClosed}>{replying ? "Resubmit for review" : "Send question"}</button>
       </form>}
       {sendError && <p role="alert">{sendError}</p>}
       {confirmation && <p role="status">{confirmation}</p>}

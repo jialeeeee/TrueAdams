@@ -120,4 +120,28 @@ describe("SCRUM-95 organiser clarification resubmission", () => {
     expect(screen.queryByRole("status")).toBeNull();
     expect(screen.getByText(/status: under[ _]review/i)).toBeTruthy();
   });
+
+  // TC-95-03/05: a coordinator decision closes eligibility while composing.
+  it("refreshes eligibility after a stale 409 and keeps the entries without offering resubmission", async () => {
+    const decided = { ...thread(), can_resubmit: false, editable_fields: {},
+      event: { ...thread().event, status: "approved" } };
+    apiClient.get.mockResolvedValueOnce({ data: thread() }).mockResolvedValueOnce({ data: decided });
+    const error = "This request is not awaiting a clarification reply. Reload its questions.";
+    apiClient.post.mockRejectedValue({ response: { status: 409, data: { error } } });
+    const user = await openPage();
+    await replace(user, screen.getByRole("textbox", { name: /your reply/i }), REPLY);
+    await replace(user, screen.getByRole("textbox", { name: /^description$/i }), DESCRIPTION);
+    await user.click(screen.getByRole("button", { name: /resubmit/i }));
+
+    expect((await screen.findByRole("alert")).textContent).toContain(error);
+    await screen.findByText(/status: approved/i);
+    expect(apiClient.get).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole("textbox", { name: /your reply/i }).value).toBe(REPLY);
+    expect(screen.getByRole("textbox", { name: /^description$/i }).value).toBe(DESCRIPTION);
+    const resubmit = screen.getByRole("button", { name: /resubmit/i });
+    expect(resubmit.disabled).toBe(true);
+    await user.click(resubmit);
+    expect(apiClient.post).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("status")).toBeNull();
+  });
 });

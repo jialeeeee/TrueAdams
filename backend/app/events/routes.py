@@ -1088,13 +1088,6 @@ def resubmit_request(event_id: int):
         edits = body.get("changes", {})
         if not isinstance(edits, dict):
             return _error("Send the request changes as a JSON object.", 400)
-        changes, corrections, restricted = _validate_planning_edits(event, edits)
-        if corrections:
-            return _error("Some changes could not be saved. Please correct them and try again.",
-                          422, fields=corrections)
-        if restricted:
-            return _error("These changes need a separate change request.", 409,
-                          requires_review=_review_required(event, restricted))
 
         coordinator = db.session.get(User, event.coordinator_id) if event.coordinator_id else None
         latest = (db.session.query(EventClarification)
@@ -1104,6 +1097,17 @@ def resubmit_request(event_id: int):
         if not _can_resubmit(event, latest, coordinator):
             return _error("This request is not awaiting a clarification reply. Reload its questions.", 409)
 
+        changes, corrections, restricted = _validate_planning_edits(event, edits)
+        if corrections:
+            return _error("Some changes could not be saved. Please correct them and try again.",
+                          422, fields=corrections)
+        if restricted:
+            # SCRUM-95: SCRUM-46 accepts approved events, not pending clarifications.
+            return _error(
+                "Only the event name, purpose, description, accessibility needs, required facilities, "
+                "required accessibility features and required layouts can be changed when resubmitting. "
+                "Remove the other changes and try again.", 422)
+
         now = datetime.utcnow()
         reply = EventClarification(event_id=event.id, sender_id=user.id,
                                    message=message, created_at=now)
@@ -1111,7 +1115,8 @@ def resubmit_request(event_id: int):
             setattr(event, name, value)
         # Narrow SCRUM-95 exception to SCRUM-31 A16; assignment stays unchanged.
         event.status = SUBMITTED_STATUS
-        event.submitted_at = event.last_saved_at = now
+        # Keep the original submission time used by request lists and the Lead queue.
+        event.last_saved_at = now
         notice = f'{user.email} replied and resubmitted the event request "{event.title}".'
         db.session.add(reply)
         db.session.add(Notification(recipient_id=coordinator.id, event_id=event.id,

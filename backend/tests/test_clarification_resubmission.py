@@ -55,6 +55,7 @@ class ClarificationResubmissionTests(unittest.TestCase):
                            status="under_review", description="Original description",
                            start_time=datetime(2026, 12, 12, 17),
                            end_time=datetime(2026, 12, 12, 20),
+                           submitted_at=datetime(2026, 10, 28, 1),
                            review_started_at=datetime(2026, 10, 29, 2),
                            review_started_by_id=2)
         self.foreign = Event(id=8, title="Private request", organiser_id=3,
@@ -165,6 +166,11 @@ class ClarificationResubmissionTests(unittest.TestCase):
         body = response.get_json()
         self.assertEqual(body["request"]["status"], "submitted")
         self.assertEqual(body["request"]["description"], DESCRIPTION)
+        self.assertEqual(self.event.submitted_at, datetime(2026, 10, 28, 1))
+        self.assertEqual(body["request"]["submitted_at"], "2026-10-28T01:00:00")
+        self.assertIsNotNone(self.event.last_saved_at)
+        self.assertEqual((self.event.review_started_at, self.event.review_started_by_id),
+                         (datetime(2026, 10, 29, 2), self.coordinator.id))
         self.assertEqual(self.event.coordinator_id, self.coordinator.id)
         self.assertIs(body["notification"]["in_app"], True)
         self.assertIs(body["notification"]["email_queued"], True)
@@ -211,15 +217,20 @@ class ClarificationResubmissionTests(unittest.TestCase):
         self.assertEqual(denied.status_code, 403, denied.get_json())
         self.assertNotIn(self.event.title, denied.get_data(as_text=True))
         self.event.status = "approved"
-        self.assertEqual(self.resubmit().status_code, 409)
+        response = self.resubmit(changes={"expected_attendance": 150})
+        self.assertEqual(response.status_code, 409, response.get_json())
+        self.assertIn("not awaiting a clarification reply", response.get_json()["error"])
+        self.assertNotIn("requires_review", response.get_json())
         self.event.status = "under_review"
         self.questions.append(EventClarification(id=22, event_id=7, sender_id=1,
                               message="Already answered", created_at=datetime(2026, 10, 30, 1)))
         self.assertEqual(self.resubmit().status_code, 409)
         self.questions.pop()
         response = self.resubmit(changes={"description": DESCRIPTION, "expected_attendance": 150})
-        self.assertEqual(response.status_code, 409, response.get_json())
-        self.assertIn("requires_review", response.get_json())
+        self.assertEqual(response.status_code, 422, response.get_json())
+        self.assertIn("event name, purpose, description", response.get_json()["error"])
+        self.assertNotIn("requires_review", response.get_json())
+        self.assertNotIn("change request", response.get_json()["error"])
         self.assertEqual(self.event.description, "Original description")
         self.session.add.assert_not_called()
         self.session.commit.assert_not_called()
@@ -251,7 +262,8 @@ class ClarificationResubmissionLocalTests(AppTestCase):
                 with self.subTest(commit_fails=fails):
                     email.reset_mock()
                     event = self.make_event(organiser=organiser, coordinator_id=coordinator.id,
-                                            status="under_review", description="Original description")
+                                            status="under_review", description="Original description",
+                                            submitted_at=datetime(2026, 10, 28, 1))
                     event_id = event.id
                     self.db.session.add(EventClarification(event_id=event_id, sender_id=coordinator.id,
                                                            message="Who will staff the entrance?"))
@@ -270,6 +282,8 @@ class ClarificationResubmissionLocalTests(AppTestCase):
                     self.assertEqual((saved.status, saved.description),
                                      ("under_review", "Original description") if fails else ("submitted", DESCRIPTION))
                     self.assertEqual(saved.coordinator_id, coordinator.id)
+                    self.assertEqual(saved.submitted_at, datetime(2026, 10, 28, 1))
+                    self.assertEqual(saved.last_saved_at is None, fails)
                     replies = EventClarification.query.filter_by(event_id=event_id, sender_id=organiser.id).all()
                     notices = Notification.query.filter_by(event_id=event_id, recipient_id=coordinator.id).all()
                     self.assertEqual([row.message for row in replies], [] if fails else [REPLY])
