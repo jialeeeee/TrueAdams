@@ -50,6 +50,10 @@ function SubmittedSection({ requests }) {
                   : `Status: ${statusLabel(request.status)}`}
               </p>
               {request.decided_at && <p>{decidedBy(request)}</p>}
+              {/* SCRUM-95: open the existing owner-authorized clarification thread. */}
+              {["submitted", "under_review"].includes(request.status) && (
+                <Link to={`/events/${request.id}/clarifications`}>View clarification messages</Link>
+              )}
               {request.decision_note && (
                 <p>{`${request.status === "rejected" ? "Reason" : "Note"}: ${request.decision_note}`}</p>
               )}

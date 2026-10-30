@@ -4,6 +4,12 @@ import apiClient from "../api/client.js";
 
 // Must match MAX_CLARIFICATION_WORDS in backend/app/events/routes.py.
 const MAX_WORDS = 1000;
+// SCRUM-95: reuse the existing request text fields and normal-field validators.
+// Must match the text entries in NORMAL_FIELD_VALIDATORS in backend/app/events/routes.py.
+const EDIT_FIELDS = [
+  ["title", "Event name"], ["purpose", "Purpose"],
+  ["description", "Description"], ["accessibility_needs", "Accessibility needs"],
+];
 
 // Words are runs of characters between whitespace, as the backend counts them.
 function countWords(text) {
@@ -27,12 +33,16 @@ export default function ClarificationPage() {
   const [sendError, setSendError] = useState("");
   const [confirmation, setConfirmation] = useState("");
   const [emailNote, setEmailNote] = useState("");
+  const [edits, setEdits] = useState({});
+  const [resubmissionClosed, setResubmissionClosed] = useState(false);
 
   const load = useCallback(async () => {
     setLoadError("");
     try {
       const response = await apiClient.get(url);
       setThread(response.data);
+      setResubmissionClosed(false);
+      setEdits(Object.fromEntries(EDIT_FIELDS.map(([name]) => [name, response.data.editable_fields?.[name] ?? ""])));
     } catch (failure) {
       setLoadError(serverError(failure, "The questions could not be loaded. Please try again."));
     }
@@ -48,31 +58,55 @@ export default function ClarificationPage() {
 
   const handleSubmit = async (event) => {
     event.preventDefault();
-    if (!canSend) return;
+    if (!canSend || resubmissionClosed) return;
     setSending(true);
     setSendError("");
     setConfirmation("");
     setEmailNote("");
     try {
-      const response = await apiClient.post(url, { message: question.trim() });
-      const { message, clarification, notification } = response.data;
+      const resubmitting = thread.can_resubmit === true;
+      const changes = Object.fromEntries(EDIT_FIELDS
+        .filter(([name]) => edits[name] !== (thread.editable_fields?.[name] ?? ""))
+        .map(([name]) => [name, edits[name]]));
+      const response = resubmitting
+        ? await apiClient.post(`/events/${eventId}/resubmit`, { message: question.trim(), changes })
+        : await apiClient.post(url, { message: question.trim() });
+      const { message, clarification, notification, request } = response.data;
       setConfirmation(message);
       if (notification && !notification.email_queued) {
         setEmailNote(
-          "The email could not be sent, but the organiser will still see your question in ConnectSphere.",
+          resubmitting
+            ? "The email could not be sent, but the coordinator will still see your reply in ConnectSphere."
+            : "The email could not be sent, but the organiser will still see your question in ConnectSphere.",
         );
       }
       setThread((current) => ({
         ...current,
-        clarifications: [...current.clarifications, clarification],
+        event: request ? { ...current.event, ...request } : current.event,
+        clarifications: clarification ? [...current.clarifications, clarification] : current.clarifications,
+        ...(resubmitting ? { can_resubmit: false } : {}),
         message: null,
       }));
       setQuestion("");
     } catch (failure) {
-      // The question stays in the box so it can be sent again.
+      // SCRUM-95 AC5: the reply and unsaved edits stay available for retry.
       setSendError(
-        serverError(failure, "Your question was not sent. Check your connection and try again."),
+        [serverError(failure, thread.can_resubmit
+          ? "Your reply and changes were not saved. Check your connection and try again."
+          : "Your question was not sent. Check your connection and try again."),
+        ...Object.values(failure.response?.data?.fields ?? {})].join(" "),
       );
+      if (thread.can_resubmit && failure.response?.status === 409) {
+        // Reconcile eligibility without reinitializing either typed input.
+        setResubmissionClosed(true);
+        try {
+          const response = await apiClient.get(url);
+          setThread(response.data);
+          setResubmissionClosed(response.data.can_resubmit !== true);
+        } catch {
+          // Keep the action stopped if current eligibility cannot be confirmed.
+        }
+      }
     } finally {
       setSending(false);
     }
@@ -92,6 +126,7 @@ export default function ClarificationPage() {
   }
 
   const { event, clarifications } = thread;
+  const replying = thread.can_resubmit || resubmissionClosed;
 
   return (
     <section>
@@ -115,12 +150,25 @@ export default function ClarificationPage() {
         </ol>
       )}
 
-      <form onSubmit={handleSubmit}>
-        <label htmlFor="clarification-question">Your question</label>
+      {(replying || thread.can_send !== false) && <form onSubmit={handleSubmit}>
+        {replying && EDIT_FIELDS.map(([name, label]) => (
+          <div key={name}>
+            <label htmlFor={`reply-${name}`}>{label}</label>
+            {name === "title" ? (
+              <input id={`reply-${name}`} value={edits[name] ?? ""} disabled={sending || resubmissionClosed}
+                onChange={(e) => setEdits((current) => ({ ...current, [name]: e.target.value }))} />
+            ) : (
+              <textarea id={`reply-${name}`} rows={3} value={edits[name] ?? ""} disabled={sending || resubmissionClosed}
+                onChange={(e) => setEdits((current) => ({ ...current, [name]: e.target.value }))} />
+            )}
+          </div>
+        ))}
+        <label htmlFor="clarification-question">{replying ? "Your reply" : "Your question"}</label>
         <textarea
           id="clarification-question"
           rows={6}
           value={question}
+          disabled={sending || resubmissionClosed}
           onChange={(e) => setQuestion(e.target.value)}
         />
         <p>{`${words} / ${MAX_WORDS} words`}</p>
@@ -129,11 +177,11 @@ export default function ClarificationPage() {
             That is over the 1,000-word limit. Remove {over} word{over === 1 ? "" : "s"} to send.
           </p>
         )}
-        {sendError && <p role="alert">{sendError}</p>}
-        {confirmation && <p role="status">{confirmation}</p>}
-        {emailNote && <p>{emailNote}</p>}
-        <button type="submit" disabled={!canSend}>Send question</button>
-      </form>
+        <button type="submit" disabled={!canSend || resubmissionClosed}>{replying ? "Resubmit for review" : "Send question"}</button>
+      </form>}
+      {sendError && <p role="alert">{sendError}</p>}
+      {confirmation && <p role="status">{confirmation}</p>}
+      {emailNote && <p>{emailNote}</p>}
     </section>
   );
 }

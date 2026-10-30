@@ -84,9 +84,10 @@ describe("SCRUM-59 my event requests", () => {
     expect(link.getAttribute("href")).toBe("/events/drafts/1");
 
     const submitted = section("Submitted requests");
-    // SCRUM-46 adds "Request a change" to approved requests; nothing else is linked.
+    // SCRUM-46 adds approved change requests; SCRUM-95 adds open clarification
+    // threads. Neither may open a submitted request in the draft editor.
     expect(within(submitted).queryAllByRole("link").map((a) => a.getAttribute("href")))
-      .toEqual(["/events/13/change-request"]);
+      .toEqual(["/events/13/change-request", "/events/12/clarifications", "/events/11/clarifications"]);
     const editorLinks = screen.getAllByRole("link").map((a) => a.getAttribute("href"));
     for (const request of SUBMITTED) {
       expect(editorLinks).not.toContain(`/events/drafts/${request.id}`);

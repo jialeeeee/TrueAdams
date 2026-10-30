@@ -1000,6 +1000,17 @@ def _queue_clarification_email(organiser, event, sender, question):
     return True
 
 
+def _can_resubmit(event, latest, coordinator):
+    """SCRUM-95 A1: only an open request whose latest question is unanswered.
+
+    Coordinator questions and organiser replies share the existing event thread;
+    an organiser's latest reply closes this exception until another question.
+    """
+    return (event.status in CLARIFIABLE_STATUSES and latest is not None
+            and latest.sender_id != event.organiser_id and coordinator is not None
+            and coordinator.role == COORDINATOR_ROLE)
+
+
 @events_bp.get("/<int:event_id>/clarifications")
 @jwt_required()
 def list_clarifications(event_id: int):
@@ -1025,6 +1036,11 @@ def list_clarifications(event_id: int):
             .order_by(EventClarification.created_at, EventClarification.id)
             .all()
         )
+        # SCRUM-95: add owner controls without changing history permissions.
+        owner = is_current_organiser(user, event)
+        coordinator = db.session.get(User, event.coordinator_id) if owner and event.coordinator_id else None
+        can_resubmit = owner and _can_resubmit(event, rows[-1][0] if rows else None, coordinator)
+        editable = {name: getattr(event, name) for name in NORMAL_FIELD_VALIDATORS} if can_resubmit else {}
     except SQLAlchemyError:
         db.session.rollback()
         return _error(
@@ -1039,11 +1055,88 @@ def list_clarifications(event_id: int):
                 "status": event.status,
                 "organiser": _user_summary(organiser),
             },
+            "editable_fields": editable,
             "clarifications": [_clarification_payload(c, sender) for c, sender in rows],
             "can_send": _is_current_coordinator(user, event) and event.status in CLARIFIABLE_STATUSES,
+            "can_resubmit": can_resubmit,
             "message": None if rows else "No questions have been sent for this event yet.",
         }
     )
+
+
+@events_bp.post("/<int:event_id>/resubmit")
+@jwt_required()
+def resubmit_request(event_id: int):
+    """SCRUM-95: owner reply, permitted edits and notification commit together."""
+    try:
+        user = _current_user()
+        if user is None:
+            return _error("Your session is no longer valid. Please log in again.", 401)
+        event = db.session.get(Event, event_id, with_for_update=True, populate_existing=True)
+        if event is None:
+            return _error("Event not found.", 404)
+        if not is_current_organiser(user, event):
+            return _error("Only this request's organiser can reply and resubmit it.", 403)
+
+        body = request.get_json(silent=True)
+        message = body.get("message") if isinstance(body, dict) else None
+        if not isinstance(message, str) or not message.strip():
+            return _error("Enter a reply before resubmitting.", 400)
+        message = message.strip()
+        if len(message.split()) > MAX_CLARIFICATION_WORDS:
+            return _error("Your reply is over the 1,000-word limit. Shorten it and try again.", 400)
+        edits = body.get("changes", {})
+        if not isinstance(edits, dict):
+            return _error("Send the request changes as a JSON object.", 400)
+
+        coordinator = db.session.get(User, event.coordinator_id) if event.coordinator_id else None
+        latest = (db.session.query(EventClarification)
+                  .filter(EventClarification.event_id == event.id)
+                  .order_by(EventClarification.created_at.desc(), EventClarification.id.desc())
+                  .first())
+        if not _can_resubmit(event, latest, coordinator):
+            return _error("This request is not awaiting a clarification reply. Reload its questions.", 409)
+
+        changes, corrections, restricted = _validate_planning_edits(event, edits)
+        if corrections:
+            return _error("Some changes could not be saved. Please correct them and try again.",
+                          422, fields=corrections)
+        if restricted:
+            # SCRUM-95: SCRUM-46 accepts approved events, not pending clarifications.
+            return _error(
+                "Only the event name, purpose, description, accessibility needs, required facilities, "
+                "required accessibility features and required layouts can be changed when resubmitting. "
+                "Remove the other changes and try again.", 422)
+
+        now = datetime.utcnow()
+        reply = EventClarification(event_id=event.id, sender_id=user.id,
+                                   message=message, created_at=now)
+        for name, value in changes.items():
+            setattr(event, name, value)
+        # Narrow SCRUM-95 exception to SCRUM-31 A16; assignment stays unchanged.
+        event.status = SUBMITTED_STATUS
+        # Keep the original submission time used by request lists and the Lead queue.
+        event.last_saved_at = now
+        notice = f'{user.email} replied and resubmitted the event request "{event.title}".'
+        db.session.add(reply)
+        db.session.add(Notification(recipient_id=coordinator.id, event_id=event.id,
+                                    kind="clarification_replied", message=notice))
+        db.session.flush()
+        # Capture response/email values before commit expires the ORM records.
+        payload = {**_request_payload(event),
+                   **{name: getattr(event, name) for name in NORMAL_FIELD_VALIDATORS}}
+        clarification = _clarification_payload(reply, user)
+        address, title = coordinator.email, event.title
+        db.session.commit()
+    except SQLAlchemyError:
+        db.session.rollback()
+        return _error("Your reply and changes were not saved. Please try again.",
+                      503, retryable=True)
+
+    queued = _queue_email(address, f"Event request resubmitted: {title}", notice, event_id)
+    return jsonify({"message": "Your request has been resubmitted for review.",
+                    "request": payload, "clarification": clarification,
+                    "notification": {"in_app": True, "email_queued": queued}})
 
 
 @events_bp.post("/<int:event_id>/clarifications")
