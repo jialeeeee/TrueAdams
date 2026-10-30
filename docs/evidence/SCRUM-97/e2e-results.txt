@@ -1,0 +1,8 @@
+PASS E2E-01 Technical Support update the microphones; the page shows the status, note, who and when, and they are still there after a reload (AC1)
+PASS E2E-02 A second Technical Support member's update replaces who and when; pressing Update again without a change keeps them (AC1)
+PASS E2E-03 The coordinator sees who and when but can't update; their and the organiser's updates are refused and change nothing (AC2)
+PASS E2E-04 When the coordinator changes the requirement after it was opened, the update is refused and the page shows the new details (AC1)
+PASS E2E-05 When the update never reaches the server, the page says it couldn't be confirmed, reloads (still unsaved), keeps the entry, and Update saves it once the connection is back (AC3)
+PASS E2E-06 When the server saves the update but the reply is lost, the page says it couldn't be confirmed and the reloaded requirements show it saved (AC3, review of PR #69)
+
+6/6 passed

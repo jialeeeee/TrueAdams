@@ -20,7 +20,8 @@ Endpoints (JWT required, else 401; the User row is loaded on every request)
     DELETE /api/events/<id>/equipment-requirements/<rid>    the event's coordinator
         200 {"confirmation", ...the GET payload} (PUT adds "requirement")
     PATCH  /api/events/<id>/equipment-requirements/<rid>/arrangement   tech staff
-        body {"status", "note"?}; 200 {"confirmation", "requirement", ...the GET payload}
+        body {"status", "note"?, "last_saved_at"? (SCRUM-97 A5)};
+        200 {"confirmation", "requirement", ...the GET payload}
     GET    /api/events/equipment-requests                   tech staff
         200 {"events": [{"id", "title", "status", "start_time", "end_time", "coordinator",
                          "requirement_count", "status_counts"}], "message"}

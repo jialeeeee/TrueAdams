@@ -4,6 +4,7 @@ import apiClient from "../api/client.js";
 import ARRANGEMENT_STATUSES from "../utils/arrangementStatuses.js";
 import canRetry from "../utils/canRetry.js";
 import explain from "../utils/explain.js";
+import formatSavedAt from "../utils/formatSavedAt.js";
 import singaporeTime from "../utils/singaporeTime.js";
 import statusLabel from "../utils/statusLabel.js";
 
@@ -15,7 +16,12 @@ const NOT_SAVED =
   "The equipment requirement was not saved, and the recorded requirements are unchanged. Check your connection and try again.";
 const NOT_REMOVED =
   "The equipment requirement was not removed, and the recorded requirements are unchanged. Check your connection and try again.";
-const ARRANGEMENT_NOT_SAVED = "The arrangement status was not saved. Check your connection and try again.";
+// Without the API's own error reply (a dropped connection, or a proxy's error page), the
+// update may have been saved before the reply was lost, so the page never says nothing
+// changed: it reloads what is saved (SCRUM-97 A8a, review of PR #69).
+const ARRANGEMENT_UNCONFIRMED =
+  "The update could not be confirmed, so it may or may not have been saved. "
+  + "The requirements below have been reloaded: check them, and update again if needed.";
 
 const EMPTY_FORM = { equipment_type: "", quantity: "", technical_requirements: "" };
 
@@ -95,6 +101,10 @@ function Requirement({ requirement, page, onEdit, onRemove, onArrange }) {
       <p>{`Status: ${requirement.status_label}`}</p>
       {requirement.arrangement_note && (
         <p>{`Note from Technical Support: ${requirement.arrangement_note}`}</p>
+      )}
+      {/* SCRUM-97 A3: who made the latest update, and when (saved as UTC). */}
+      {requirement.arrangement_updated_by && requirement.arrangement_updated_at && (
+        <p>{`Arrangement updated by ${requirement.arrangement_updated_by.email} on ${formatSavedAt(requirement.arrangement_updated_at)}`}</p>
       )}
       {page.can_edit && (
         <>
@@ -207,9 +217,15 @@ function EventEquipment({ eventId }) {
   async function arrange(requirement, { status, note }) {
     startChange();
     try {
-      finished(await apiClient.patch(`${url}/${requirement.id}/arrangement`, { status, note }));
+      // With the details shown, so the update is refused if the coordinator has changed
+      // them since (SCRUM-97 A5).
+      const body = { status, note, last_saved_at: requirement.last_saved_at };
+      finished(await apiClient.patch(`${url}/${requirement.id}/arrangement`, body));
     } catch (error) {
-      setFailure(explain(error, ARRANGEMENT_NOT_SAVED));
+      const answered = explain(error, null);
+      setFailure(answered ?? ARRANGEMENT_UNCONFIRMED);
+      // Unconfirmed: show what is saved. The coordinator changed it: show the new details.
+      if (answered === null || error.response?.data?.reload) load();
     }
   }
 
@@ -218,6 +234,8 @@ function EventEquipment({ eventId }) {
       <section>
         <h1>Equipment requirements</h1>
         {confirmation && <p role="status">{confirmation}</p>}
+        {/* An unconfirmed update stays explained when the reload after it fails too. */}
+        {failure && <p role="alert">{failure}</p>}
         <p role="alert">{loadError.message}</p>
         {loadError.retryable && <button type="button" onClick={load}>Retry</button>}
       </section>
