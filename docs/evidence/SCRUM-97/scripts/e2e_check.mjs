@@ -17,7 +17,8 @@ const TECH2 = "demo.tech2@connectsphere.demo";
 const COORDINATOR = "demo.coordinator@connectsphere.demo";
 const ORGANISER = "demo.organiser@connectsphere.demo";
 const TECH_ONLY = "Only Technical Support Staff can update equipment arrangements.";
-const NO_REPLY = "The arrangement was not saved, and the recorded requirements are unchanged. Check your connection and try again.";
+const NO_REPLY = "The update could not be confirmed, so it may or may not have been saved. "
+  + "The requirements below have been reloaded: check them, and update again if needed.";
 const NOTE = "Two lapel mics held at the AV store";
 const REQUIREMENTS = `/events/${gala}/equipment-requirements`;
 const results = [];
@@ -159,10 +160,14 @@ await check("E2E-04", "When the coordinator changes the requirement after it was
   assert.match(await items(tech).first().innerText(), updatedBy(TECH));
 });
 
-await check("E2E-05", "When the update can't be saved, the page says the requirements are unchanged, keeps the entry, and Update saves it once the connection is back (AC3)", async () => {
-  const pattern = `**/api/events/${gala}/equipment-requirements/*/arrangement`;
+const arrangementUrl = `**/api/events/${gala}/equipment-requirements/*/arrangement`;
+
+await check("E2E-05", "When the update never reaches the server, the page says it couldn't be confirmed, reloads (still unsaved), keeps the entry, and Update saves it once the connection is back (AC3)", async () => {
+  const pattern = arrangementUrl;
   await tech.route(pattern, (route) => route.abort("internetdisconnected"));
+  const reloaded = tech.waitForResponse((r) => r.url().endsWith(REQUIREMENTS) && r.request().method() === "GET");
   await arrange(tech, "1 × Projector", "unavailable", "Projector booked elsewhere");
+  await reloaded;
   const alert = tech.getByRole("alert");
   await alert.waitFor();
   assert.equal(await alert.innerText(), NO_REPLY);
@@ -181,6 +186,29 @@ await check("E2E-05", "When the update can't be saved, the page says the require
   assert.equal(await tech.getByRole("alert").count(), 0);
   assert.match(await items(tech).nth(1).innerText(), updatedBy(TECH));
   await shot(tech, "06-saved-on-trying-again.png");
+});
+
+await check("E2E-06", "When the server saves the update but the reply is lost, the page says it couldn't be confirmed and the reloaded requirements show it saved (AC3, review of PR #69)", async () => {
+  // The request reaches the server and is committed; only the reply is cut off.
+  await tech.route(arrangementUrl, async (route) => {
+    await route.fetch();
+    await route.abort("internetdisconnected");
+  });
+  const reloaded = tech.waitForResponse((r) => r.url().endsWith(REQUIREMENTS) && r.request().method() === "GET");
+  await arrange(tech, "1 × Projector", "being_arranged", "Spare projector found");
+  await reloaded;
+  await tech.getByRole("alert").waitFor();
+  assert.equal(await tech.getByRole("alert").innerText(), NO_REPLY);
+  await tech.getByText("Note from Technical Support: Spare projector found").waitFor();
+  const projector = await items(tech).nth(1).innerText();
+  assert.match(projector, /Status: Being arranged/);
+  assert.match(projector, updatedBy(TECH));
+  assert.doesNotMatch(await tech.locator("body").innerText(), /not saved|unchanged/);
+  const stored = (await apiAs(TECH, REQUIREMENTS)).body.requirements[1];
+  assert.equal(stored.status, "being_arranged");
+  assert.equal(stored.arrangement_note, "Spare projector found");
+  await shot(tech, "07-reply-lost-after-saving.png");
+  await tech.unroute(arrangementUrl);
 });
 
 await browser.close();

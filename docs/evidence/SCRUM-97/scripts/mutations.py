@@ -98,7 +98,8 @@ MUTATIONS = [
      PAGE, "const body = { status, note, last_saved_at: requirement.last_saved_at };",
      "const body = { status, note };"),
     ("F5", "frontend", "A refusal for changed details doesn't show the new details", "AC1",
-     PAGE, "      if (error.response?.data?.reload) load();\n", ""),
+     PAGE, "if (answered === null || error.response?.data?.reload) load();",
+     "if (answered === null) load();"),
     # ---------- Frontend: refusals and failures (AC2, AC3) ----------
     ("F6", "frontend", "The requirement looks updated before the server agrees", "AC2, AC3",
      PAGE, "    startChange();\n    try {\n      // With the details shown",
@@ -107,11 +108,21 @@ MUTATIONS = [
      "      ? { ...r, status, status_label: \"Being arranged\", arrangement_note: note } : r)) }));\n"
      "    try {\n      // With the details shown"),
     ("F7", "frontend", "A failed update shows no error", "AC2, AC3",
-     PAGE, "      setFailure(explain(error, ARRANGEMENT_NOT_SAVED));\n", ""),
+     PAGE, "      setFailure(answered ?? ARRANGEMENT_UNCONFIRMED);\n", ""),
     ("F8", "frontend", "The server's explanation is ignored", "AC2, AC3",
-     PAGE, "explain(error, ARRANGEMENT_NOT_SAVED)", "ARRANGEMENT_NOT_SAVED"),
-    ("F9", "frontend", "With no reply, the page doesn't say the requirements are unchanged", "AC3",
-     PAGE, '  "The arrangement was not saved, and the recorded requirements are unchanged. '
-           'Check your connection and try again.";',
-     '  "The arrangement status was not saved. Check your connection and try again.";'),
+     PAGE, "const answered = explain(error, null);", "const answered = null;"),
+    # ---------- Frontend: no reply, so the outcome is unknown (AC3, review of PR #69) ----------
+    ("F9", "frontend", "With no reply, the page says nothing changed (the reviewed bug)", "AC3",
+     PAGE, "setFailure(answered ?? ARRANGEMENT_UNCONFIRMED);",
+     'setFailure(answered ?? "The arrangement was not saved, and the recorded requirements '
+     'are unchanged. Check your connection and try again.");'),
+    ("F10", "frontend", "With no reply, the requirements are not reloaded", "AC3",
+     PAGE, "if (answered === null || error.response?.data?.reload) load();",
+     "if (error.response?.data?.reload) load();"),
+    ("F11", "frontend", "An error page from a proxy is shown as the API's answer", "AC3",
+     PAGE, "const answered = explain(error, null);",
+     "const answered = error.response ? explain(error, \"The update failed.\") : null;"),
+    ("F12", "frontend", "The unconfirmed update is no longer explained when the reload fails", "AC3",
+     PAGE, '        {failure && <p role="alert">{failure}</p>}\n        <p role="alert">{loadError.message}</p>',
+     '        <p role="alert">{loadError.message}</p>'),
 ]
