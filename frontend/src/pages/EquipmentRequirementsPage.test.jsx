@@ -743,20 +743,74 @@ describe("SCRUM-97 Technical Support update an event's equipment requirements", 
     expect(apiClient.patch.mock.calls[1]).toEqual(apiClient.patch.mock.calls[0]);
   });
 
+  // With no reply from the API the update may have been saved before the reply was lost,
+  // so the page never says nothing changed: it reloads what is saved (review of PR #69).
+  const UNCONFIRMED = "The update could not be confirmed, so it may or may not have been saved. "
+    + "The requirements below have been reloaded: check them, and update again if needed.";
+  const noReply = () => Object.assign(new Error("Network Error"), { request: {} });
+
   // TC-97-18 · AC3
-  it("says the requirements are unchanged when there is no reply", async () => {
+  it("reloads the requirements when there is no reply, and keeps the entry if it wasn't saved", async () => {
     apiClient.get.mockResolvedValue({ data: PAGE_97 });
-    apiClient.patch.mockRejectedValue(Object.assign(new Error("Network Error"), { request: {} }));
+    apiClient.patch.mockRejectedValue(noReply());
     const user = renderPage();
 
     await enterMic(user);
     await user.click(updateMic());
 
-    expect((await screen.findByRole("alert")).textContent).toBe(
-      "The arrangement was not saved, and the recorded requirements are unchanged. Check your connection and try again.",
-    );
+    expect((await screen.findByRole("alert")).textContent).toBe(UNCONFIRMED);
+    await vi.waitFor(() => expect(apiClient.get).toHaveBeenCalledTimes(2));
+    expect(screen.queryByText(/unchanged/)).toBeNull();
+    // Reloaded and not saved: still Requested, and what was entered stays for trying again.
     expect(within(items()[0]).getByText("Status: Requested")).toBeTruthy();
+    expect(micStatus().value).toBe("being_arranged");
     expect(micNote().value).toBe("Two lapel mics held");
+  });
+
+  // TC-97-20 · AC3
+  it("shows the saved update when the connection dropped after the server saved it", async () => {
+    const saved = { ...MIC, status: "being_arranged", status_label: "Being arranged", arrangement_note: "Two lapel mics held",
+                    arrangement_updated_by: HANA, arrangement_updated_at: "2026-10-30T03:15:00" };
+    apiClient.get
+      .mockResolvedValueOnce({ data: PAGE_97 })
+      .mockResolvedValueOnce({ data: { ...PAGE_97, requirements: [saved, ARRANGED] } });
+    apiClient.patch.mockRejectedValue(noReply());
+    const user = renderPage();
+
+    await enterMic(user);
+    await user.click(updateMic());
+
+    // The projector is already Being arranged, so wait on the microphones themselves.
+    await vi.waitFor(() => expect(within(items()[0]).getByText("Status: Being arranged")).toBeTruthy());
+    const mic = items()[0];
+    expect(within(mic).getByText("Note from Technical Support: Two lapel mics held")).toBeTruthy();
+    expect(within(mic).getByText(updatedBy(HANA, saved.arrangement_updated_at))).toBeTruthy();
+    expect(screen.getByRole("alert").textContent).toBe(UNCONFIRMED);
+    expect(screen.queryByText(/not saved|unchanged/)).toBeNull();
+  });
+
+  // TC-97-21 · AC3
+  it("treats an error without the API's reply as unconfirmed, and says so if the reload fails too", async () => {
+    apiClient.get
+      .mockResolvedValueOnce({ data: PAGE_97 })
+      .mockRejectedValueOnce(noReply())
+      .mockResolvedValueOnce({ data: PAGE_97 });
+    // A gateway timeout from a proxy: the server may still have saved it.
+    apiClient.patch.mockRejectedValue(failed(504, "<html>Gateway Timeout</html>"));
+    const user = renderPage();
+
+    await enterMic(user);
+    await user.click(updateMic());
+
+    expect(await screen.findByRole("button", { name: "Retry" })).toBeTruthy();
+    const alerts = screen.getAllByRole("alert").map((a) => a.textContent);
+    expect(alerts).toContain(UNCONFIRMED);
+    expect(alerts).toContain("The equipment requirements could not be loaded. Check your connection and try again.");
+    expect(screen.queryByText(/unchanged/)).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByText("2 × Wireless microphone")).toBeTruthy();
+    expect(apiClient.get).toHaveBeenCalledTimes(3);
   });
 
   // TC-97-19 · AC1 (A5)

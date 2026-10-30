@@ -21,7 +21,8 @@
 - **A5 — The update is for the details Technical Support saw:** the page sends the requirement's `last_saved_at` with the update. If the coordinator has changed the requirement since (SCRUM-42 A8 then sends it back to Requested), the update is refused with HTTP 409 and `reload: true`: "The coordinator has changed this requirement since you opened it, so your update was not saved. It is now 5 × Wireless microphone: check the new details and update it again." Nothing changes, and the page reloads to show the new details. The row is locked while it is checked and saved, so an update and the coordinator's edit can't interleave. Without `last_saved_at` (older clients) the update is checked as before. Two Technical Support members updating the same requirement: the later update wins, and its who and when are shown. *(Q3)*
 - **A6 — Drafts:** a draft is "Event not found." (HTTP 404) to everyone, as SCRUM-96 does for viewing; a draft never has requirements anyway.
 - **A7 — Denied, and nothing changes:** anyone but Technical Support Staff, including the event's own coordinator, gets HTTP 403 "Only Technical Support Staff can update equipment arrangements." with no event or requirement details. The requirement, its who and when, and the event are unchanged, and no notification or email is sent. The role is read from the database on every request. Checks run 401 → 404 (event) → 403 → 404 (requirement) → 409 (cancelled or rejected event) → 400/422 → 409 (changed since opened). The requirement is looked up after the permission check, so people who may not update learn nothing about requirements (SCRUM-42 A11).
-- **A8 — A failed save:** HTTP 503 `retryable: true`, "The arrangement was not saved, and the recorded requirements are unchanged. Please try again." (was "The arrangement status was not saved. Please try again."). Every requirement stays exactly as it was. The page shows the message (or, with no reply, "…Check your connection and try again."), keeps the shown requirements and what was chosen and typed in the form, so pressing Update again retries. *(Q4)*
+- **A8 — A failed save:** HTTP 503 `retryable: true`, "The arrangement was not saved, and the recorded requirements are unchanged. Please try again." (was "The arrangement status was not saved. Please try again."). Every requirement stays exactly as it was. The page shows the message, keeps the shown requirements and what was chosen and typed in the form, so pressing Update again retries. *(Q4)*
+- **A8a — No reply, so the outcome is unknown** (review of PR #69): only the API's own error reply (a JSON `error`) confirms that nothing was saved. With no reply (a dropped connection), or an error without the API's reply (e.g. a proxy's 504), the server may have saved the update before the reply was lost. The page then says "The update could not be confirmed, so it may or may not have been saved. The requirements below have been reloaded: check them, and update again if needed." and reloads the requirements, so they show what is actually saved. If it wasn't saved, what was entered stays. If the reload fails too, the page says so with Retry, under the same message.
 - **A9 — Notifications:** none, as in SCRUM-42 (its open question Q9).
 
 ## Seed data (TU-SEED)
@@ -134,7 +135,11 @@ Requirements recorded by alice for G1: **2 × Wireless microphone** ("Lapel, wit
 
 **TC-97-17 · A failed save shows the error, keeps the requirements and what was entered, and Update tries again** — AC3 · `keeps the requirements and the entry when a save fails, and saves on trying again`
 
-**TC-97-18 · With no reply, the page says the requirements are unchanged and to check the connection** — AC3 · `says the requirements are unchanged when there is no reply`
+**TC-97-18 · With no reply, the page says the update couldn't be confirmed and reloads; unsaved, the entry stays** — AC3, A8a · `reloads the requirements when there is no reply, and keeps the entry if it wasn't saved`
+
+**TC-97-20 · When the connection dropped after the server saved the update, the reloaded page shows it saved** — AC3, A8a · `shows the saved update when the connection dropped after the server saved it`
+
+**TC-97-21 · An error without the API's reply is unconfirmed too; if the reload fails, Retry loads the requirements** — AC3, A8a · `treats an error without the API's reply as unconfirmed, and says so if the reload fails too`
 
 **TC-97-19 · When the coordinator changed the requirement, the page says so and shows the new details** — AC1, A5 · `reloads the new details when the coordinator changed the requirement`
 
@@ -146,7 +151,7 @@ Requirements recorded by alice for G1: **2 × Wireless microphone** ("Lapel, wit
 |----|------------|
 | AC1 | 01, 02, 03, 04, 05, 06, 14, 15, 19 · also TC-42-21, 22, 35 |
 | AC2 | 05, 06, 07, 08, 09, 10, 16 · also TC-42-23 |
-| AC3 | 11, 12, 13, 17, 18 · also TC-42-28 |
+| AC3 | 11, 12, 13, 17, 18, 20, 21 · also TC-42-28 |
 
 ## Open questions for the customer
 
