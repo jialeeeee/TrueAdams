@@ -211,6 +211,25 @@ class VenueBlock(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 
+class VenueReplacementFlag(db.Model):
+    """SCRUM-88: a confirmed booking flagged "Venue unavailable: replacement needed" because
+    Venue Staff recorded an unavailable period that overlaps it. The booking itself is never
+    changed. `status` is "flagged" until a replacement is approved (SCRUM-89)."""
+
+    __tablename__ = "venue_replacement_flags"
+
+    id = db.Column(db.Integer, primary_key=True)
+    booking_id = db.Column(db.Integer, db.ForeignKey("venue_bookings.id", ondelete="CASCADE"),
+                           nullable=False, unique=True)
+    venue_id = db.Column(db.Integer, db.ForeignKey("venues.id"), nullable=False)
+    # The unavailable period (a venue block) that first flagged the booking.
+    block_id = db.Column(db.Integer, db.ForeignKey("venue_blocks.id", ondelete="CASCADE"),
+                         nullable=False)
+    status = db.Column(db.String(20), nullable=False, default="flagged")
+    flagged_by_id = db.Column(db.Integer, db.ForeignKey("users.id"))
+    flagged_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+
 class Registration(db.Model):
     """An attendee's place at an event, or on its waiting list (SCRUM-45)."""
 

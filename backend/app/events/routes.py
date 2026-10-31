@@ -22,10 +22,12 @@ from ..models import (
     User,
     Venue,
     VenueBooking,
+    VenueReplacementFlag,
 )
 from ..registrations.routes import REGISTERED, REGISTRABLE_STATUS, WITHDRAWN, singapore_now
 from ..resources import availability, reservations as reserving
-from ..venues.scheduling import BLOCKING_BOOKING_STATUS, TENTATIVE_STATUS, overlapping
+from ..venues.scheduling import (
+    BLOCKING_BOOKING_STATUS, FLAGGED, REPLACEMENT_FLAG, TENTATIVE_STATUS, overlapping)
 from . import change_requests, change_review, equipment, suitability
 from .permissions import (
     COORDINATOR_ROLE,
@@ -563,11 +565,15 @@ def _planning_payload(event):
         "coordinator_assigned_at": _isoformat(event.coordinator_assigned_at),
         "created_at": _isoformat(event.created_at),
     }
+    venue_bookings = _planning_venue_bookings(event)
     return {
         "id": event.id,
         **fields,
         "not_recorded": [name for name in PLANNING_FIELDS if fields[name] is None],
-        "venue_bookings": _planning_venue_bookings(event),
+        "venue_bookings": venue_bookings,
+        # SCRUM-88: only while a booking is flagged, so other events keep their payload.
+        **({"change_review": {"needed": True, "reason": REPLACEMENT_FLAG}}
+           if any("flag" in booking for booking in venue_bookings) else {}),
         # Add only recorded safety decisions; preserve the existing payload for
         # events with no safety check (SCRUM-91 AC2).
         **({"safety_check": _safety_decision_payload(event)} if event.safety_decision else {}),
@@ -586,6 +592,10 @@ def _planning_venue_bookings(event):
     venues = ({venue.id: venue for venue in Venue.query.filter(Venue.id.in_(venue_ids))}
               if venue_ids else {})
     now = singapore_now()
+    # SCRUM-88: confirmed bookings flagged because their venue became unavailable.
+    flagged = ({flag.booking_id for flag in VenueReplacementFlag.query.filter(
+        VenueReplacementFlag.booking_id.in_([b.id for b in bookings]),
+        VenueReplacementFlag.status == FLAGGED).all()} if bookings else set())
     listed = []
     for booking in bookings:
         venue = venues[booking.venue_id]
@@ -601,6 +611,8 @@ def _planning_venue_bookings(event):
             "status": booking.status,
             "hold_expires_at": _isoformat(booking.hold_expires_at) if held else None,
             "hold_expired": booking.hold_expires_at <= now if held else None,
+            **({"flag": REPLACEMENT_FLAG}
+               if booking.id in flagged and booking.status == BLOCKING_BOOKING_STATUS else {}),
         })
     return listed
 
