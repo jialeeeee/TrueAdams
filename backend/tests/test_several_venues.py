@@ -106,8 +106,11 @@ class SeveralRequestsTests(SeveralVenuesTestCase):
         ]
         made = []
         for venue, start, end, setup, turnaround, requirements in sent:
-            response = self.request_venue(venue, start, end, setup_minutes=setup,
-                                          turnaround_minutes=turnaround,
+            # SCRUM-84: setup and turnaround are the venue's, not part of the request.
+            self.venues[venue].setup_minutes = setup
+            self.venues[venue].turnaround_minutes = turnaround
+            self.db.session.commit()
+            response = self.request_venue(venue, start, end,
                                           venue_requirements=requirements)
             self.assertEqual(response.status_code, 201, response.get_json())
             made.append(response.get_json()["booking"]["id"])
@@ -115,10 +118,10 @@ class SeveralRequestsTests(SeveralVenuesTestCase):
         for booking_id, (venue, start, end, setup, turnaround, requirements) in zip(made, sent):
             row = self.stored(self.db.session.get(VenueBooking, booking_id))
             self.assertEqual(
-                (row["venue_id"], row["start_time"], row["end_time"], row["setup_minutes"],
-                 row["turnaround_minutes"], row["venue_requirements"], row["status"]),
+                (row["venue_id"], row["start_time"], row["end_time"],
+                 row["venue_requirements"], row["status"]),
                 (self.venues[venue].id, datetime.fromisoformat(start),
-                 datetime.fromisoformat(end), setup, turnaround, requirements, "pending"))
+                 datetime.fromisoformat(end), requirements, "pending"))
 
     # TC-85-03 · AC1 (A2, Q2) — the same venue at an overlapping time is a duplicate.
     def test_tc_85_03_the_same_venue_at_an_overlapping_time_is_refused(self):
@@ -126,12 +129,16 @@ class SeveralRequestsTests(SeveralVenuesTestCase):
         for start, end, setup in (("2027-03-12T20:00", "2027-03-12T23:00", 0),
                                   ("2027-03-12T22:45", "2027-03-12T23:30", 30)):
             with self.subTest(start=start, setup=setup):
+                self.venues["fully_recorded"].setup_minutes = setup
+                self.db.session.commit()
                 body = self.assert_error(
-                    self.request_venue("fully_recorded", start, end, setup_minutes=setup),
+                    self.request_venue("fully_recorded", start, end),
                     409, reason="already_requested")
                 self.assertIn("Aurora Ballroom", body["error"])
                 self.assertEqual(len(self.own_bookings()), count)
 
+        self.venues["fully_recorded"].setup_minutes = 0
+        self.db.session.commit()
         touching = self.request_venue("fully_recorded", "2027-03-12T22:30", "2027-03-12T23:30")
         self.assertEqual(touching.status_code, 201, touching.get_json())
 

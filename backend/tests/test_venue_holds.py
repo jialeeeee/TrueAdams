@@ -735,7 +735,7 @@ class ReopenedSearchTests(HoldTestCase):
     def test_search_counts_a_holds_setup_and_turnaround(self):
         hold = self.add_hold("E3", "fully_recorded", datetime(2027, 3, 12, 20, 30),
                              datetime(2027, 3, 12, 22, 0))
-        hold.setup_minutes = 45
+        self.venues["fully_recorded"].setup_minutes = 45  # SCRUM-84: the venue's setup time
         self.db.session.commit()
 
         self.assertNotIn(self.venues["fully_recorded"].id, self.found())
