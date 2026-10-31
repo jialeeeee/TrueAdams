@@ -40,6 +40,7 @@ import FlaggedBookingsPage from "./pages/FlaggedBookingsPage.jsx";
 import ReplacementNeededPage from "./pages/ReplacementNeededPage.jsx";
 import VenueUnavailablePage from "./pages/VenueUnavailablePage.jsx";
 import VenueBookingRequestsPage from "./pages/VenueBookingRequestsPage.jsx";
+import ReplacementVenuePage from "./pages/ReplacementVenuePage.jsx";
 import VenueSearchPage from "./pages/VenueSearchPage.jsx";
 import VenueFormPage from "./pages/VenueFormPage.jsx";
 import VenueSuitabilityPage from "./pages/VenueSuitabilityPage.jsx";
@@ -125,6 +126,7 @@ export default function App() {
           <Route path="/events/:eventId/reassign" element={<ReassignmentRequestPage />} />
           <Route path="/events/:eventId/assign" element={<AssignCoordinatorPage />} />
           <Route path="/events/:eventId/change-coordinator" element={<ReassignCoordinatorPage />} />
+          <Route path="/bookings/:bookingId/replacement" element={<ReplacementVenuePage />} />
           <Route path="/venues" element={<VenuesPage />} />
           <Route path="/venues/new" element={<VenueFormPage />} />
           <Route path="/venues/:venueId/edit" element={<VenueFormPage />} />

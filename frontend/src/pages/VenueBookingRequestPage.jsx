@@ -93,6 +93,16 @@ function VenueBookings({ bookings, onCancel, onConfirm }) {
           <li key={booking.id}>
             <p>{`${booking.venue.name}, ${asPeriod(booking)}`}</p>
             <p>{`Status: ${bookingStatus(booking)}`}</p>
+            {booking.unavailable_flag && <p>{booking.unavailable_flag.text}</p>}
+            {booking.unavailable_flag?.status === "flagged" && (
+              <Link to={`/bookings/${booking.id}/replacement`}>Request replacement venue</Link>
+            )}
+            {booking.unavailable_flag?.replaced_by && (
+              <p>{`Replaced by booking ${booking.unavailable_flag.replaced_by}`}</p>
+            )}
+            {booking.replaces && (
+              <p>{`Replaces booking ${booking.replaces.id} (${booking.replaces.venue.name})`}</p>
+            )}
             {booking.status === "tentative" && booking.hold && !booking.hold.expired && (
               <button type="button" onClick={() => onConfirm(booking)}>Confirm booking</button>
             )}

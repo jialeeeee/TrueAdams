@@ -26,6 +26,8 @@ EXPIRED_STATUS = "expired"
 # SCRUM-88: a confirmed booking whose venue was made unavailable (venue_replacement_flags).
 REPLACEMENT_FLAG = "Venue unavailable: replacement needed"
 FLAGGED = "flagged"
+# SCRUM-89: a flagged booking whose replacement was approved; its record is kept.
+REPLACED = "replaced"
 
 AVAILABLE = "available"
 UNAVAILABLE = "unavailable"

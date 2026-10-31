@@ -963,7 +963,31 @@ def _booking_payload(booking):
         "venue_requirements": booking.venue_requirements,
         "requested_by": {"id": requester.id, "email": requester.email} if requester else None,
         "requested_at": booking.created_at.isoformat(),
+        **_replaces(booking),
     }
+
+
+def _replaces(booking):
+    """SCRUM-89: the flagged booking a replacement request is for; nothing for any other."""
+    if not booking.replaces_booking_id:
+        return {}
+    original = db.session.get(VenueBooking, booking.replaces_booking_id)
+    venue = db.session.get(Venue, original.venue_id)
+    return {"replaces": {"id": original.id, "venue": {
+        "id": venue.id, "name": venue.name, "location": _recorded(venue.location)}}}
+
+
+def _unavailable_flag(booking):
+    """SCRUM-88/89: the coordinator's view of a booking flagged because its venue became
+    unavailable, and of its replacement once approved; nothing for any other booking."""
+    flag = VenueReplacementFlag.query.filter_by(booking_id=booking.id).first()
+    if flag is None:
+        return {}
+    replacement = (VenueBooking.query.filter_by(replaces_booking_id=booking.id,
+                                                status=CONFIRMED_BOOKING).first()
+                   if flag.status == scheduling.REPLACED else None)
+    return {"unavailable_flag": {"text": scheduling.REPLACEMENT_FLAG, "status": flag.status,
+                                 "replaced_by": replacement.id if replacement else None}}
 
 
 def _own_pending_request(event, venue_id, start, end):
@@ -1096,6 +1120,7 @@ def _booking_decision_payload(booking):
         "decided_at": booking.decided_at.isoformat() if booking.decided_at else None,
         "decided_by": {"id": decider.id, "email": decider.email} if decider else None,
         "hold": _coordinator_hold(booking),  # SCRUM-87 A10
+        **_unavailable_flag(booking),
     }
 
 
@@ -1127,6 +1152,7 @@ def _event_booking_requests():
 # ---------- Approving a venue booking request (SCRUM-40) ----------
 
 CONFIRMED = scheduling.BLOCKING_BOOKING_STATUS
+CONFIRMED_BOOKING = CONFIRMED
 APPROVAL_NOTIFICATION = "venue_booking_approved"
 
 
@@ -1237,6 +1263,24 @@ def _queue_coordinator_email(to_address, subject, message, event_id):
         event_id)
 
 
+def _mark_replaced(booking, event, venue):
+    """SCRUM-89 AC3: approving a replacement marks the flagged booking and its flag Replaced
+    and keeps both. Returns the flagged booking, or None if this is not a replacement or it
+    is no longer flagged (for example because it was cancelled meanwhile)."""
+    if not booking.replaces_booking_id:
+        return None
+    original = db.session.get(VenueBooking, booking.replaces_booking_id, with_for_update=True)
+    flag = VenueReplacementFlag.query.filter_by(booking_id=booking.replaces_booking_id).first()
+    if (original is None or flag is None or flag.status != scheduling.FLAGGED
+            or original.status != CONFIRMED):
+        return None
+    if event.venue_id == original.venue_id:
+        event.venue_id = venue.id
+    original.status = scheduling.REPLACED
+    flag.status = scheduling.REPLACED
+    return original
+
+
 @venues_bp.post("/bookings/<int:booking_id>/approve")
 @jwt_required()
 def approve_booking(booking_id: int):
@@ -1274,6 +1318,7 @@ def approve_booking(booking_id: int):
         booking.decided_by_id = user.id
         if first_venue:
             event.venue_id = venue.id
+        original = _mark_replaced(booking, event, venue)
         try:
             # Written now, so the database rule is checked before anything is announced.
             db.session.flush()
@@ -1287,6 +1332,8 @@ def approve_booking(booking_id: int):
             f'Your venue request for "{event.title}" at {venue.name} '
             f"({_period_text(booking.start_time, booking.end_time)}) was approved by "
             f"{user.email}."
+            + (f" It replaces your booking at {db.session.get(Venue, original.venue_id).name}, "
+               "which is now marked Replaced." if original else "")
         )
         # Saved in the same commit, so the coordinator is never told about an approval
         # that was not saved, and a saved approval always has its notification.
@@ -1319,11 +1366,152 @@ def approve_booking(booking_id: int):
     })
 
 
+# ---------- Replacing a flagged booking (SCRUM-89) ----------
+
+REPLACEMENT_FIELDS = {"venue_id"}
+REPLACEMENT_COORDINATOR_ONLY = "Only the event's assigned coordinator can request a replacement venue."
+NOT_FLAGGED = "This booking is not flagged as needing a replacement venue."
+
+
+def _flagged_booking(booking_id, lock=False):
+    """The caller, the flagged booking and its event, checked in the order 401, 404, 403,
+    then 409 for a booking that is not flagged (AGENTS.md)."""
+    user = _require_viewer(roles=None)
+    booking = db.session.get(VenueBooking, booking_id, with_for_update=lock)
+    event = db.session.get(Event, booking.event_id, with_for_update=lock) \
+        if booking is not None and booking.event_id else None
+    if booking is None or event is None:
+        raise _Rejected("Booking not found.", 404)
+    if not is_current_coordinator(user, event):
+        raise _Rejected(REPLACEMENT_COORDINATOR_ONLY, 403)
+    return user, booking, event
+
+
+def _require_flagged(booking):
+    flag = VenueReplacementFlag.query.filter_by(booking_id=booking.id).first()
+    if flag is None or flag.status != scheduling.FLAGGED or booking.status != CONFIRMED_BOOKING:
+        raise _Rejected(NOT_FLAGGED, 409, reason="not_flagged")
+
+
+@venues_bp.get("/bookings/<int:booking_id>/replacement")
+@jwt_required()
+def replacement_context(booking_id: int):
+    """What the replacement search is for: the flagged booking and its event."""
+    try:
+        _, booking, event = _flagged_booking(booking_id)
+        _require_flagged(booking)
+        venue = db.session.get(Venue, booking.venue_id)
+        payload = {
+            "booking": {
+                "id": booking.id, "status": booking.status, "flag": scheduling.REPLACEMENT_FLAG,
+                "venue": {"id": venue.id, "name": venue.name,
+                          "location": _recorded(venue.location)},
+                "start_time": booking.start_time.isoformat(),
+                "end_time": booking.end_time.isoformat(),
+            },
+            "event": {"id": event.id, "title": event.title,
+                      "expected_attendance": event.expected_attendance,
+                      "venue_requirements": event.venue_requirements},
+        }
+    except _Rejected as rejected:
+        return _error(rejected.message, rejected.status_code, **rejected.extra)
+    except SQLAlchemyError:
+        return _load_failed("The replacement search could not be loaded. Please try again.")
+    return jsonify(payload)
+
+
+@venues_bp.post("/bookings/<int:booking_id>/replacement")
+@jwt_required()
+def request_replacement(booking_id: int):
+    try:
+        user, booking, event = _flagged_booking(booking_id, lock=True)
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            raise _Rejected("Send the replacement request as JSON.", 400, fields={})
+        problems = {key: f"{key} is not part of a replacement request."
+                    for key in body if key not in REPLACEMENT_FIELDS}
+        if not _is_id(body.get("venue_id")):
+            problems["venue_id"] = "Choose a venue."
+        if problems:
+            raise _Rejected(
+                "Some details are missing or invalid. Please correct them and try again.",
+                400, fields=problems)
+        venue = db.session.get(Venue, body["venue_id"])
+        if venue is None:
+            raise _Rejected("Venue not found.", 404)
+        _require_flagged(booking)
+        if event.status != REQUESTABLE_EVENT_STATUS:
+            raise _Rejected(
+                "A venue can only be requested for an approved event. "
+                f"This event is {event.status}.", 409, reason="event_not_approved")
+        waiting = VenueBooking.query.filter_by(replaces_booking_id=booking.id,
+                                               status=PENDING).first()
+        if waiting:
+            raise _Rejected(
+                "This booking already has a replacement request waiting for Venue Staff. Wait for "
+                "them to decide on it, or cancel it, before asking for another venue.",
+                409, reason="already_requested", booking_id=waiting.id)
+
+        # The same checks as a new request: the venue's setup and turnaround, then every
+        # confirmed booking, block (the unavailable period too) and unexpired hold.
+        occupied_start, occupied_end = scheduling.occupied_period(
+            venue, booking.start_time, booking.end_time)
+        duplicate = _own_pending_request(event, venue.id, occupied_start, occupied_end)
+        if duplicate:
+            raise _Rejected(
+                f"This event already has a pending request for {venue.name} at an overlapping "
+                f"time ({_period_text(duplicate.start_time, duplicate.end_time)}).",
+                409, reason="already_requested", booking_id=duplicate.id)
+        conflicts = _conflicts_for(venue.id, occupied_start, occupied_end)
+        if conflicts:
+            clash = _clash(venue, conflicts, refused="requested")
+            clash.extra["occupied"] = {"start": occupied_start.isoformat(),
+                                       "end": occupied_end.isoformat()}
+            raise clash
+
+        replacement = VenueBooking(
+            event_id=event.id, venue_id=venue.id, status=PENDING,
+            start_time=booking.start_time, end_time=booking.end_time,
+            venue_requirements=(booking.venue_requirements or event.venue_requirements
+                                or f"Replacement for booking {booking.id}"),
+            requested_by_id=user.id, created_at=datetime.utcnow(),
+            replaces_booking_id=booking.id,
+        )
+        db.session.add(replacement)
+        db.session.flush()
+        original_venue = db.session.get(Venue, booking.venue_id)
+        payload = {
+            "message": (f"Your replacement request for {venue.name} was sent to Venue Staff. "
+                        f"Your booking at {original_venue.name} stays flagged until they "
+                        "approve it."),
+            "booking": _booking_payload(replacement),
+        }
+        db.session.commit()
+    except _Rejected as rejected:
+        db.session.rollback()
+        return _error(rejected.message, rejected.status_code, **rejected.extra)
+    except SQLAlchemyError:
+        db.session.rollback()
+        return _error(
+            "Your replacement request was not sent, and your flagged booking is unchanged. "
+            "Please try again.", 503, retryable=True)
+    return jsonify(payload), 201
+
+
 # ---------- Rejecting a pending request (SCRUM-69) ----------
 
 # AC3 specifies characters, independently of the event decision's word limit.
 MAX_REJECTION_REASON_LENGTH = 500
 REJECTION_NOTIFICATION = "venue_booking_rejected"
+
+
+def _still_flagged(booking):
+    """SCRUM-89 AC4: a rejected replacement leaves the original flagged, and says so."""
+    if not booking.replaces_booking_id:
+        return ""
+    original = db.session.get(VenueBooking, booking.replaces_booking_id)
+    venue = db.session.get(Venue, original.venue_id)
+    return (f' Your booking at {venue.name} is still flagged "{scheduling.REPLACEMENT_FLAG}".')
 
 
 def _rejection_reason(body):
@@ -1377,6 +1565,7 @@ def reject_booking(booking_id: int):
             f'Your venue request for "{event.title}" at {venue.name} '
             f"({_period_text(booking.start_time, booking.end_time)}) was rejected by "
             f"{user.email}. Reason: {reason}"
+            + _still_flagged(booking)
         )
         db.session.add(Notification(recipient_id=coordinator.id, kind=REJECTION_NOTIFICATION,
                                     message=message, event_id=event.id))
