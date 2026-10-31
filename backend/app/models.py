@@ -172,6 +172,8 @@ class VenueBooking(db.Model):
     # SCRUM-86: when (naive UTC) the coordinator was told the hold expires within 24
     # hours, so they are told once. NULL while that is still due.
     hold_warned_at = db.Column(db.DateTime)
+    # SCRUM-89: the flagged booking this request replaces; NULL for any other request.
+    replaces_booking_id = db.Column(db.Integer, db.ForeignKey("venue_bookings.id"))
 
 
 class VenueBookingFlag(db.Model):
