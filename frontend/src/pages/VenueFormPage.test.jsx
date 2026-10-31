@@ -224,6 +224,8 @@ describe("who can see add and edit", () => {
     await waitFor(() => expect(apiClient.get).toHaveBeenCalledWith("/venues/options"));
     expect(screen.queryByRole("link", { name: "Add venue" })).toBeNull();
     expect(screen.queryByRole("link", { name: "Edit Orchard Hall" })).toBeNull();
+    // SCRUM-88 TC27: no "Record unavailable period" action either.
+    expect(screen.queryByRole("link", { name: "Record unavailable period for Orchard Hall" })).toBeNull();
     expect(user).toBeTruthy();
   });
 
@@ -239,5 +241,8 @@ describe("who can see add and edit", () => {
     renderAt("/venues");
     expect(await screen.findByRole("link", { name: "Add venue" })).toBeTruthy();
     expect(screen.getByRole("link", { name: "Edit Orchard Hall" })).toBeTruthy();
+    // SCRUM-88 TC1/TC2: Venue Staff can record an unavailable period from the catalogue.
+    expect(screen.getByRole("link", { name: "Record unavailable period for Orchard Hall" })
+      .getAttribute("href")).toBe("/venues/1/unavailable");
   });
 });
