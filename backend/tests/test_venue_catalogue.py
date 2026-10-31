@@ -26,6 +26,7 @@ from sqlalchemy import event as sa_event
 from sqlalchemy.exc import OperationalError
 
 from app.models import Venue, VenueChange
+from app.venues import scheduling
 from tests.base import AppTestCase
 
 VENUES_URL = "/api/venues/"
@@ -348,6 +349,165 @@ class AccessTests(CatalogueTestCase):
     def test_options_are_for_venue_staff_only(self):  # AC8
         response = self.client.get("/api/venues/options", headers=self.auth_headers(self.attendee))
         self.assertEqual(response.status_code, 403)
+
+
+class SetupTurnaroundTests(CatalogueTestCase):
+    """SCRUM-63 AC9 (reopened): setup and turnaround time per venue, whole minutes 0-1440.
+
+    Sheet cases IS212-US63-TC17 to TC27 (the "Sprint 4 test cases" tab).
+    """
+
+    def v101_with(self, setup=30, turnaround=45):
+        venue_id = self.v101()
+        response = self.edit(venue_id, {"setup_minutes": setup, "turnaround_minutes": turnaround})
+        self.assertEqual(response.status_code, 200)
+        return venue_id
+
+    def stored(self, venue_id):
+        self.db.session.expire_all()
+        details = self.get(venue_id).get_json()
+        return details["setup_minutes"], details["turnaround_minutes"]
+
+    def test_tc17_set_setup_and_turnaround_and_see_them_on_reopen(self):  # AC9
+        venue_id = self.v101()
+        response = self.edit(venue_id, {"setup_minutes": 30, "turnaround_minutes": 45})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["venue"]["setup_minutes"], 30)
+        self.assertEqual(self.stored(venue_id), (30, 45))
+
+    def test_tc18_zero_is_accepted_and_kept_as_zero_not_blank(self):  # AC9 lower boundary
+        venue_id = self.v101_with()
+        self.assertEqual(
+            self.edit(venue_id, {"setup_minutes": 0, "turnaround_minutes": 0}).status_code, 200)
+        self.assertEqual(self.stored(venue_id), (0, 0))
+        details = self.get(venue_id).get_json()
+        # 0 is a recorded value, not "not recorded".
+        self.assertNotIn("setup_minutes", details["not_recorded"])
+        self.assertNotIn("turnaround_minutes", details["not_recorded"])
+
+    def test_tc19_1440_is_accepted(self):  # AC9 upper boundary
+        venue_id = self.v101()
+        response = self.edit(venue_id, {"setup_minutes": 1440, "turnaround_minutes": 1440})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.stored(venue_id), (1440, 1440))
+
+    def test_tc20_setup_of_1441_is_rejected(self):  # AC9 just above the limit
+        venue_id = self.v101_with()
+        response = self.edit(venue_id, {"setup_minutes": 1441, "turnaround_minutes": 45})
+        self.assertEqual(response.status_code, 400)
+        fields = response.get_json()["fields"]
+        self.assertEqual(list(fields), ["setup_minutes"])
+        self.assertIn("whole number", fields["setup_minutes"])
+        self.assertIn("0 to 1440", fields["setup_minutes"])
+        self.assertEqual(self.stored(venue_id), (30, 45))
+
+    def test_tc21_turnaround_of_1441_is_rejected(self):  # AC9 just above the limit
+        venue_id = self.v101_with()
+        response = self.edit(venue_id, {"setup_minutes": 30, "turnaround_minutes": 1441})
+        self.assertEqual(response.status_code, 400)
+        fields = response.get_json()["fields"]
+        self.assertEqual(list(fields), ["turnaround_minutes"])
+        self.assertIn("0 to 1440", fields["turnaround_minutes"])
+        self.assertEqual(self.stored(venue_id), (30, 45))
+
+    def test_tc22_negative_minutes_are_rejected(self):  # AC9 just below the limit
+        venue_id = self.v101_with()
+        first = self.edit(venue_id, {"setup_minutes": -1, "turnaround_minutes": 45})
+        second = self.edit(venue_id, {"setup_minutes": 30, "turnaround_minutes": -1})
+        self.assertEqual(first.status_code, 400)
+        self.assertEqual(list(first.get_json()["fields"]), ["setup_minutes"])
+        self.assertEqual(second.status_code, 400)
+        self.assertEqual(list(second.get_json()["fields"]), ["turnaround_minutes"])
+        self.assertEqual(self.stored(venue_id), (30, 45))
+
+    def test_tc23_values_that_are_not_whole_numbers_are_rejected(self):  # AC9
+        venue_id = self.v101_with()
+        for body, field in (
+            ({"setup_minutes": 30.5, "turnaround_minutes": 45}, "setup_minutes"),
+            ({"setup_minutes": 30, "turnaround_minutes": "abc"}, "turnaround_minutes"),
+            ({"setup_minutes": True}, "setup_minutes"),
+            ({"turnaround_minutes": [45]}, "turnaround_minutes"),
+        ):
+            response = self.edit(venue_id, body)
+            self.assertEqual(response.status_code, 400, body)
+            self.assertIn("whole number", response.get_json()["fields"][field], body)
+        self.assertEqual(self.stored(venue_id), (30, 45))
+
+    def test_tc24_a_venue_with_none_set_uses_zero(self):  # AC9
+        venue_id = self.v101()
+        details = self.get(venue_id).get_json()
+        self.assertIsNone(details["setup_minutes"])
+        self.assertIsNone(details["turnaround_minutes"])
+        self.assertIn("setup_minutes", details["not_recorded"])
+        venue = self.db.session.get(Venue, venue_id)
+        # The value every scheduling check uses (SCRUM-84 reads it from here).
+        self.assertEqual(scheduling.buffers(venue), (0, 0))
+
+    def test_tc24_a_venue_with_values_set_reports_them(self):  # AC9
+        venue = self.db.session.get(Venue, self.v101_with(30, 45))
+        self.assertEqual(scheduling.buffers(venue), (30, 45))
+
+    def test_tc25_out_of_range_value_sent_directly_is_rejected(self):  # AC9
+        venue_id = self.v101_with()
+        response = self.client.put(
+            f"{VENUES_URL}{venue_id}", headers=self.auth_headers(self.staff),
+            json={"setup_minutes": 1441, "turnaround_minutes": 45})
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Setup time", response.get_json()["error"])
+        self.assertEqual(self.stored(venue_id), (30, 45))
+        self.assertEqual(len(self.history(venue_id).get_json()["history"]), 2)  # add + the 30/45 edit
+
+    def test_tc26_coordinator_cannot_set_setup_or_turnaround(self):  # AC9 + AC8
+        venue_id = self.v101_with()
+        response = self.edit(venue_id, {"setup_minutes": 10}, self.coordinator)
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(self.edit(venue_id, {"setup_minutes": 10}, self.attendee).status_code, 403)
+        self.assertEqual(self.stored(venue_id), (30, 45))
+
+    def test_tc26_coordinator_can_still_read_the_values(self):  # AC9: read-only
+        venue_id = self.v101_with()
+        response = self.get(venue_id, self.coordinator)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["setup_minutes"], 30)
+
+    def test_tc27_changing_the_turnaround_records_who_and_when(self):  # AC9 + AC7
+        venue_id = self.v101_with()
+        self.assertEqual(
+            self.edit(venue_id, {"turnaround_minutes": 60}, self.staff2).status_code, 200)
+        entry = self.history(venue_id).get_json()["history"][-1]
+        self.assertEqual(entry["action"], "edited")
+        self.assertEqual(entry["changed_by"]["email"], "venue_staff2@test.example")
+        self.assertEqual(entry["changes"], {"turnaround_minutes": {"from": 45, "to": 60}})
+        changed = datetime.fromisoformat(entry["changed_at"])
+        self.assertLess(abs(datetime.utcnow() - changed), timedelta(minutes=1))
+
+    def test_a_venue_can_be_added_with_setup_and_turnaround(self):  # AC9
+        response = self.add({**FULL, "setup_minutes": 15, "turnaround_minutes": 20})
+        self.assertEqual(response.status_code, 201)
+        venue = response.get_json()["venue"]
+        self.assertEqual((venue["setup_minutes"], venue["turnaround_minutes"]), (15, 20))
+
+    def test_values_sent_as_numeric_text_are_accepted(self):  # AC9
+        venue_id = self.v101_with()
+        self.assertEqual(
+            self.edit(venue_id, {"setup_minutes": "15", "turnaround_minutes": "20"}).status_code, 200)
+        self.assertEqual(self.stored(venue_id), (15, 20))
+
+    def test_clearing_a_value_goes_back_to_none_set(self):  # AC9
+        venue_id = self.v101_with()
+        self.assertEqual(
+            self.edit(venue_id, {"setup_minutes": None, "turnaround_minutes": ""}).status_code, 200)
+        self.assertEqual(self.stored(venue_id), (None, None))
+
+    def test_editing_other_fields_leaves_the_values_alone(self):  # AC9
+        venue_id = self.v101_with()
+        self.assertEqual(self.edit(venue_id, {"capacity": 130}).status_code, 200)
+        self.assertEqual(self.stored(venue_id), (30, 45))
+
+    def test_a_bad_setup_time_is_named_with_other_invalid_fields(self):  # AC5 + AC9
+        venue_id = self.v101()
+        response = self.edit(venue_id, {"capacity": 0, "setup_minutes": 1441})
+        self.assertEqual(sorted(response.get_json()["fields"]), ["capacity", "setup_minutes"])
 
 
 if __name__ == "__main__":
