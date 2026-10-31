@@ -27,7 +27,12 @@ API
 """
 
 import unittest
+from contextlib import contextmanager
 from datetime import datetime
+
+import psycopg2
+from sqlalchemy import event as sa_event
+from sqlalchemy.exc import OperationalError
 
 from app.models import VenueBooking
 from tests import seed_data
@@ -47,6 +52,22 @@ class SetupTurnaroundTestCase(BookingRequestTestCase):
         self.v102 = self.venues["harbour_room"]
         self.set_buffers(self.v101, 30, 45)  # V-101: setup 30, turnaround 45
         self.set_buffers(self.v102, None, None)  # V-102: none set
+
+    @contextmanager
+    def queries_fail_on(self, table):
+        """Make statements that mention `table` fail, as a dropped connection would."""
+
+        def fail(conn, cursor, statement, parameters, context, executemany):
+            if table in statement and not statement.lstrip().upper().startswith(
+                    ("SAVEPOINT", "ROLLBACK", "RELEASE")):
+                raise OperationalError(
+                    statement, parameters, psycopg2.OperationalError("simulated outage"))
+
+        sa_event.listen(self.db.engine, "before_cursor_execute", fail)
+        try:
+            yield
+        finally:
+            sa_event.remove(self.db.engine, "before_cursor_execute", fail)
 
     def set_buffers(self, venue, setup, turnaround):
         venue.setup_minutes, venue.turnaround_minutes = setup, turnaround
@@ -102,7 +123,7 @@ class OccupiedPeriodTests(SetupTurnaroundTestCase):
                                                 "end": f"{DAY}T12:45:00", "minutes": 45})
 
     def test_tc13_the_booking_itself_reports_the_venues_occupied_period(self):  # AC1
-        booking = self.confirmed(status="pending")
+        booking = self.confirmed(status="pending", event="E1")
         entry = [b for b in self.listed().get_json()["bookings"] if b["id"] == booking.id][0]
         self.assertEqual((entry["setup_minutes"], entry["turnaround_minutes"]), (30, 45))
         self.assertEqual((entry["occupied_start"], entry["occupied_end"]),
@@ -262,7 +283,7 @@ class RequestConflictTests(SetupTurnaroundTestCase):
         self.assertEqual(body["occupied"], {"start": f"{DAY}T12:30:00", "end": f"{DAY}T15:45:00"})
 
     def test_pending_unconfirmed_bookings_do_not_block_a_request(self):  # AC2
-        self.confirmed(status="pending")
+        self.confirmed(status="pending", event="E2")
         self.assertEqual(self.request("10:00", "12:00").status_code, 201)
 
 

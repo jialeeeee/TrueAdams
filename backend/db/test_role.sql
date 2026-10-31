@@ -21,7 +21,8 @@ alter role connectsphere_test set search_path = public;
 grant usage on schema public to connectsphere_test;
 grant select, insert, update, delete
   on public.users, public.venues, public.resources, public.events, public.registrations,
-     public.venue_bookings, public.venue_blocks, public.event_clarifications, public.notifications,
+     public.venue_bookings, public.venue_booking_flags, public.venue_blocks,
+     public.event_clarifications, public.notifications,
      public.reassignment_requests, public.venue_changes, public.equipment_requirements,
      public.equipment_unavailability, public.equipment_reservations, public.event_change_requests
   to connectsphere_test;
@@ -34,7 +35,7 @@ declare
   t text;
 begin
   foreach t in array array['users', 'venues', 'resources', 'events', 'registrations',
-                       'venue_bookings', 'venue_blocks',
+                       'venue_bookings', 'venue_booking_flags', 'venue_blocks',
                        'event_clarifications', 'notifications', 'reassignment_requests',
                        'venue_changes', 'equipment_requirements', 'equipment_unavailability',
                        'equipment_reservations', 'event_change_requests'] loop

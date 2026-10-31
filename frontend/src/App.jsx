@@ -36,6 +36,7 @@ import TentativeHoldsPage from "./pages/TentativeHoldsPage.jsx";
 import UnassignedQueuePage from "./pages/UnassignedQueuePage.jsx";
 import VenueAvailabilityPage from "./pages/VenueAvailabilityPage.jsx";
 import VenueBookingRequestPage from "./pages/VenueBookingRequestPage.jsx";
+import FlaggedBookingsPage from "./pages/FlaggedBookingsPage.jsx";
 import VenueBookingRequestsPage from "./pages/VenueBookingRequestsPage.jsx";
 import VenueSearchPage from "./pages/VenueSearchPage.jsx";
 import VenueFormPage from "./pages/VenueFormPage.jsx";
@@ -80,6 +81,7 @@ export default function App() {
         <Link to="/venues/search">Venue search</Link>
         <Link to="/venues/bookings">Venue booking requests</Link>
         <Link to="/venues/holds">Tentative holds</Link>
+        <Link to="/venues/flagged-bookings">Setup or turnaround conflicts</Link>
         <Link to="/resources">Resources</Link>
         <Link to="/equipment-requests">Equipment requests</Link>
         <Link to="/my-registrations">My registrations</Link>
@@ -127,6 +129,7 @@ export default function App() {
           <Route path="/venues/search" element={<VenueSearchPage />} />
           <Route path="/venues/bookings" element={<VenueBookingRequestsPage />} />
           <Route path="/venues/holds" element={<TentativeHoldsPage />} />
+          <Route path="/venues/flagged-bookings" element={<FlaggedBookingsPage />} />
           <Route path="/resources" element={<ResourcesPage />} />
           <Route path="/equipment-requests" element={<EquipmentRequestsPage />} />
           <Route path="/my-registrations" element={<MyRegistrationsPage />} />

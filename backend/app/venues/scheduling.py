@@ -7,11 +7,16 @@ to, but not including, its end, so periods that only touch do not overlap.
 import re
 from datetime import datetime, time, timedelta
 
-from ..models import VenueBlock, VenueBooking
+from sqlalchemy import func, select
+
+from ..extensions import db
+from ..models import Venue, VenueBlock, VenueBooking, VenueBookingFlag
 
 # Only confirmed bookings make a venue unavailable; pending, rejected and cancelled
 # ones do not (open question Q2 in the SCRUM-36 test cases).
 BLOCKING_BOOKING_STATUS = "confirmed"
+# A booking that is still waiting for Venue Staff (SCRUM-39).
+PENDING_STATUS = "pending"
 # A tentative hold blocks its time too, but only until it expires (SCRUM-87 A3).
 TENTATIVE_STATUS = "tentative"
 # A hold whose expiry has passed (SCRUM-86 AC2). The expiry check records it, and until
@@ -80,12 +85,20 @@ def buffers(venue):
     return (venue.setup_minutes or 0, venue.turnaround_minutes or 0)
 
 
+def occupied_period(venue, start, end):
+    """The (start, end) a booking of `venue` from `start` to `end` occupies: the venue's
+    setup before and turnaround after (SCRUM-84 AC1)."""
+    setup, turnaround = buffers(venue)
+    return start - timedelta(minutes=setup), end + timedelta(minutes=turnaround)
+
+
 def occupied(record):
-    """The (start, end) a booking, hold or block occupies: a booking's setup before and
-    turnaround after its event are included (SCRUM-84 A1)."""
+    """The (start, end) a booking, hold or block occupies. A booking's is its event time with
+    its venue's setup before and turnaround after (SCRUM-84 AC1); it stores none of its own,
+    so it changes with the venue."""
     if isinstance(record, VenueBooking):
-        return (record.start_time - timedelta(minutes=record.setup_minutes or 0),
-                record.end_time + timedelta(minutes=record.turnaround_minutes or 0))
+        return occupied_period(db.session.get(Venue, record.venue_id),
+                               record.start_time, record.end_time)
     return record.start_time, record.end_time
 
 
@@ -97,14 +110,23 @@ def part(start, end):
     return {"start": start.isoformat(), "end": end.isoformat(), "minutes": minutes}
 
 
+def _venue_minutes(column):
+    """A venue's setup or turnaround as an SQL interval; none set counts as 0."""
+    minutes = (select(func.coalesce(column, 0)).where(Venue.id == VenueBooking.venue_id)
+               .scalar_subquery())
+    return func.make_interval(0, 0, 0, 0, 0, minutes, type_=db.Interval)
+
+
 def overlapping(query, model, start, end):
     """Rows of `model` whose occupied period overlaps [start, end).
 
-    A booking's occupied period includes its setup and turnaround (SCRUM-84 A1); a
-    block's is just its own period.
+    A booking's occupied period includes its venue's setup and turnaround (SCRUM-84 AC1);
+    a block's is just its own period.
     """
     if model is VenueBooking:
-        return query.filter(model.occupied_start < end, model.occupied_end > start)
+        return query.filter(
+            model.start_time - _venue_minutes(Venue.setup_minutes) < end,
+            model.end_time + _venue_minutes(Venue.turnaround_minutes) > start)
     return query.filter(model.start_time < end, model.end_time > start)
 
 
@@ -194,3 +216,47 @@ def day_slots(day, hours, periods):
         else:
             slots.append({"start": start, "end": end, "status": status, "causes": causes})
     return slots
+
+
+# ---------- Setup or turnaround conflicts (SCRUM-84 AC5) ----------
+
+
+def is_active(booking, now):
+    """Whether a booking still holds a place: pending, confirmed, or a hold not yet expired."""
+    if booking.status in (PENDING_STATUS, BLOCKING_BOOKING_STATUS):
+        return True
+    return booking.status == TENTATIVE_STATUS and booking.hold_expires_at > now
+
+
+def setup_conflicts(venue, now):
+    """{booking id: [ids of the bookings it overlaps]} for the venue's active bookings whose
+    occupied periods overlap another's although their event times do not (SCRUM-84 A9).
+
+    Periods are half-open, so occupied periods that only touch are not a conflict.
+    """
+    bookings = [b for b in VenueBooking.query.filter_by(venue_id=venue.id)
+                .order_by(VenueBooking.id).all() if is_active(b, now)]
+    periods = {b.id: occupied_period(venue, b.start_time, b.end_time) for b in bookings}
+    conflicts = {}
+    for index, first in enumerate(bookings):
+        for second in bookings[index + 1:]:
+            one, two = periods[first.id], periods[second.id]
+            occupied_overlap = one[0] < two[1] and two[0] < one[1]
+            event_overlap = (first.start_time < second.end_time
+                             and second.start_time < first.end_time)
+            if occupied_overlap and not event_overlap:
+                conflicts.setdefault(first.id, []).append(second.id)
+                conflicts.setdefault(second.id, []).append(first.id)
+    return conflicts
+
+
+def refresh_flags(venue, user_id, now):
+    """Flag the bookings that now conflict and clear the flags that no longer do. Nothing
+    about any booking changes (SCRUM-84 AC5)."""
+    conflicts = setup_conflicts(venue, now)
+    VenueBookingFlag.query.filter_by(venue_id=venue.id).delete()
+    for booking_id, overlaps in sorted(conflicts.items()):
+        db.session.add(VenueBookingFlag(
+            booking_id=booking_id, venue_id=venue.id, overlaps=overlaps,
+            flagged_by_id=user_id))
+    return conflicts

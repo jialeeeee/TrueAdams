@@ -10,7 +10,8 @@ from .. import tasks
 from ..events.permissions import is_current_coordinator
 from ..extensions import db
 from ..local_time import singapore_now
-from ..models import Event, Notification, User, Venue, VenueBooking, VenueChange
+from ..models import (
+    Event, Notification, User, Venue, VenueBooking, VenueBookingFlag, VenueChange)
 
 venues_bp = Blueprint("venues", __name__)
 
@@ -331,6 +332,10 @@ def update_venue(venue_id: int):
         if changes:
             db.session.add(VenueChange(
                 venue_id=venue.id, action="edited", changed_by_id=user.id, changes=changes))
+        if BUFFER_FIELDS.keys() & changes.keys():
+            # SCRUM-84 AC5: bookings whose occupied periods now overlap are flagged, in the
+            # same save, so a venue is never changed without its flags being brought up to date.
+            scheduling.refresh_flags(venue, user.id, singapore_now())
         db.session.commit()
         payload = _details(venue)
     except _Rejected as rejected:
@@ -339,6 +344,64 @@ def update_venue(venue_id: int):
     except SQLAlchemyError:
         return _save_failed()
     return jsonify({"message": f"{payload['name']} was updated.", "venue": payload})
+
+
+# ---------- Setup or turnaround conflicts (SCRUM-84 AC5) ----------
+
+SETUP_CONFLICT_FLAG = "Setup or turnaround conflict"
+
+
+def _flagged_entry(flag, booking, active_ids):
+    event = db.session.get(Event, booking.event_id) if booking.event_id else None
+    venue = db.session.get(Venue, booking.venue_id)
+    start, end = scheduling.occupied(booking)
+    return {
+        "id": booking.id,
+        "flag": SETUP_CONFLICT_FLAG,
+        "status": booking.status,
+        "event": {"id": event.id, "title": event.title} if event else None,
+        "venue": {"id": venue.id, "name": venue.name, "location": _recorded(venue.location)},
+        "start_time": booking.start_time.isoformat(),
+        "end_time": booking.end_time.isoformat(),
+        "occupied_start": start.isoformat(),
+        "occupied_end": end.isoformat(),
+        **{key: value for key, value in _timing(booking).items()
+           if key in ("setup", "turnaround")},
+        "overlaps": [other for other in flag.overlaps if other in active_ids],
+        "flagged_at": flag.flagged_at.isoformat(),
+    }
+
+
+@venues_bp.get("/flagged-bookings")
+@jwt_required()
+def flagged_bookings():
+    """The pending, tentative and confirmed bookings flagged "Setup or turnaround conflict",
+    for Venue Staff (SCRUM-84 AC5). Bookings decided or expired since are left out."""
+    try:
+        _require_viewer({"venue_staff"}, "Only Venue Staff can view flagged bookings.")
+        venue_id = request.args.get("venue_id")
+        if venue_id is not None and not _WHOLE_NUMBER.fullmatch(venue_id):
+            raise _Rejected("Choose a venue to filter by.", 400, field="venue_id")
+        query = VenueBookingFlag.query
+        if venue_id is not None:
+            query = query.filter_by(venue_id=int(venue_id))
+        flags = query.order_by(VenueBookingFlag.flagged_at, VenueBookingFlag.id).all()
+        now = singapore_now()
+        bookings = {b.id: b for b in VenueBooking.query.filter(
+            VenueBooking.id.in_([flag.booking_id for flag in flags])).all()} if flags else {}
+        active_ids = {booking_id for booking_id, b in bookings.items()
+                      if scheduling.is_active(b, now)}
+        listed = [_flagged_entry(flag, bookings[flag.booking_id], active_ids)
+                  for flag in flags if flag.booking_id in active_ids]
+    except _Rejected as rejected:
+        return _error(rejected.message, rejected.status_code, **rejected.extra)
+    except SQLAlchemyError:
+        return _load_failed("Flagged bookings could not be loaded. Please try again.")
+    return jsonify({
+        "bookings": listed,
+        "message": None if listed
+        else "No bookings are flagged for a setup or turnaround conflict.",
+    })
 
 
 @venues_bp.get("/<int:venue_id>/history")
@@ -386,16 +449,18 @@ def _date_range(args):
 
 
 def _timing(record):
-    """For a booking or hold with setup or turnaround: its event time, setup and
+    """For a booking or hold at a venue with setup or turnaround: its event time, setup and
     turnaround (SCRUM-84 A1, A4); `start`/`end` beside it are the occupied period. Empty
-    when it has neither, so such periods look as they did before SCRUM-84."""
-    if not (record.setup_minutes or record.turnaround_minutes):
+    when the venue has neither, so such periods look as they did before SCRUM-84."""
+    setup, turnaround = scheduling.buffers(db.session.get(Venue, record.venue_id))
+    if not (setup or turnaround):
         return {}
+    start, end = scheduling.occupied(record)
     return {
         "event_start": record.start_time.isoformat(),
         "event_end": record.end_time.isoformat(),
-        "setup": scheduling.part(scheduling.occupied(record)[0], record.start_time),
-        "turnaround": scheduling.part(record.end_time, scheduling.occupied(record)[1]),
+        "setup": scheduling.part(start, record.start_time),
+        "turnaround": scheduling.part(record.end_time, end),
     }
 
 
@@ -612,8 +677,8 @@ REQUESTABLE_EVENT_STATUS = "approved"
 PENDING = "pending"
 # The editing limit for long text (SCRUM-53), reused for venue requirements (A4).
 REQUIREMENTS_MAX_LENGTH = 5000
-BOOKING_FIELDS = {"event_id", "venue_id", "start_time", "end_time", "venue_requirements",
-                  "setup_minutes", "turnaround_minutes"}
+# Setup and turnaround are the venue's, not part of a request (SCRUM-84 A1, A2).
+BOOKING_FIELDS = {"event_id", "venue_id", "start_time", "end_time", "venue_requirements"}
 # Longest setup or turnaround, in minutes (SCRUM-84 A2): a day, until the customer says.
 MAX_BUFFER_MINUTES = 1440
 _LOCAL_DATETIME = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$")
@@ -633,21 +698,6 @@ def _parse_local_time(value, missing, invalid):
         except ValueError:
             pass
     return None, invalid
-
-
-def _parse_minutes(value):
-    """Whole minutes from 0 to MAX_BUFFER_MINUTES (blank or missing means 0), else None."""
-    if value is None or value == "":
-        return 0
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, float) and value.is_integer():
-        value = int(value)
-    if isinstance(value, str) and re.fullmatch(r"\d+", value.strip()):
-        value = int(value.strip())
-    if isinstance(value, int) and 0 <= value <= MAX_BUFFER_MINUTES:
-        return value
-    return None
 
 
 def _booking_problems(body):
@@ -675,11 +725,6 @@ def _booking_problems(body):
     if start and start < singapore_now():
         problems["start_time"] = "The start must not be in the past."
 
-    for key, label in (("setup_minutes", "Setup time"), ("turnaround_minutes", "Turnaround time")):
-        if key in body and _parse_minutes(body[key]) is None:
-            problems[key] = (
-                f"{label} must be a whole number of minutes from 0 to {MAX_BUFFER_MINUTES}.")
-
     requirements = body.get("venue_requirements")
     if requirements is not None and not isinstance(requirements, str):
         problems["venue_requirements"] = "The venue requirements must be text."
@@ -705,10 +750,10 @@ def _booking_payload(booking):
         "venue": {"id": venue.id, "name": venue.name, "location": _recorded(venue.location)},
         "start_time": booking.start_time.isoformat(),
         "end_time": booking.end_time.isoformat(),
-        # SCRUM-84: the venue is occupied from the start less the setup to the end plus the
-        # turnaround.
-        "setup_minutes": booking.setup_minutes or 0,
-        "turnaround_minutes": booking.turnaround_minutes or 0,
+        # SCRUM-84: the venue is occupied from the start less its setup time to the end plus
+        # its turnaround time.
+        "setup_minutes": scheduling.buffers(venue)[0],
+        "turnaround_minutes": scheduling.buffers(venue)[1],
         "occupied_start": scheduling.occupied(booking)[0].isoformat(),
         "occupied_end": scheduling.occupied(booking)[1].isoformat(),
         "venue_requirements": booking.venue_requirements,
@@ -761,11 +806,9 @@ def request_booking():
                 "A venue can only be requested for an approved event. "
                 f"This event is {event.status}.", 409)
 
-        setup = _parse_minutes(body.get("setup_minutes"))
-        turnaround = _parse_minutes(body.get("turnaround_minutes"))
-        # SCRUM-84 A5: a request whose occupied period clashes is refused up front.
-        occupied_start = start - timedelta(minutes=setup)
-        occupied_end = end + timedelta(minutes=turnaround)
+        # SCRUM-84 A5: a request whose occupied period (with the venue's setup and turnaround)
+        # clashes is refused up front.
+        occupied_start, occupied_end = scheduling.occupied_period(venue, start, end)
         # SCRUM-85: other venues may be requested alongside, but not this one again.
         duplicate = _own_pending_request(event, venue.id, occupied_start, occupied_end)
         if duplicate:
@@ -784,7 +827,6 @@ def request_booking():
         booking = VenueBooking(
             event_id=event.id, venue_id=venue.id, status=PENDING,
             start_time=start, end_time=end,
-            setup_minutes=setup, turnaround_minutes=turnaround,
             venue_requirements=body["venue_requirements"].strip(),
             requested_by_id=user.id, created_at=datetime.utcnow(),
         )

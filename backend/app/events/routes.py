@@ -595,8 +595,9 @@ def _planning_venue_bookings(event):
             "venue": {"id": venue.id, "name": venue.name, "location": _recorded(venue.location)},
             "start_time": _isoformat(booking.start_time),
             "end_time": _isoformat(booking.end_time),
-            "setup_minutes": booking.setup_minutes or 0,
-            "turnaround_minutes": booking.turnaround_minutes or 0,
+            # SCRUM-84: the venue's setup and turnaround time.
+            "setup_minutes": venue.setup_minutes or 0,
+            "turnaround_minutes": venue.turnaround_minutes or 0,
             "status": booking.status,
             "hold_expires_at": _isoformat(booking.hold_expires_at) if held else None,
             "hold_expired": booking.hold_expires_at <= now if held else None,

@@ -129,20 +129,17 @@ class VenueBooking(db.Model):
     __tablename__ = "venue_bookings"
     __table_args__ = (
         db.CheckConstraint("end_time > start_time", name="venue_bookings_end_after_start"),
-        # SCRUM-84: setup and turnaround are whole minutes, up to a day each.
-        db.CheckConstraint("setup_minutes between 0 and 1440",
-                           name="venue_bookings_setup_minutes_range"),
-        db.CheckConstraint("turnaround_minutes between 0 and 1440",
-                           name="venue_bookings_turnaround_minutes_range"),
         # An event may have several pending requests, one per venue it needs (SCRUM-85
         # A1), so SCRUM-39's one-pending-request index is gone.
         # No two confirmed bookings at one venue may overlap, whichever code saves them
         # (SCRUM-41 A4). Periods are half-open, so touching is allowed; the venue id is
-        # a one-value range so plain GiST can compare it without an extension. It is the
-        # occupied period (setup before, turnaround after) that must not overlap (SCRUM-84).
+        # a one-value range so plain GiST can compare it without an extension. Only the event
+        # times are compared: the occupied period (SCRUM-84) comes from the venue's setup and
+        # turnaround, which the database cannot see, and changing them may leave occupied
+        # periods overlapping on purpose (SCRUM-84 AC5). The application checks them.
         ExcludeConstraint(
             (db.text("int4range(venue_id, venue_id, '[]')"), "&&"),
-            (db.text("tsrange(occupied_start, occupied_end)"), "&&"),
+            (db.text("tsrange(start_time, end_time)"), "&&"),
             name="venue_bookings_no_overlapping_confirmed",
             using="gist",
             where=db.text("status = 'confirmed'"),
@@ -175,17 +172,27 @@ class VenueBooking(db.Model):
     # SCRUM-86: when (naive UTC) the coordinator was told the hold expires within 24
     # hours, so they are told once. NULL while that is still due.
     hold_warned_at = db.Column(db.DateTime)
-    # SCRUM-84: minutes of setup before and turnaround after the event. The venue is
-    # occupied from start_time - setup to end_time + turnaround, which the database works
-    # out (occupied_start/occupied_end) so the no-overlap rule can use it.
-    setup_minutes = db.Column(db.Integer, nullable=False, default=0, server_default="0")
-    turnaround_minutes = db.Column(db.Integer, nullable=False, default=0, server_default="0")
-    occupied_start = db.Column(
-        db.DateTime,
-        db.Computed("start_time - make_interval(mins => setup_minutes)", persisted=True))
-    occupied_end = db.Column(
-        db.DateTime,
-        db.Computed("end_time + make_interval(mins => turnaround_minutes)", persisted=True))
+
+
+class VenueBookingFlag(db.Model):
+    """SCRUM-84 AC5: a booking flagged "Setup or turnaround conflict" because a change to its
+    venue's setup or turnaround time made its occupied period overlap another booking's.
+
+    One row per flagged booking, so the booking itself is never changed. The flags of a
+    venue are worked out again whenever its setup or turnaround time changes.
+    """
+
+    __tablename__ = "venue_booking_flags"
+
+    id = db.Column(db.Integer, primary_key=True)
+    booking_id = db.Column(db.Integer, db.ForeignKey("venue_bookings.id", ondelete="CASCADE"),
+                           nullable=False, unique=True)
+    venue_id = db.Column(db.Integer, db.ForeignKey("venues.id"), nullable=False)
+    # The bookings it overlaps, as a list of IDs.
+    overlaps = db.Column(JSONB, nullable=False)
+    # The Venue Staff member whose change raised it, and when (naive UTC).
+    flagged_by_id = db.Column(db.Integer, db.ForeignKey("users.id"))
+    flagged_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
 
 
 class VenueBlock(db.Model):

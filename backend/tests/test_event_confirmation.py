@@ -116,7 +116,7 @@ class EventConfirmationUnitTests(unittest.TestCase):
     @staticmethod
     def booking(key, venue_id, start, end):
         return SimpleNamespace(id=key, event_id=1, venue_id=venue_id, status="confirmed",
-            start_time=start, end_time=end, setup_minutes=0, turnaround_minutes=0, hold_expires_at=None)
+            start_time=start, end_time=end, hold_expires_at=None)
 
     @staticmethod
     def reservation(key, requirement_id):
