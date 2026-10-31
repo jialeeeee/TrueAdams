@@ -18,8 +18,8 @@ API
         entry = {"id", "flag": "Venue unavailable: replacement needed", "status", "event":
                  {"id", "title"}, "venue": {"id", "name", "location"}, "start_time", "end_time",
                  "period": {"id", "reason", "start_time", "end_time"}, "flagged_at"}
-    GET /api/events/<id>/planning  each venue booking has "flag" (the text or null); the event
-        has "change_review": {"needed": bool, "reason"}
+    GET /api/events/<id>/planning  a flagged venue booking has "flag" (the text) and the event has
+        "change_review": {"needed": true, "reason": the text}, both only while flagged
     POST /api/venues/bookings      409 reason "conflict" naming the unavailable period
 """
 
@@ -51,6 +51,7 @@ class UnavailableTestCase(BookingRequestTestCase):
         self.v101 = self.venues["fully_recorded"]
         self.v102 = self.venues["harbour_room"]
         self.events["E1"].status = "confirmed"  # E-801, coordinator alice
+        self.events["E3"].status = "approved"  # alice's second event, with no booking yet
         self.db.session.commit()
         self.b801 = self.book("E1", self.v101, at(10), at(12))
 
@@ -407,8 +408,9 @@ class EventStatusTests(UnavailableTestCase):
         response = self.client.get(f"/api/events/{self.events['E1'].id}/planning",
                                    headers=self.auth_headers(self.users["alice"]))
         body = response.get_json()
-        self.assertEqual(body["change_review"], {"needed": False, "reason": None})
-        self.assertIsNone(body["venue_bookings"][0]["flag"])
+        # Like safety_check, the keys are there only when they apply.
+        self.assertNotIn("change_review", body)
+        self.assertNotIn("flag", body["venue_bookings"][0])
 
     def test_tc21_an_affected_event_that_was_not_confirmed_keeps_its_status(self):  # AC4
         self.events["E2"].status = "approved"

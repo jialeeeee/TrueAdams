@@ -23,6 +23,12 @@ export default function VenuesPage() {
           <li key={venue.id}>
             {venue.name}
             {canEdit && <Link to={`/venues/${venue.id}/edit`} aria-label={`Edit ${venue.name}`}>Edit</Link>}
+            {canEdit && (
+              <Link to={`/venues/${venue.id}/unavailable`}
+                aria-label={`Record unavailable period for ${venue.name}`}>
+                Record unavailable period
+              </Link>
+            )}
           </li>
         ))}
       </ul>
