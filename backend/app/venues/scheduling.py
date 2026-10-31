@@ -74,6 +74,12 @@ def parse_operating_hours(text):
     return hours
 
 
+def buffers(venue):
+    """The (setup, turnaround) minutes of a venue; a venue with none set uses 0
+    (SCRUM-63 AC9)."""
+    return (venue.setup_minutes or 0, venue.turnaround_minutes or 0)
+
+
 def occupied(record):
     """The (start, end) a booking, hold or block occupies: a booking's setup before and
     turnaround after its event are included (SCRUM-84 A1)."""

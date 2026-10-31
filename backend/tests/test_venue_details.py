@@ -57,6 +57,9 @@ DETAIL_FIELDS = [
     "contact_phone",
     "parking_spaces",
     "catering_available",
+    # SCRUM-63 AC9 (reopened): minutes of setup and turnaround; NULL when none is set.
+    "setup_minutes",
+    "turnaround_minutes",
 ]
 
 # The seed user acting in each role.
@@ -343,6 +346,8 @@ class VenueDetailTests(VenueTestCase):
                 "contact_phone": "+65 6123 4567",
                 "parking_spaces": 120,
                 "catering_available": True,
+                "setup_minutes": 0,
+                "turnaround_minutes": 0,
                 "not_recorded": [],
             },
         )
@@ -422,7 +427,7 @@ class NotRecordedInformationTests(VenueTestCase):
         missing = [
             "description", "location", "area_sqm", "accessibility_features",
             "operating_hours", "contact_email", "contact_phone",
-            "parking_spaces", "catering_available",
+            "parking_spaces", "catering_available", "setup_minutes", "turnaround_minutes",
         ]
 
         self.assertEqual(body["not_recorded"], missing)
