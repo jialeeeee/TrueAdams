@@ -89,10 +89,10 @@ class SafetyRejectionChangesUnitTests(unittest.TestCase):
             last_saved_at=datetime(2026, 1, 1), created_at=datetime(2026, 1, 1))
         self.rows = {
             Event: [self.event], User: [self.officer, self.coordinator, self.other],
-            Venue: [SimpleNamespace(id=10, name="Meeting Room", location="Level 1")],
+            Venue: [SimpleNamespace(id=10, name="Meeting Room", location="Level 1",
+                setup_minutes=None, turnaround_minutes=None)],
             VenueBooking: [SimpleNamespace(id=20, event_id=1, venue_id=10, status="confirmed",
-                start_time=START, end_time=self.event.end_time, setup_minutes=0,
-                turnaround_minutes=0, hold_expires_at=None)],
+                start_time=START, end_time=self.event.end_time, hold_expires_at=None)],
             EquipmentRequirement: [SimpleNamespace(id=30, event_id=1,
                 equipment_type="Microphone", quantity=1)],
             EquipmentReservation: [SimpleNamespace(id=40, event_id=1, requirement_id=30,

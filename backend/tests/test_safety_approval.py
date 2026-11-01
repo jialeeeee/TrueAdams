@@ -53,8 +53,7 @@ class SafetyApprovalUnitTests(unittest.TestCase):
             created_at=START - timedelta(days=7))
         venue = SimpleNamespace(id=10, name="Meeting Room", location="Level 1")
         booking = SimpleNamespace(id=11, event_id=1, venue_id=10, status="confirmed",
-            start_time=self.event.start_time, end_time=self.event.end_time,
-            setup_minutes=0, turnaround_minutes=0, hold_expires_at=None)
+            start_time=self.event.start_time, end_time=self.event.end_time, hold_expires_at=None)
         self.rows = {User: [self.officer, self.coordinator], Event: [self.event],
                      Venue: [venue], VenueBooking: [booking], EquipmentRequirement: [],
                      EquipmentReservation: [], Notification: []}

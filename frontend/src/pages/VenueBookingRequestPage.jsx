@@ -59,8 +59,6 @@ function freshForm(event) {
     start_time: asInput(event.start_time),
     end_time: asInput(event.end_time),
     venue_requirements: event.venue_requirements ?? "",
-    setup_minutes: "0",
-    turnaround_minutes: "0",
   };
 }
 
@@ -253,8 +251,6 @@ export default function VenueBookingRequestPage() {
         start_time: form.start_time,
         end_time: form.end_time,
         venue_requirements: form.venue_requirements.trim(),
-        setup_minutes: form.setup_minutes,
-        turnaround_minutes: form.turnaround_minutes,
       });
       setSent(response.data);
     } catch (failure) {
@@ -387,16 +383,6 @@ export default function VenueBookingRequestPage() {
         <input id="venue-request-end" type="datetime-local" value={form.end_time}
           onChange={change("end_time")} />
         {fieldError("end_time")}
-
-        <label htmlFor="venue-request-setup">Setup time before the event (minutes)</label>
-        <input id="venue-request-setup" type="number" min="0" max="1440" step="1"
-          value={form.setup_minutes} onChange={change("setup_minutes")} />
-        {fieldError("setup_minutes")}
-
-        <label htmlFor="venue-request-turnaround">Turnaround time after the event (minutes)</label>
-        <input id="venue-request-turnaround" type="number" min="0" max="1440" step="1"
-          value={form.turnaround_minutes} onChange={change("turnaround_minutes")} />
-        {fieldError("turnaround_minutes")}
 
         <label htmlFor="venue-request-requirements">Venue requirements</label>
         <textarea id="venue-request-requirements" rows={4} value={form.venue_requirements}

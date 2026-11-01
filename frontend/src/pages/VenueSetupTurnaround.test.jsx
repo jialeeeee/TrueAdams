@@ -63,7 +63,7 @@ describe("venue request form (TC6, TC10)", () => {
     expected_attendance: 250, venue_requirements: "Stage power", venue: null,
   };
 
-  it("sends the setup and turnaround and shows the labelled conflict, keeping the entries", async () => {
+  it("asks for no setup or turnaround and shows the labelled conflict, keeping the entries", async () => {
     apiClient.get.mockImplementation(async (url) => {
       if (url === "/events/7/planning") return { data: planning };
       if (url === "/venues/") {
@@ -90,22 +90,21 @@ describe("venue request form (TC6, TC10)", () => {
     const user = userEvent.setup();
     await screen.findByRole("heading", { name: /request a venue/i });
     await user.selectOptions(screen.getByLabelText("Venue"), "3");
-    await user.clear(screen.getByLabelText(/Setup time/));
-    await user.type(screen.getByLabelText(/Setup time/), "30");
-    await user.clear(screen.getByLabelText(/Turnaround time/));
-    await user.type(screen.getByLabelText(/Turnaround time/), "45");
+    // The venue's own setup and turnaround apply, so the form does not ask for them.
+    expect(screen.queryByLabelText(/Setup time/)).toBeNull();
+    expect(screen.queryByLabelText(/Turnaround time/)).toBeNull();
     await user.click(screen.getByRole("button", { name: "Submit request" }));
 
-    expect(apiClient.post).toHaveBeenCalledWith("/venues/bookings", expect.objectContaining({
-      setup_minutes: "30", turnaround_minutes: "45", venue_id: 3,
-    }));
+    const sent = apiClient.post.mock.calls[0][1];
+    expect(sent.venue_id).toBe(3);
+    expect(sent).not.toHaveProperty("setup_minutes");
+    expect(sent).not.toHaveProperty("turnaround_minutes");
     expect((await screen.findByRole("alert")).textContent).toContain("clashes with other arrangements");
     expect(screen.getByText(`Your request would occupy the venue ${DAY} 12:30 to ${DAY} 15:45.`)).toBeTruthy();
     const conflicts = screen.getByRole("list", { name: "Conflicts" });
     expect(conflicts.textContent).toContain(
       `Confirmed booking: ${DAY} 09:30 to ${DAY} 12:45 (setup 09:30 to 10:00, turnaround 12:00 to 12:45)`);
     // The entered details stay so the request can be changed and sent again.
-    expect(screen.getByLabelText(/Setup time/).value).toBe("30");
     expect(screen.getByLabelText("Venue").value).toBe("3");
   });
 });
