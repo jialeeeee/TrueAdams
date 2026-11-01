@@ -276,3 +276,41 @@ describe("SCRUM-85 venue bookings in the planning view", () => {
     expect(within(region).queryAllByRole("listitem")).toEqual([]);
   });
 });
+
+// SCRUM-88: IS212-US88-TC20 in docs/test-cases/SCRUM-88-venue-becomes-unavailable.md. The API is
+// backend/tests/test_venue_unavailable.py's planning view (`flag`, `change_review`).
+describe("SCRUM-88 flagged venue booking in the planning view", () => {
+  const AURORA = { id: 9, name: "Aurora Ballroom", location: "Level 3, Marina Tower" };
+  const FLAG = "Venue unavailable: replacement needed";
+  const flagged = {
+    id: 22, venue: AURORA, start_time: "2026-12-12T17:00:00", end_time: "2026-12-12T22:00:00",
+    setup_minutes: 0, turnaround_minutes: 0, status: "confirmed", hold_expires_at: null,
+    hold_expired: null, flag: FLAG,
+  };
+
+  it("shows the flag on the booking and says the event needs a change review", async () => {
+    apiClient.get.mockResolvedValue({ data: {
+      ...FESTIVAL, status: "approved", venue_bookings: [flagged],
+      change_review: { needed: true, reason: FLAG },
+    } });
+    renderPage();
+
+    const notice = await screen.findByRole("status", { name: "Change review" });
+    expect(notice.textContent).toContain("Back in planning for change review");
+    expect(notice.textContent).toContain(FLAG);
+    const region = screen.getByRole("region", { name: "Venue bookings" });
+    expect(within(region).getByRole("listitem").textContent).toContain(FLAG);
+  });
+
+  it("shows neither for an event with nothing flagged", async () => {
+    apiClient.get.mockResolvedValue({ data: {
+      ...FESTIVAL, venue_bookings: [{ ...flagged, flag: null }],
+      change_review: { needed: false, reason: null },
+    } });
+    renderPage();
+
+    await screen.findByRole("region", { name: "Venue bookings" });
+    expect(screen.queryByRole("status", { name: "Change review" })).toBeNull();
+    expect(screen.queryByText(FLAG)).toBeNull();
+  });
+});

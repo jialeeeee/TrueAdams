@@ -23,6 +23,10 @@ TENTATIVE_STATUS = "tentative"
 # then a tentative hold past its expiry is shown as expired anyway (current_status).
 EXPIRED_STATUS = "expired"
 
+# SCRUM-88: a confirmed booking whose venue was made unavailable (venue_replacement_flags).
+REPLACEMENT_FLAG = "Venue unavailable: replacement needed"
+FLAGGED = "flagged"
+
 AVAILABLE = "available"
 UNAVAILABLE = "unavailable"
 HOURS_NOT_RECORDED = "hours_not_recorded"

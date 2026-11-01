@@ -83,6 +83,7 @@ function VenueBookings({ bookings }) {
                 <p>{`Setup ${booking.setup_minutes} min before, turnaround ${booking.turnaround_minutes} min after`}</p>
               )}
               <p>{`Status: ${bookingStatus(booking)}`}</p>
+              {booking.flag && <p>{booking.flag}</p>}
             </li>
           ))}
         </ul>
@@ -192,6 +193,11 @@ export default function EventPlanningPage() {
           </div>
         ))}
       </dl>
+      {event.change_review?.needed && (
+        <p role="status" aria-label="Change review">
+          {`Back in planning for change review: ${event.change_review.reason}`}
+        </p>
+      )}
       <VenueBookings bookings={event.venue_bookings ?? []} />
       {event.safety_check && (
         <section aria-label="Safety check">

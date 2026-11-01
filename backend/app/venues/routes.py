@@ -11,7 +11,8 @@ from ..events.permissions import is_current_coordinator
 from ..extensions import db
 from ..local_time import singapore_now
 from ..models import (
-    Event, Notification, User, Venue, VenueBooking, VenueBookingFlag, VenueChange)
+    Event, Notification, User, Venue, VenueBlock, VenueBooking, VenueBookingFlag, VenueChange,
+    VenueReplacementFlag)
 
 venues_bp = Blueprint("venues", __name__)
 
@@ -401,6 +402,209 @@ def flagged_bookings():
         "bookings": listed,
         "message": None if listed
         else "No bookings are flagged for a setup or turnaround conflict.",
+    })
+
+
+# ---------- Unavailable periods (SCRUM-88) ----------
+
+UNAVAILABLE_ROLES = {"venue_staff"}
+UNAVAILABLE_DENIED = "Only Venue Staff can record unavailable periods."
+UNAVAILABLE_FIELDS = {"reason", "start_time", "end_time"}
+MAX_UNAVAILABLE_REASON = 500
+UNAVAILABLE_NOTIFICATION = "venue_unavailable"
+CONFIRMED_EVENT_STATUS = "confirmed"
+# Back to Planning for change review is the approved stage (SCRUM-92 A2).
+PLANNING_EVENT_STATUS = "approved"
+
+
+def _unavailable_problems(body):
+    """(problems, reason, start, end) for a new unavailable period, every problem at once."""
+    problems = {}
+    for key in body:
+        if key not in UNAVAILABLE_FIELDS:
+            problems[key] = f"{key} is not part of an unavailable period."
+    reason = body.get("reason")
+    if reason is not None and not isinstance(reason, str):
+        problems["reason"] = "The reason must be text."
+    elif not (reason or "").strip():
+        problems["reason"] = "Enter the reason."
+    elif len(reason.strip()) > MAX_UNAVAILABLE_REASON:
+        problems["reason"] = (
+            f"The reason must be {MAX_UNAVAILABLE_REASON} characters or fewer.")
+    start, start_problem = _parse_local_time(
+        body.get("start_time"), "Enter the start date and time.",
+        "Enter the start as a date and time (YYYY-MM-DDTHH:MM).")
+    end, end_problem = _parse_local_time(
+        body.get("end_time"), "Enter the end date and time.",
+        "Enter the end as a date and time (YYYY-MM-DDTHH:MM).")
+    if start_problem:
+        problems["start_time"] = start_problem
+    if end_problem:
+        problems["end_time"] = end_problem
+    if start and end and end <= start:
+        problems["end_time"] = "The end must be after the start."
+    return problems, (reason or "").strip() if isinstance(reason, str) else None, start, end
+
+
+def _unavailable_payload(block):
+    return {"id": block.id, "venue_id": block.venue_id, "reason": block.reason,
+            "start_time": block.start_time.isoformat(), "end_time": block.end_time.isoformat()}
+
+
+def _replacement_entry(flag, booking, block):
+    event = db.session.get(Event, booking.event_id) if booking.event_id else None
+    venue = db.session.get(Venue, booking.venue_id)
+    return {
+        "id": booking.id,
+        "flag": scheduling.REPLACEMENT_FLAG,
+        "status": booking.status,
+        "event": {"id": event.id, "title": event.title} if event else None,
+        "venue": {"id": venue.id, "name": venue.name, "location": _recorded(venue.location)},
+        "start_time": booking.start_time.isoformat(),
+        "end_time": booking.end_time.isoformat(),
+        "period": {"id": block.id, "reason": block.reason,
+                   "start_time": block.start_time.isoformat(),
+                   "end_time": block.end_time.isoformat()},
+        "flagged_at": flag.flagged_at.isoformat(),
+    }
+
+
+@venues_bp.post("/<int:venue_id>/unavailable")
+@jwt_required()
+def record_unavailable_period(venue_id: int):
+    emails = []
+    try:
+        user = _require_viewer(roles=None)
+        venue = db.session.get(Venue, venue_id, with_for_update=True)
+        if venue is None:
+            raise _Rejected("Venue not found.", 404)
+        if user.role not in UNAVAILABLE_ROLES:
+            raise _Rejected(UNAVAILABLE_DENIED, 403)
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            raise _Rejected("Send the unavailable period as JSON.", 400, fields={})
+        problems, reason, start, end = _unavailable_problems(body)
+        if problems:
+            raise _Rejected(
+                "Some details are missing or invalid. Please correct them and try again.",
+                400, fields=problems)
+
+        block = VenueBlock(venue_id=venue.id, reason=reason, start_time=start, end_time=end)
+        db.session.add(block)
+        db.session.flush()
+
+        # AC2: the venue's confirmed bookings, with their setup and turnaround, that overlap it
+        # and have not ended yet. Nothing about a booking changes; it is flagged beside it.
+        query = VenueBooking.query.filter(
+            VenueBooking.venue_id == venue.id,
+            VenueBooking.status == scheduling.BLOCKING_BOOKING_STATUS,
+            VenueBooking.end_time > singapore_now())
+        affected = scheduling.overlapping(query, VenueBooking, start, end).order_by(
+            VenueBooking.start_time, VenueBooking.id).all()
+        already = {flag.booking_id for flag in VenueReplacementFlag.query.filter(
+            VenueReplacementFlag.booking_id.in_([b.id for b in affected])).all()} if affected \
+            else set()
+        flags = []
+        for booking in affected:
+            if booking.id not in already:
+                flag = VenueReplacementFlag(
+                    booking_id=booking.id, venue_id=venue.id, block_id=block.id,
+                    status=scheduling.FLAGGED, flagged_by_id=user.id)
+                db.session.add(flag)
+                flags.append((flag, booking))
+
+        # AC3, AC4: each affected event's coordinator is told once about the period, and a
+        # Confirmed event goes back to Planning (approved) with everything else kept.
+        notified = []
+        period = _period_text(start, end)
+        for event_id in dict.fromkeys(b.event_id for b in affected if b.event_id):
+            event = db.session.get(Event, event_id, with_for_update=True)
+            if event.status == CONFIRMED_EVENT_STATUS:
+                event.status = PLANNING_EVENT_STATUS
+            coordinator = db.session.get(User, event.coordinator_id) if event.coordinator_id \
+                else None
+            if coordinator is None:
+                continue
+            booked = [b for b in affected if b.event_id == event_id]
+            message = (
+                f'Venue unavailable: {venue.name} is unavailable from {period} ({reason}), '
+                f'which affects "{event.title}" ('
+                + "; ".join(_period_text(b.start_time, b.end_time) for b in booked)
+                + "). A replacement venue is needed.")
+            db.session.add(Notification(recipient_id=coordinator.id, kind=UNAVAILABLE_NOTIFICATION,
+                                        message=message, event_id=event.id))
+            emails.append((coordinator.email, f"Venue unavailable for {event.title}: {venue.name}",
+                           message, event.id))
+            if coordinator.id not in notified:
+                notified.append(coordinator.id)
+
+        db.session.flush()
+        payload = {
+            "message": (f"The unavailable period was recorded: {venue.name} is unavailable "
+                        f"from {period}. {len(flags)} booking{'s' if len(flags) != 1 else ''} "
+                        "flagged for a replacement venue."),
+            "period": _unavailable_payload(block),
+            "flagged": [_replacement_entry(flag, booking, block) for flag, booking in flags],
+            "notified": notified,
+        }
+        db.session.commit()
+    except _Rejected as rejected:
+        db.session.rollback()
+        return _error(rejected.message, rejected.status_code, **rejected.extra)
+    except SQLAlchemyError:
+        db.session.rollback()
+        return _error(
+            "The unavailable period was not saved, and no booking was flagged. "
+            "Your entries are still here, so please try again.", 503, retryable=True)
+
+    for to_address, subject, message, event_id in emails:
+        _queue_coordinator_email(to_address, subject, message, event_id)
+    return jsonify(payload), 201
+
+
+@venues_bp.get("/<int:venue_id>/unavailable")
+@jwt_required()
+def list_unavailable_periods(venue_id: int):
+    try:
+        user = _require_viewer(roles=None)
+        if db.session.get(Venue, venue_id) is None:
+            raise _Rejected("Venue not found.", 404)
+        if user.role not in UNAVAILABLE_ROLES:
+            raise _Rejected(UNAVAILABLE_DENIED, 403)
+        periods = [_unavailable_payload(b) for b in VenueBlock.query.filter_by(
+            venue_id=venue_id).order_by(VenueBlock.start_time, VenueBlock.id).all()]
+    except _Rejected as rejected:
+        return _error(rejected.message, rejected.status_code, **rejected.extra)
+    except SQLAlchemyError:
+        return _load_failed("Unavailable periods could not be loaded. Please try again.")
+    return jsonify({
+        "periods": periods,
+        "message": None if periods else "No unavailable periods are recorded for this venue.",
+    })
+
+
+@venues_bp.get("/replacement-needed")
+@jwt_required()
+def replacement_needed():
+    """Confirmed bookings flagged "Venue unavailable: replacement needed", for Venue Staff
+    (SCRUM-88 AC2). A booking cancelled since leaves the list."""
+    try:
+        _require_viewer(UNAVAILABLE_ROLES, "Only Venue Staff can view bookings that need a "
+                                           "replacement venue.")
+        rows = (db.session.query(VenueReplacementFlag, VenueBooking, VenueBlock)
+                .join(VenueBooking, VenueBooking.id == VenueReplacementFlag.booking_id)
+                .join(VenueBlock, VenueBlock.id == VenueReplacementFlag.block_id)
+                .filter(VenueReplacementFlag.status == scheduling.FLAGGED,
+                        VenueBooking.status == scheduling.BLOCKING_BOOKING_STATUS)
+                .order_by(VenueBooking.start_time, VenueBooking.id).all())
+        listed = [_replacement_entry(flag, booking, block) for flag, booking, block in rows]
+    except _Rejected as rejected:
+        return _error(rejected.message, rejected.status_code, **rejected.extra)
+    except SQLAlchemyError:
+        return _load_failed("Bookings needing a replacement could not be loaded. Please try again.")
+    return jsonify({
+        "bookings": listed,
+        "message": None if listed else "No bookings need a replacement venue.",
     })
 
 
@@ -979,6 +1183,13 @@ def _conflicts_for(venue_id, start, end):
 
 def _clash(venue, conflicts, refused="approved"):
     """The refusal for a booking that clashes with other arrangements at `venue`."""
+    blocks = [c for c in conflicts if c["type"] == "block"]
+    if blocks:
+        # SCRUM-88 AC5: say that the venue is unavailable, and why.
+        reasons = ", ".join(dict.fromkeys(c["reason"] for c in blocks if c.get("reason")))
+        return _Rejected(
+            f"This booking can't be {refused} because {venue.name} is unavailable in that period"
+            f"{f' ({reasons})' if reasons else ''}.", 409, reason="conflict", conflicts=conflicts)
     return _Rejected(
         f"This booking can't be {refused} because it clashes with other arrangements "
         f"at {venue.name}.", 409, reason="conflict", conflicts=conflicts)
