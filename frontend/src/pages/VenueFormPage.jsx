@@ -18,6 +18,8 @@ const LIST_FIELDS = [
 const EMPTY = {
   name: "", location: "", capacity: "", facilities: [], accessibility_features: [],
   room_layouts: [], operating_hours: "",
+  // SCRUM-63 AC9: whole minutes, 0 to 1440; empty means none set (the server uses 0).
+  setup_minutes: "", turnaround_minutes: "",
 };
 const label = (option) => option.charAt(0).toUpperCase() + option.slice(1);
 
@@ -48,6 +50,8 @@ export default function VenueFormPage() {
         name: venue.name ?? "", location: venue.location ?? "", capacity: String(venue.capacity ?? ""),
         facilities: venue.facilities ?? [], accessibility_features: venue.accessibility_features ?? [],
         room_layouts: venue.room_layouts ?? [], operating_hours: venue.operating_hours ?? "",
+        setup_minutes: String(venue.setup_minutes ?? ""),
+        turnaround_minutes: String(venue.turnaround_minutes ?? ""),
       });
       setHistory((await apiClient.get(`/venues/${venueId}/history`)).data.history);
     } catch (failure) {
@@ -141,6 +145,8 @@ export default function VenueFormPage() {
           </fieldset>
         ))}
         {text("operating_hours", "Operating hours", { placeholder: "Mon-Fri 08:00-22:00" })}
+        {text("setup_minutes", "Setup time (minutes)", { inputMode: "numeric" })}
+        {text("turnaround_minutes", "Turnaround time (minutes)", { inputMode: "numeric" })}
         <button type="submit" disabled={saving}>Save</button>
       </form>
 

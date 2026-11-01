@@ -7,7 +7,8 @@ import VenueFormPage from "./VenueFormPage.jsx";
 import VenuesPage from "./VenuesPage.jsx";
 
 // Screen cases IS212-US63-TC1, TC2-TC4, TC6, TC8, TC11, TC12, TC13, TC15 and TC16 in the
-// "Sprint 3 test cases" sheet. Responses mirror backend/tests/test_venue_catalogue.py.
+// "Sprint 3 test cases" sheet, and TC17, TC20, TC21 and TC26 (AC9, setup and turnaround time)
+// in the "Sprint 4 test cases" sheet. Responses mirror backend/tests/test_venue_catalogue.py.
 
 vi.mock("../api/client.js", () => ({
   default: { get: vi.fn(), post: vi.fn(), put: vi.fn() },
@@ -21,7 +22,7 @@ const OPTIONS = {
 const V101 = {
   id: 1, name: "Orchard Hall", location: "12 Orchard Road", capacity: 120,
   facilities: ["Projector"], accessibility_features: [], room_layouts: ["theatre"],
-  operating_hours: "Mon-Fri 08:00-22:00",
+  operating_hours: "Mon-Fri 08:00-22:00", setup_minutes: 30, turnaround_minutes: 45,
 };
 const HISTORY = { history: [{ action: "added", changed_by: { id: 1, email: "venue_staff1@test.example" }, changed_at: "2026-10-20T01:00:00", changes: {} }] };
 
@@ -80,6 +81,7 @@ describe("add venue", () => {
       name: "Orchard Hall", location: "12 Orchard Road, Singapore 238888", capacity: "120",
       facilities: ["Projector", "Microphone"], accessibility_features: ["Wheelchair ramp"],
       room_layouts: ["theatre", "classroom"], operating_hours: "Mon-Fri 08:00-22:00",
+      setup_minutes: "", turnaround_minutes: "",
     });
   });
 
@@ -158,6 +160,59 @@ describe("edit venue", () => {
     await user.click(screen.getByRole("button", { name: "Save" }));
     expect(await screen.findByText(/could not be saved/)).toBeTruthy();
     expect(screen.getByLabelText("Name").value).toBe("Orchard Hall");
+  });
+});
+
+describe("setup and turnaround time (AC9)", () => {
+  it("TC17: shows the saved minutes on reopen and saves new ones", async () => {
+    apiClient.put.mockResolvedValue({ data: { message: "Orchard Hall was updated.", venue: V101 } });
+    const user = renderAt("/venues/1/edit");
+    const setup = await screen.findByLabelText("Setup time (minutes)");
+    await waitFor(() => expect(setup.value).toBe("30"));
+    expect(screen.getByLabelText("Turnaround time (minutes)").value).toBe("45");
+    await user.clear(setup);
+    await user.type(setup, "20");
+    await user.clear(screen.getByLabelText("Turnaround time (minutes)"));
+    await user.type(screen.getByLabelText("Turnaround time (minutes)"), "50");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByText("Orchard Hall was updated.")).toBeTruthy();
+    expect(apiClient.put).toHaveBeenCalledWith(
+      "/venues/1", expect.objectContaining({ setup_minutes: "20", turnaround_minutes: "50" }));
+  });
+
+  it("TC20, TC21: marks the field the server rejects and keeps what was typed", async () => {
+    const message = "Setup time must be a whole number of minutes from 0 to 1440.";
+    apiClient.put.mockRejectedValue(httpFailure(400, { error: message, fields: { setup_minutes: message } }));
+    const user = renderAt("/venues/1/edit");
+    const setup = await screen.findByLabelText("Setup time (minutes)");
+    await waitFor(() => expect(setup.value).toBe("30"));
+    await user.clear(setup);
+    await user.type(setup, "1441");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByText(message)).toBeTruthy();
+    expect(screen.getByLabelText("Setup time (minutes)").getAttribute("aria-invalid")).toBe("true");
+    expect(screen.getByLabelText("Turnaround time (minutes)").getAttribute("aria-invalid")).toBeNull();
+    expect(screen.getByLabelText("Setup time (minutes)").value).toBe("1441");
+  });
+
+  it("an empty box means none set and is sent as empty", async () => {
+    apiClient.put.mockResolvedValue({ data: { message: "Orchard Hall was updated.", venue: V101 } });
+    const user = renderAt("/venues/1/edit");
+    const setup = await screen.findByLabelText("Setup time (minutes)");
+    await waitFor(() => expect(setup.value).toBe("30"));
+    await user.clear(setup);
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await screen.findByText("Orchard Hall was updated.");
+    expect(apiClient.put).toHaveBeenCalledWith(
+      "/venues/1", expect.objectContaining({ setup_minutes: "" }));
+  });
+
+  it("TC26: someone who is not Venue Staff gets no setup or turnaround fields", async () => {
+    serve({ options: null });
+    renderAt("/venues/1/edit");
+    expect(await screen.findByText("Only Venue Staff can add or edit venues.")).toBeTruthy();
+    expect(screen.queryByLabelText("Setup time (minutes)")).toBeNull();
+    expect(screen.queryByLabelText("Turnaround time (minutes)")).toBeNull();
   });
 });
 

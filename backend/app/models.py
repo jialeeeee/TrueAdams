@@ -17,6 +17,13 @@ class User(db.Model):
 
 class Venue(db.Model):
     __tablename__ = "venues"
+    __table_args__ = (
+        # SCRUM-63 AC9: setup and turnaround are whole minutes, up to a day each.
+        db.CheckConstraint("setup_minutes between 0 and 1440",
+                           name="venues_setup_minutes_range"),
+        db.CheckConstraint("turnaround_minutes between 0 and 1440",
+                           name="venues_turnaround_minutes_range"),
+    )
 
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(255), nullable=False)
@@ -36,6 +43,10 @@ class Venue(db.Model):
     contact_phone = db.Column(db.String(50))
     parking_spaces = db.Column(db.Integer)
     catering_available = db.Column(db.Boolean)
+    # SCRUM-63 AC9: minutes the venue is needed before and after an event. NULL means none
+    # set, which every scheduling check treats as 0 (scheduling.buffers).
+    setup_minutes = db.Column(db.Integer)
+    turnaround_minutes = db.Column(db.Integer)
 
 
 class Resource(db.Model):

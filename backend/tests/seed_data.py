@@ -101,6 +101,9 @@ VENUES = [
         "contact_phone": "+65 6123 4567",
         "parking_spaces": 120,
         "catering_available": True,
+        # SCRUM-63 AC9: recorded as 0, so this venue's bookings occupy only their own time.
+        "setup_minutes": 0,
+        "turnaround_minutes": 0,
     },
     {  # Only location and facilities recorded.
         "key": "partially_recorded",
@@ -135,6 +138,8 @@ VENUES = [
         "contact_phone": "+65 6000 1111",
         "parking_spaces": 0,
         "catering_available": False,
+        "setup_minutes": 0,
+        "turnaround_minutes": 0,
     },
     {  # Recorded, but not currently bookable; it must still be browsable.
         "key": "unavailable",

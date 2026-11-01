@@ -46,6 +46,8 @@ DETAIL_FIELDS = [
     "contact_phone",
     "parking_spaces",
     "catering_available",
+    "setup_minutes",
+    "turnaround_minutes",
 ]
 
 
@@ -162,7 +164,10 @@ _LIST_FIELDS = {
     "accessibility_features": ("Accessibility features", ACCESSIBILITY_OPTIONS),
     "room_layouts": ("Layouts", LAYOUT_OPTIONS),
 }
-CATALOGUE_FIELDS = ["name", "location", "capacity", *_LIST_FIELDS, "operating_hours"]
+# SCRUM-63 AC9: whole minutes from 0 to MAX_BUFFER_MINUTES; empty means none set (uses 0).
+BUFFER_FIELDS = {"setup_minutes": "Setup time", "turnaround_minutes": "Turnaround time"}
+CATALOGUE_FIELDS = ["name", "location", "capacity", *_LIST_FIELDS, "operating_hours",
+                    *BUFFER_FIELDS]
 REQUIRED_FIELDS = {"name": "Name", "location": "Location", "capacity": "Capacity"}
 TEXT_MAX_LENGTH = 255  # Venue.name and Venue.location columns.
 
@@ -216,6 +221,20 @@ def _catalogue_problems(body, creating):
             problems[key] = f"{label} must be chosen from the list: {', '.join(unknown)} is not an option."
             continue
         values[key] = list(dict.fromkeys(by_name[item.strip().lower()] for item in chosen))
+
+    for key, label in BUFFER_FIELDS.items():
+        if key not in body:
+            continue
+        minutes = body[key]
+        if minutes is None or (isinstance(minutes, str) and not minutes.strip()):
+            values[key] = None  # None set: scheduling uses 0.
+            continue
+        whole = _whole_number(minutes)
+        if whole is None or not 0 <= whole <= MAX_BUFFER_MINUTES:
+            problems[key] = (f"{label} must be a whole number of minutes "
+                             f"from 0 to {MAX_BUFFER_MINUTES}.")
+        else:
+            values[key] = whole
 
     if "operating_hours" in body:
         hours = body["operating_hours"]
