@@ -677,3 +677,62 @@ describe("SCRUM-86 the coordinator confirms a tentative hold", () => {
     expect(apiClient.post).toHaveBeenCalledTimes(2);
   });
 });
+
+// SCRUM-89: IS212-US89-TC1, TC3, TC11, TC12 and TC14 in
+// docs/test-cases/SCRUM-89-replacement-venue.md. The API is
+// backend/tests/test_venue_replacement.py's `unavailable_flag` and `replaces`.
+describe("SCRUM-89 the coordinator sees flagged and replaced bookings", () => {
+  const FLAG = "Venue unavailable: replacement needed";
+  const ORCHARD = { id: 1, name: "Orchard Hall", location: "12 Orchard Road" };
+  const CIVIC = { id: 4, name: "Civic Hall", location: "12 Civic Road" };
+  const booking = (id, status, venue, start, end, extra = {}) => ({
+    id, status, venue, event: { id: 7, title: "Harbour Lights Festival" },
+    start_time: start, end_time: end, rejection_reason: null, decided_at: null, decided_by: null,
+    hold: null, ...extra,
+  });
+  const FLAGGED = booking(901, "confirmed", ORCHARD, "2027-11-20T10:00:00", "2027-11-20T12:00:00",
+    { unavailable_flag: { text: FLAG, status: "flagged", replaced_by: null } });
+  const OTHER = booking(902, "confirmed", CIVIC, "2027-11-21T14:00:00", "2027-11-21T16:00:00");
+  const REPLACED = booking(903, "replaced", ORCHARD, "2027-11-22T10:00:00", "2027-11-22T12:00:00",
+    { unavailable_flag: { text: FLAG, status: "replaced", replaced_by: 905 } });
+  const REPLACEMENT = booking(905, "pending", CIVIC, "2027-11-22T10:00:00", "2027-11-22T12:00:00",
+    { replaces: { id: 903, venue: ORCHARD } });
+
+  async function renderBookings(bookings) {
+    apiClient.get.mockImplementation((url) => {
+      if (url === "/events/7/planning") return Promise.resolve({ data: planning({ venue: CIVIC }) });
+      if (url === "/venues/") return Promise.resolve({ data: VENUES });
+      if (url === "/venues/bookings") return Promise.resolve({ data: { bookings, message: null } });
+      return Promise.reject(new Error(`unexpected GET ${url}`));
+    });
+    renderPage();
+    return within(await screen.findByRole("region", { name: "Venue bookings" }));
+  }
+  const item = (region, text) => region.getAllByRole("listitem").find((li) => li.textContent.includes(text));
+
+  it("offers Request replacement venue on a flagged booking only", async () => {
+    const region = await renderBookings([FLAGGED, OTHER]);
+
+    const flagged = item(region, "Orchard Hall");
+    expect(flagged.textContent).toContain(FLAG);
+    expect(within(flagged).getByRole("link", { name: "Request replacement venue" })
+      .getAttribute("href")).toBe("/bookings/901/replacement");
+    const other = item(region, "Civic Hall");
+    expect(other.textContent).not.toContain(FLAG);
+    expect(within(other).queryByRole("link", { name: "Request replacement venue" })).toBeNull();
+  });
+
+  it("keeps showing a replaced booking's original record, flag and replacement", async () => {
+    const region = await renderBookings([REPLACED, REPLACEMENT]);
+
+    const replaced = item(region, "Orchard Hall, 2027-11-22 10:00 to 2027-11-22 12:00");
+    expect(replaced.textContent).toContain("Status: Replaced");
+    expect(replaced.textContent).toContain(FLAG);
+    expect(replaced.textContent).toContain("Replaced by booking 905");
+    expect(within(replaced).queryByRole("link", { name: "Request replacement venue" })).toBeNull();
+    expect(within(replaced).queryByRole("button", { name: "Cancel booking" })).toBeNull();
+    const replacement = item(region, "Civic Hall");
+    expect(replacement.textContent).toContain("Status: Pending");
+    expect(replacement.textContent).toContain("Replaces booking 903 (Orchard Hall)");
+  });
+});
