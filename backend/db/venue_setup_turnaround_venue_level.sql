@@ -38,7 +38,7 @@ create table if not exists public.venue_booking_flags (
   booking_id     integer   not null unique
                  references public.venue_bookings (id) on delete cascade,
   venue_id       integer   not null references public.venues (id),
-  overlaps       jsonb     not null,
+  "overlaps"     jsonb     not null,
   flagged_by_id  integer   references public.users (id),
   flagged_at     timestamp not null default (now() at time zone 'utc')
 );
