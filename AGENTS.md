@@ -34,12 +34,11 @@ npm run coverage                              # Vitest with coverage; fails belo
 docker compose up --build                     # backend (gunicorn) + worker + beat + Redis
 ```
 
-- CI ([.github/workflows/tests.yml](.github/workflows/tests.yml)) runs **only the backend tests**, on Python 3.12, on pushes and PRs to `main`, in two jobs:
-  - `unittest` runs the whole suite against a throwaway PostgreSQL 17 inside the runner, built from the models by [backend/ci/build_test_database.py](backend/ci/build_test_database.py). It takes about a minute; against Supabase in Tokyo the same suite took 30–60.
+- CI ([.github/workflows/tests.yml](.github/workflows/tests.yml)) runs on pushes and PRs to `main`, in three jobs:
+  - `unittest` runs the whole backend suite on Python 3.12 against a throwaway PostgreSQL 17 inside the runner, built from the models by [backend/ci/build_test_database.py](backend/ci/build_test_database.py), then the backend coverage gate. It takes about a minute; against Supabase in Tokyo the same suite took 30–60.
+  - `vitest` runs the frontend suite with coverage (`npm run coverage`) on Node 20.
   - `supabase-schema` runs `tests.test_app_factory` against Supabase, so a model that Supabase doesn't match (for example, a `db/*.sql` script that hasn't been run) still fails CI.
-
-  Frontend tests are not in CI: run `npm test` yourself before pushing frontend changes.
-- **Backend coverage must stay at 100%** ([backend/.coveragerc](backend/.coveragerc) makes `coverage report` fail below it): give every new line a test, or mark it `# pragma: no cover` with the reason it can't have one. `npm run coverage` fails below the floor in [frontend/vitest.config.js](frontend/vitest.config.js); raise it as coverage rises (100 is the target). CI does not run either yet, so run them before pushing.
+- **Backend coverage must stay at 100%** ([backend/.coveragerc](backend/.coveragerc) makes `coverage report` fail below it): give every new line a test, or mark it `# pragma: no cover` with the reason it can't have one. `npm run coverage` fails below the floor in [frontend/vitest.config.js](frontend/vitest.config.js); raise it as coverage rises (100 is the target). CI runs both and fails the PR if either does.
 - Locally, both the app and the tests use the team's Supabase Postgres; the backend tests need `TEST_DATABASE_URL` in `backend/.env` and fail at start-up without it. A full run against Supabase takes about 30 minutes. For a quick run, build a local PostgreSQL with `ci/build_test_database.py` (it refuses any host but localhost) and point `TEST_DATABASE_URL` at its `connectsphere_test` role, as CI does.
 - `SQLAlchemy` is pinned to 2.0.x on purpose (2.1 switches `postgresql://` to psycopg 3; we use psycopg2). Do not upgrade it casually.
 

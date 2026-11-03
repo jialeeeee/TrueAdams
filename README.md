@@ -29,7 +29,9 @@ CI runs them against a throwaway PostgreSQL built from the models by
 `backend/ci/build_test_database.py`, which takes about a minute instead of 30–60
 against Supabase. A second CI job checks that the Supabase tables still match the
 models (`tests.test_app_factory`, using the `TEST_DATABASE_URL` repository secret).
-Frontend tests run with `npm test` (or `npm run coverage`) in `frontend/`.
+Frontend tests run with `npm test` (or `npm run coverage`) in `frontend/`. CI runs both
+suites with coverage, and fails below 100% for the backend or below the floor in
+`frontend/vitest.config.js` for the frontend.
 
 Demo data for a live walk-through (one account per role and an event at each step) is
 added by `backend/seed_demo.py`; see its docstring.
