@@ -1318,7 +1318,6 @@ def approve_booking(booking_id: int):
         booking.decided_by_id = user.id
         if first_venue:
             event.venue_id = venue.id
-        original = _mark_replaced(booking, event, venue)
         try:
             # Written now, so the database rule is checked before anything is announced.
             db.session.flush()
@@ -1327,6 +1326,9 @@ def approve_booking(booking_id: int):
             # venue was confirmed by code that did not take the venue lock.
             db.session.rollback()
             raise _clash(venue, _approval_conflicts(booking)) from None
+        # After the flush: _mark_replaced's queries would otherwise autoflush the approval
+        # outside the IntegrityError check above, turning a clash into a 503.
+        original = _mark_replaced(booking, event, venue)
         coordinator = db.session.get(User, event.coordinator_id)
         message = (
             f'Your venue request for "{event.title}" at {venue.name} '
@@ -1444,12 +1446,17 @@ def request_replacement(booking_id: int):
             raise _Rejected(
                 "A venue can only be requested for an approved event. "
                 f"This event is {event.status}.", 409, reason="event_not_approved")
-        waiting = VenueBooking.query.filter_by(replaces_booking_id=booking.id,
-                                               status=PENDING).first()
+        # A replacement on an unexpired hold is still waiting: confirming the hold replaces
+        # the booking just as an approval does (SCRUM-86 meets SCRUM-89).
+        waiting = VenueBooking.query.filter(
+            VenueBooking.replaces_booking_id == booking.id,
+            (VenueBooking.status == PENDING)
+            | ((VenueBooking.status == TENTATIVE)
+               & (VenueBooking.hold_expires_at > singapore_now()))).first()
         if waiting:
             raise _Rejected(
-                "This booking already has a replacement request waiting for Venue Staff. Wait for "
-                "them to decide on it, or cancel it, before asking for another venue.",
+                "This booking already has a replacement request waiting for Venue Staff or on "
+                "hold. Wait for it to be decided, or cancel it, before asking for another venue.",
                 409, reason="already_requested", booking_id=waiting.id)
 
         # The same checks as a new request: the venue's setup and turnaround, then every
@@ -2021,10 +2028,23 @@ def confirm_hold(booking_id: int):
         booking.decided_by_id = user.id
         if first_venue:
             event.venue_id = venue.id
+        try:
+            # Written now, so the database rule is checked before anything is announced.
+            db.session.flush()
+        except IntegrityError:
+            # As for an approval: a clashing booking was confirmed without the venue lock.
+            db.session.rollback()
+            raise _clash(venue, _approval_conflicts(booking), refused="confirmed") from None
+        # A held replacement replaces the flagged booking when confirmed, as an approval
+        # does. After the flush, so its queries can't autoflush past the IntegrityError check.
+        original = _mark_replaced(booking, event, venue)
+        replaced_text = (f" It replaces the booking at "
+                         f"{db.session.get(Venue, original.venue_id).name}, which is now marked "
+                         "Replaced." if original else "")
         message = (
             f'{user.email} confirmed the tentative hold on {venue.name} for "{event.title}" '
             f"({_period_text(booking.start_time, booking.end_time)}). It is now a confirmed "
-            "booking."
+            "booking." + replaced_text
         )
         # Saved in the same commit as the confirmation (A5).
         staff_addresses = _notify_venue_staff(message, event.id, HOLD_CONFIRMED_NOTIFICATION)
@@ -2045,7 +2065,8 @@ def confirm_hold(booking_id: int):
               for address in staff_addresses]
     return jsonify({
         "message": (f"You confirmed {venue_name} for {title}. It is now a confirmed booking, "
-                    "and Venue Staff have been notified."),
+                    "and Venue Staff have been notified."
+                    + replaced_text.replace("the booking at", "your booking at")),
         "booking": payload,
         "notification": {"in_app": True, "email_queued": all(queued)},
     })

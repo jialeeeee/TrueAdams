@@ -28,6 +28,7 @@ from unittest import mock
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.models import Event, Notification, VenueBooking, VenueReplacementFlag
+from app.venues import scheduling
 from tests.test_venue_unavailable import FLAG, UnavailableTestCase, at
 
 REPLACEMENT_NOTE = "venue_booking_rejected"
@@ -187,6 +188,12 @@ class RequestingTests(ReplacementTestCase):
         self.assertEqual(body["reason"], "already_requested")
         self.assertEqual(len(self.replacement_requests()), 1)
 
+    def test_the_event_cannot_ask_again_for_a_venue_it_already_requested_then(self):  # AC2
+        duplicate = self.book("E1", self.v103, at(10), at(12), status="pending")
+        body = self.assert_error(self.replace(venue=self.v103), 409)
+        self.assertEqual((body["reason"], body["booking_id"]), ("already_requested", duplicate.id))
+        self.assertEqual(self.replacement_requests(), [])
+
     def test_a_replacement_can_be_asked_for_again_after_a_rejection(self):  # AC4
         first = self.replaced()["booking"]["id"]
         self.assertEqual(self.decide("reject", first, {"reason": "No"}).status_code, 200)
@@ -332,11 +339,122 @@ class DecisionTests(ReplacementTestCase):
         self.assertIn("Not suitable", note.message)
         self.assertIn(FLAG, note.message)  # the original is still flagged
 
+    def test_approving_after_the_flagged_booking_was_cancelled_replaces_nothing(self):  # AC3
+        created = self.replaced()["booking"]
+        self.db.session.get(VenueBooking, self.b901.id).status = "cancelled"
+        self.db.session.commit()
+        response = self.decide("approve", created["id"])
+        self.assertEqual(response.status_code, 200, response.get_json())
+        self.assertEqual(self.booking_row(self.b901)[0], "cancelled")
+        self.assertEqual(self.flag_status(), "flagged")
+        self.assertNotIn("Replaced", response.get_json()["message"])
+
+    def test_an_approval_refused_by_the_database_rule_is_a_conflict_not_a_failure(self):  # AC3
+        created = self.replaced()["booking"]
+        clash = self.book("E2", self.v103, at(10), at(12))  # saved without the venue lock
+        check = scheduling.blocking_bookings
+        calls = []
+
+        def checked_before_the_competing_save(*args):
+            calls.append(args)
+            return [] if len(calls) == 1 else check(*args)
+
+        with mock.patch.object(scheduling, "blocking_bookings",
+                               side_effect=checked_before_the_competing_save):
+            response = self.decide("approve", created["id"])
+
+        body = self.assert_error(response, 409)
+        self.assertEqual(body["reason"], "conflict")
+        self.assertEqual([c["id"] for c in body["conflicts"]], [clash.id])
+        self.assertEqual(self.booking_row(self.b901)[0], "confirmed")
+        self.assertEqual(self.flag_status(), "flagged")
+
     def test_the_other_bookings_of_the_event_are_untouched_by_the_decision(self):  # AC3
         before = self.booking_row(self.b902)
         created = self.replaced()["booking"]
         self.decide("approve", created["id"])
         self.assertEqual(self.booking_row(self.b902), before)
+
+
+# ---------- AC3 by way of a tentative hold (SCRUM-86 meets SCRUM-89) ----------
+
+HOLD_EXPIRY = "2027-11-19T12:00"
+
+
+class HeldReplacementTests(ReplacementTestCase):
+    """Venue Staff may hold a replacement request instead of approving it. Confirming that
+    hold must have the same effect as an approval (AC3), and while it is held the
+    replacement is still the one waiting (AC1)."""
+
+    def held(self, venue=None):
+        created = self.replaced(venue=venue)["booking"]
+        response = self.decide("hold", created["id"], {"expires_at": HOLD_EXPIRY})
+        self.assertEqual(response.status_code, 200, response.get_json())
+        return created
+
+    def confirm(self, booking_id):
+        return self.client.post(f"/api/venues/bookings/{booking_id}/confirm",
+                                headers=self.auth_headers(self.users["alice"]))
+
+    def test_confirming_a_held_replacement_marks_the_flagged_booking_replaced(self):  # AC3
+        before = self.booking_row(self.b901)
+        created = self.held()
+        response = self.confirm(created["id"])
+        self.assertEqual(response.status_code, 200, response.get_json())
+        after = self.booking_row(self.b901)
+        self.assertEqual(after[0], "replaced")
+        self.assertEqual(after[1:], before[1:])
+        self.assertEqual(self.flag_status(), "replaced")
+        self.assertEqual(self.booking_row(VenueBooking(id=created["id"]))[0], "confirmed")
+        self.assertIn("replaces your booking at", response.get_json()["message"])
+        entry = self.event_bookings()[self.b901.id]
+        self.assertEqual(entry["unavailable_flag"],
+                         {"text": FLAG, "status": "replaced", "replaced_by": created["id"]})
+
+    def test_confirming_a_held_replacement_moves_the_events_venue(self):  # AC3
+        self.db.session.get(Event, self.events["E1"].id).venue_id = self.v101.id
+        self.db.session.commit()
+        created = self.held()
+        self.assertEqual(self.confirm(created["id"]).status_code, 200)
+        self.db.session.expire_all()
+        self.assertEqual(self.db.session.get(Event, self.events["E1"].id).venue_id,
+                         self.v103.id)
+
+    def test_a_held_replacement_is_still_the_one_waiting(self):  # AC1
+        created = self.held()
+        body = self.assert_error(self.replace(venue=self.v102), 409)
+        self.assertEqual(body["reason"], "already_requested")
+        self.assertEqual(body["booking_id"], created["id"])
+        self.assertIn("on hold", body["error"])
+        self.assertEqual(len(self.replacement_requests()), 1)
+
+    def test_a_confirmation_refused_by_the_database_rule_replaces_nothing(self):  # AC3
+        created = self.held()
+        clash = self.book("E2", self.v103, at(10), at(12))  # saved without the venue lock
+        check = scheduling.blocking_bookings
+        calls = []
+
+        def checked_before_the_competing_save(*args):
+            calls.append(args)
+            return [] if len(calls) == 1 else check(*args)
+
+        with mock.patch.object(scheduling, "blocking_bookings",
+                               side_effect=checked_before_the_competing_save):
+            response = self.confirm(created["id"])
+
+        body = self.assert_error(response, 409)
+        self.assertEqual(body["reason"], "conflict")
+        self.assertEqual([c["id"] for c in body["conflicts"]], [clash.id])
+        self.assertEqual(self.booking_row(self.b901)[0], "confirmed")
+        self.assertEqual(self.flag_status(), "flagged")
+        self.assertEqual(self.booking_row(VenueBooking(id=created["id"]))[0], "tentative")
+
+    def test_a_replacement_can_be_asked_for_again_once_its_hold_has_expired(self):  # AC1
+        self.held()
+        after_expiry = datetime(2027, 11, 19, 12, 0)
+        with mock.patch("app.venues.routes.singapore_now", return_value=after_expiry):
+            self.replaced(venue=self.v102)
+        self.assertEqual(len(self.replacement_requests()), 2)
 
 
 # ---------- AC5: only the event's coordinator ----------
