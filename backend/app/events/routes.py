@@ -24,7 +24,7 @@ from ..models import (
     VenueBooking,
     VenueReplacementFlag,
 )
-from ..registrations.routes import REGISTERED, REGISTRABLE_STATUS, WITHDRAWN, singapore_now
+from ..registrations.routes import REGISTERED, REGISTRABLE_STATUSES, WITHDRAWN, singapore_now
 from ..resources import availability, reservations as reserving
 from ..venues.scheduling import (
     BLOCKING_BOOKING_STATUS, FLAGGED, REPLACEMENT_FLAG, TENTATIVE_STATUS, overlapping)
@@ -118,7 +118,7 @@ _LOCAL_DATETIME = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$")
 
 # SCRUM-74. Only published events are visible to everyone: exactly the events that take
 # registrations (SCRUM-45, reopened 18 Oct 2026), so attendees can find each one.
-PUBLISHED_STATUSES = {REGISTRABLE_STATUS}
+PUBLISHED_STATUSES = set(REGISTRABLE_STATUSES)
 # Event IDs live in a 32-bit column; a larger ID cannot exist, and asking the database
 # for one raises an error instead of finding nothing.
 DB_INTEGER_MAX = 2_147_483_647
@@ -2503,9 +2503,9 @@ def _settings_event(event_id, lock=False):
 
 def _settings_blocked(event):
     """Why the settings can't be changed now, as (reason, message), or None (A16)."""
-    if event.status != REGISTRABLE_STATUS:
+    if event.status not in REGISTRABLE_STATUSES:
         return "not_approved", (
-            "Registration can only be set up for an approved event. "
+            "Registration can only be set up for an approved or confirmed event. "
             f"This event is {event.status}.")
     if event.registration_required is not True:
         return "registration_not_needed", (

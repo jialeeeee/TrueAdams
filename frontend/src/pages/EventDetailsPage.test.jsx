@@ -140,8 +140,8 @@ describe("SCRUM-74 event details", () => {
     expect(await screen.findByText("Status: Draft")).toBeTruthy();
   });
 
-  it("does not show a status line for a published event", async () => {
-    apiClient.get.mockResolvedValue(withEvent());
+  it.each(["approved", "confirmed"])("does not show a status line for a published (%s) event", async (status) => {
+    apiClient.get.mockResolvedValue(withEvent({ status }));
     renderPage();
 
     await screen.findByRole("heading", { level: 1, name: "Chem Open House" });

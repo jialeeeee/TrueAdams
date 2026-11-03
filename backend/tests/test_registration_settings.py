@@ -231,6 +231,15 @@ class WhichEventsTests(SettingsTestCase):
                 self.assertIs(body["can_edit"], False)
                 self.assertTrue(body["message"].strip())
 
+    # TC-45-31 · AC7 (A16; SCRUM-93 A4) — a confirmed event's registration can still be set up.
+    def test_a_confirmed_event_can_still_be_set_up(self):
+        self.events["R1"].status = "confirmed"
+        self.db.session.commit()
+
+        self.assertIs(self.load("R1").get_json()["can_edit"], True)
+        response = self.save("R1")
+        self.assertEqual(response.status_code, 200, response.get_json())
+
 
 # ---------- AC7: only the event's coordinator ----------
 

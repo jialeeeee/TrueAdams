@@ -29,7 +29,7 @@ Following the Week 7 *Guide to Managing Changes*, test-case IDs are kept: change
 These are the team's current reading of the story. Each one is tied to an open question below. If the customer answers differently, update the affected test cases before implementation.
 
 - **A1 — Who registers:** only users whose role is `attendee`, checked against the database on every request. Organisers, coordinators, staff and admins get HTTP 403. An attendee registers only themselves. *(Q1)*
-- **A2 — Approved:** only events whose status is `approved` take registrations. Every other status (`draft`, `submitted`, `under_review`, `confirmed`, `rejected`, `cancelled`) is blocked. The refusal does not reveal the event's title or status, because attendees should not learn about requests that are not public.
+- **A2 — Approved:** events whose status is `approved` take registrations, and since 3 Nov 2026 so do `confirmed` ones (SCRUM-93 A4/Q4, an assumption). Every other status (`draft`, `submitted`, `under_review`, `rejected`, `cancelled`) is blocked. The refusal does not reveal the event's title or status, because attendees should not learn about requests that are not public.
 - **A3 — Registration enabled:** `Event.registration_required` (SCRUM-29's "Attendee registration needed") is `true`. `false` or not recorded means registration is disabled. *(Q3)*
 - **A4 — Registration period:** `registration_opens_at` and `registration_closes_at`, in Singapore time without a time zone, like the event's own times. Registration is open from the opening time up to, but not including, the closing time, the same half-open rule as venue scheduling. If either is not recorded, registration is closed. "Now" is the current Singapore time. *(Q4)*
 - **A5 — Places:** `registration_capacity` gives the number of places. Only `registered` registrations take a place; `withdrawn` (SCRUM-68) and `cancelled` ones do not. If the capacity is not recorded, registration is treated as disabled. Neither `expected_attendance` (the organiser's estimate) nor the venue's capacity is used for this. *(Q5)*
@@ -97,7 +97,7 @@ The registering attendee is `farah` unless a case says otherwise.
 
 **TC-45-02 · Only approved events accept registrations** *(changed)*
 - **Traces to:** AC1 · **Type:** Negative (business rule)
-- **Steps:** Set E1's status to each of `draft`, `submitted`, `under_review`, `confirmed`, `rejected` and `cancelled` in turn, and register.
+- **Steps:** Set E1's status to each of `draft`, `submitted`, `under_review`, `rejected` and `cancelled` in turn, and register. Then set it to `confirmed` and register: that succeeds (SCRUM-93 A4).
 - **Expected result:** HTTP 409 with reason `not_approved` each time. The message does not contain the event's title or status. No registration is created.
 - **Automated:** `test_only_approved_events_accept_registrations`
 
@@ -196,7 +196,7 @@ The registering attendee is `farah` unless a case says otherwise.
 
 **TC-45-18 · Other reasons are reported before "full"** *(changed: was "a waiting list does not get around other rules")*
 - **Traces to:** AC4, AC5 · **Type:** Negative · **Depends on:** A10
-- **Steps:** With E2 full, make it closed (now at the closing time), then disabled, then `confirmed` instead of approved, and register each time.
+- **Steps:** With E2 full, make it closed (now at the closing time), then disabled, then `under_review` instead of approved, and register each time.
 - **Expected result:** HTTP 409 with `closed`, `disabled` and `not_approved`, each with its own message. Nothing is saved.
 - **Automated:** `test_other_reasons_are_reported_before_full`
 
