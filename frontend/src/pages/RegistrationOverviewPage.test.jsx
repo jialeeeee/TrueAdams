@@ -185,3 +185,15 @@ describe("SCRUM-72 an event's registration overview", () => {
     },
   );
 });
+
+describe("SCRUM-72 missing details", () => {
+  it("shows a missing event name as not recorded and a venue without a capacity by name", async () => {
+    apiClient.get.mockResolvedValue({
+      data: { ...OVERVIEW, event: { ...OVERVIEW.event, title: null, venue: { name: "Harbour Hall", capacity: null } } },
+    });
+    renderPage();
+
+    expect(await screen.findByRole("heading", { level: 1, name: "Not recorded" })).toBeTruthy();
+    expect(screen.getByText(/Harbour Hall/).textContent).not.toContain("holds");
+  });
+});

@@ -89,3 +89,14 @@ describe("SCRUM-60 who decided", () => {
     expect((await item("Harbour Lights Festival")).queryByText(/Decided by/)).toBeNull();
   });
 });
+
+describe("SCRUM-32 my event requests without a connection", () => {
+  it("explains a failure that has no message from the server", async () => {
+    apiClient.get.mockRejectedValueOnce(new Error("Network Error"));
+    renderPage();
+
+    expect((await screen.findByRole("alert")).textContent).toBe(
+      "Your event requests could not be loaded. Check your connection and try again.",
+    );
+  });
+});

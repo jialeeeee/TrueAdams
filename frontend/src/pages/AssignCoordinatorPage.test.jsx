@@ -204,3 +204,12 @@ describe("SCRUM-81 a Lead assigns a coordinator to a waiting event", () => {
     expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
   });
 });
+
+describe("SCRUM-81 missing details", () => {
+  it("says the event name is not recorded when it is missing", async () => {
+    apiClient.get.mockResolvedValue({ data: { event: { ...EVENT, title: null }, coordinators: [ALICE], message: null } });
+    renderPage();
+
+    expect(await screen.findByRole("heading", { level: 2, name: "Not recorded" })).toBeTruthy();
+  });
+});

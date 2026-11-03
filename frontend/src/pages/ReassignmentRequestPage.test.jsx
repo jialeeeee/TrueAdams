@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -339,5 +339,22 @@ describe("SCRUM-61 when the server refuses or fails", () => {
     expect((await screen.findByRole("alert")).textContent).toContain(
       "Your request was not saved. Check your connection and try again.",
     );
+  });
+});
+
+describe("SCRUM-61 a second submission while sending", () => {
+  // The Submit button is disabled while sending, but the form can still be submitted
+  // another way (for example Enter in a field).
+  it("sends one request when the form is submitted again while sending", async () => {
+    apiClient.get.mockResolvedValue(OPEN_FORM);
+    apiClient.post.mockReturnValue(new Promise(() => {}));
+    const user = renderPage();
+    await screen.findByRole("heading", { name: "Request reassignment" });
+    await fillIn(user);
+
+    fireEvent.submit(reasonBox().closest("form"));
+    fireEvent.submit(reasonBox().closest("form"));
+
+    expect(apiClient.post).toHaveBeenCalledTimes(1);
   });
 });

@@ -105,3 +105,12 @@ describe("SCRUM-72 registrations for my managed events", () => {
     expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
   });
 });
+
+describe("SCRUM-72 missing details", () => {
+  it("says the event name is not recorded when it is missing", async () => {
+    apiClient.get.mockResolvedValue(loaded([{ ...EVENTS[1], title: "" }]));
+    renderPage();
+
+    expect(await screen.findByRole("link", { name: "Not recorded" })).toBeTruthy();
+  });
+});

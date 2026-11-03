@@ -169,3 +169,30 @@ describe("SCRUM-27 sign-in", () => {
     expect(screen.getByTestId("location").textContent).toBe("/login");
   });
 });
+
+describe("SCRUM-27 sign-in edge cases", () => {
+  it("does not sign in when the response has no token", async () => {
+    apiClient.post.mockResolvedValue({ data: { role: "attendee" } });
+    await submit(renderLogin());
+
+    expect(await screen.findByText("Sign-in could not be completed. Please try again.")).toBeTruthy();
+    expectNoSessionOrNavigation();
+  });
+
+  it("ignores a failure from a sign-in attempt that a later one replaced", async () => {
+    let failFirst;
+    apiClient.post
+      .mockReturnValueOnce(new Promise((_, reject) => { failFirst = reject; }))
+      .mockReturnValueOnce(new Promise(() => {}));
+    const user = renderLogin();
+    await submit(user);
+    await user.click(screen.getByRole("button", { name: "Login" }));
+
+    failFirst(httpFailure(401, INVALID));
+    await waitFor(() => expect(apiClient.post).toHaveBeenCalledTimes(2));
+    await new Promise((resolve) => { setTimeout(resolve, 0); });
+
+    expect(screen.queryByText(INVALID)).toBeNull();
+    expectNoSessionOrNavigation();
+  });
+});

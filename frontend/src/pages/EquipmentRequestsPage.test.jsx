@@ -104,3 +104,20 @@ describe("SCRUM-42 AC4 Technical Support Staff see which events need equipment",
     expect(await screen.findByRole("link", { name: "Charity Gala" })).toBeTruthy();
   });
 });
+
+describe("SCRUM-42 missing details", () => {
+  it("says what is not recorded and counts a missing status as none", async () => {
+    apiClient.get.mockResolvedValue({
+      data: {
+        events: [{ ...LAUNCH, start_time: null, end_time: null, coordinator: null, status_counts: { requested: 1 } }],
+        message: null,
+      },
+    });
+    renderPage();
+
+    const item = await screen.findByRole("listitem");
+    expect(item.textContent).toContain("Time not recorded");
+    expect(item.textContent).toContain("Coordinator: Not assigned");
+    expect(item.textContent).toContain("Being arranged: 0");
+  });
+});

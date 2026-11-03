@@ -48,3 +48,24 @@ describe("shared API client authentication", () => {
     expect((await outgoingHeaders(client)).has("Authorization")).toBe(false);
   });
 });
+
+describe("shared API client address", () => {
+  it("uses VITE_API_BASE_URL when it is set", async () => {
+    vi.stubEnv("VITE_API_BASE_URL", "https://api.example.test/api");
+    try {
+      expect((await initializeClient()).defaults.baseURL).toBe("https://api.example.test/api");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("falls back to the local backend when it is not set", async () => {
+    const saved = import.meta.env.VITE_API_BASE_URL;
+    delete import.meta.env.VITE_API_BASE_URL;
+    try {
+      expect((await initializeClient()).defaults.baseURL).toBe("http://localhost:5000/api");
+    } finally {
+      if (saved !== undefined) import.meta.env.VITE_API_BASE_URL = saved;
+    }
+  });
+});

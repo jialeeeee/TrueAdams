@@ -1,6 +1,6 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import apiClient from "../api/client.js";
 import ReplacementVenuePage from "./ReplacementVenuePage.jsx";
@@ -179,5 +179,88 @@ describe("who can ask, and for which booking", () => {
 
     expect((await screen.findByRole("alert")).textContent).toContain("not flagged");
     expect(screen.queryByLabelText("Venue")).toBeNull();
+  });
+});
+
+describe("leaving for another booking while one is loading", () => {
+  const OTHER = {
+    booking: { ...CONTEXT.booking, id: 902, venue: { id: 4, name: "Bay Hall", location: "Bay Road" } },
+    event: { ...CONTEXT.event, id: 8, title: "Night Market" },
+  };
+  const OTHER_VENUES = { venues: [{ id: 5, name: "Pier Room", location: "Pier", capacity: 90 }], message: null };
+
+  function deferred() {
+    let resolve;
+    const promise = new Promise((done) => { resolve = done; });
+    return { promise, resolve };
+  }
+
+  function renderWithLink() {
+    render(
+      <MemoryRouter initialEntries={["/bookings/901/replacement"]}
+        future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+        <Link to="/bookings/902/replacement">Other booking</Link>
+        <Routes><Route path="/bookings/:bookingId/replacement" element={<ReplacementVenuePage />} /></Routes>
+      </MemoryRouter>,
+    );
+    return userEvent.setup();
+  }
+
+  it("ignores the first booking's details when they arrive after the second's", async () => {
+    const first = deferred();
+    apiClient.get.mockImplementation(async (url) => {
+      if (url === "/venues/bookings/901/replacement") return first.promise;
+      if (url === "/venues/bookings/902/replacement") return { data: OTHER };
+      if (url === "/venues/") return { data: OTHER_VENUES };
+      return { data: AVAILABLE };
+    });
+    const user = renderWithLink();
+
+    await user.click(screen.getByRole("link", { name: "Other booking" }));
+    expect(await screen.findByRole("heading", { name: "Replacement venue for Night Market" })).toBeTruthy();
+    first.resolve({ data: CONTEXT });
+    await new Promise((resolve) => { setTimeout(resolve, 0); });
+
+    expect(screen.getByRole("heading", { name: "Replacement venue for Night Market" })).toBeTruthy();
+    expect(apiClient.get.mock.calls.filter(([url]) => url === "/venues/")).toHaveLength(1);
+  });
+
+  it("ignores the first booking's venue list when it arrives after the second's", async () => {
+    const firstVenues = deferred();
+    let venueCalls = 0;
+    apiClient.get.mockImplementation(async (url) => {
+      if (url === "/venues/bookings/901/replacement") return { data: CONTEXT };
+      if (url === "/venues/bookings/902/replacement") return { data: OTHER };
+      if (url === "/venues/") {
+        venueCalls += 1;
+        return venueCalls === 1 ? firstVenues.promise : { data: OTHER_VENUES };
+      }
+      return { data: AVAILABLE };
+    });
+    const user = renderWithLink();
+    await screen.findByRole("heading", { name: "Replacement venue for Harbour Lights Festival" });
+
+    await user.click(screen.getByRole("link", { name: "Other booking" }));
+    expect(await screen.findByRole("option", { name: /Pier Room/ })).toBeTruthy();
+    firstVenues.resolve({ data: VENUES });
+    await new Promise((resolve) => { setTimeout(resolve, 0); });
+
+    expect(screen.queryByRole("option", { name: /Orchard Hall/ })).toBeNull();
+    expect(screen.getByRole("option", { name: /Pier Room/ })).toBeTruthy();
+  });
+});
+
+describe("choosing no venue again", () => {
+  it("clears the suitability check and asks for nothing", async () => {
+    const user = renderPage();
+    const box = await screen.findByRole("combobox", { name: "Venue" });
+    await screen.findByRole("option", { name: /Marina Room/ });
+    await user.selectOptions(box, "2");
+    expect(await screen.findByText(MISMATCH.summary)).toBeTruthy();
+
+    await user.selectOptions(box, "");
+
+    expect(screen.queryByText(MISMATCH.summary)).toBeNull();
+    expect(apiClient.get.mock.calls.filter(([url]) => url === "/events/7/venue-suitability")).toHaveLength(1);
   });
 });

@@ -1,4 +1,4 @@
-import { act, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -503,5 +503,21 @@ describe("SCRUM-31 start reviewing a request", () => {
     expect(screen.queryByRole("button", { name: "Start review" })).toBeNull();
     expect(button("Approve")).toBeTruthy();
     expect(button("Reject")).toBeTruthy();
+  });
+});
+
+describe("SCRUM-32 edge cases", () => {
+  it("says how many words to remove when it is more than one", async () => {
+    const user = await renderPage();
+    await enter(user, words(1002));
+
+    expect(screen.getByText(/remove 2 words to continue/i)).toBeTruthy();
+  });
+
+  it("does nothing when the decision form itself is submitted", async () => {
+    await renderPage();
+
+    expect(fireEvent.submit(box().closest("form"))).toBe(false); // no page reload
+    expect(apiClient.post).not.toHaveBeenCalled();
   });
 });

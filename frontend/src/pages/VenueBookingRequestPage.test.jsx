@@ -527,6 +527,26 @@ describe("SCRUM-85 several venues for one event", () => {
     expect((await screen.findByRole("status")).textContent).toBe(CANCELLED_MESSAGE);
     expect(apiClient.post.mock.calls).toEqual([["/venues/bookings/13/cancel", { also_cancel: [12] }]]);
   });
+
+  // TC-85-29 · AC3
+  it("leaves out a booking the coordinator ticks and then unticks", async () => {
+    const { user, confirmation } = await startCancellingC1();
+    apiClient.post.mockResolvedValue({ data: {
+      message: "You cancelled the booking of Civic Hall for Harbour Lights Festival.",
+      booking: { ...C1, status: "cancelled" }, also_cancelled: [],
+      notification: { in_app: true, email_queued: true },
+    } });
+    const hold = within(confirmation).getByLabelText(
+      "Also cancel Aurora Ballroom, 2027-03-13 09:00 to 2027-03-13 12:00");
+
+    await user.click(hold);
+    await user.click(hold);
+    expect(hold.checked).toBe(false);
+    await user.click(within(confirmation).getByRole("button", { name: "Yes, cancel booking" }));
+
+    await screen.findByRole("status");
+    expect(apiClient.post.mock.calls).toEqual([["/venues/bookings/13/cancel"]]);
+  });
 });
 
 // SCRUM-87 (reopened 28 Oct 2026): TC-87-44 in docs/test-cases/SCRUM-87-tentative-venue-hold.md.
@@ -734,5 +754,58 @@ describe("SCRUM-89 the coordinator sees flagged and replaced bookings", () => {
     const replacement = item(region, "Civic Hall");
     expect(replacement.textContent).toContain("Status: Pending");
     expect(replacement.textContent).toContain("Replaces booking 903 (Orchard Hall)");
+  });
+});
+
+describe("SCRUM-39 edge cases", () => {
+  it("leaves times and requirements the event doesn't record empty, and asks for them", async () => {
+    const user = await renderLoaded(planning({ start_time: null, end_time: null, venue_requirements: null }));
+    expect(field("Start").value).toBe("");
+    expect(field("End").value).toBe("");
+    expect(field("Venue requirements").value).toBe("");
+
+    await user.selectOptions(field("Venue"), "3");
+    await user.click(submitButton());
+
+    expect(screen.getAllByText(/^Enter the (start|end)/).length).toBe(2);
+    expect(apiClient.post).not.toHaveBeenCalled();
+  });
+
+  it("says when a venue's location or capacity is not recorded", async () => {
+    apiClient.get.mockImplementation((url) => {
+      if (url === "/events/7/planning") return Promise.resolve({ data: planning() });
+      if (url === "/venues/") return Promise.resolve({ data: { venues: [{ id: 5, name: "Loft", location: null, capacity: null }], message: null } });
+      return Promise.resolve({ data: { bookings: [], message: null } });
+    });
+    renderPage();
+
+    expect(await screen.findByRole("option", { name: "Loft (location not recorded, capacity not recorded)" })).toBeTruthy();
+  });
+
+  it("shows when the requested venue will be occupied for setup and turnaround", async () => {
+    const user = await renderLoaded();
+    await fillValid(user);
+    const response = created({ start_time: "2027-03-12T16:00", end_time: "2027-03-12T22:30", venue_requirements: REQUIREMENTS });
+    response.data.booking = { ...response.data.booking, setup_minutes: 30, turnaround_minutes: 0,
+      occupied_start: "2027-03-12T15:30:00", occupied_end: "2027-03-12T22:30:00" };
+    apiClient.post.mockResolvedValue(response);
+
+    await user.click(submitButton());
+
+    expect(await screen.findByText("Occupied: 2027-03-12 15:30 to 2027-03-12 22:30")).toBeTruthy();
+  });
+
+  it("labels a conflict of a kind it doesn't know generically", async () => {
+    const user = await renderLoaded();
+    await fillValid(user);
+    apiClient.post.mockRejectedValue(httpFailure(409, {
+      error: "Aurora Ballroom is not available then.", reason: "conflict",
+      conflicts: [{ type: "maintenance", id: 9, start: "2027-03-12T15:00:00", end: "2027-03-12T18:00:00" }],
+    }));
+
+    await user.click(submitButton());
+
+    const conflicts = await screen.findByRole("list", { name: "Conflicts" });
+    expect(conflicts.textContent).toBe("Conflict: 2027-03-12 15:00 to 2027-03-12 18:00");
   });
 });

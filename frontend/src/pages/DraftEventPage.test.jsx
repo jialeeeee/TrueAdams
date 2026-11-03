@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -376,4 +376,105 @@ describe("SCRUM-28 submission failure and known-ID recovery", () => {
       expect(apiClient.post.mock.calls.every(([url]) => url === "/events/drafts/7/submit")).toBe(true);
     },
   );
+});
+
+describe("SCRUM-29 form edge cases", () => {
+  it("shows a no to registration, and sends attendance that isn't a number as typed", async () => {
+    apiClient.get.mockResolvedValue({ data: draft({ registration_required: false }) });
+    apiClient.put.mockResolvedValue({ data: draft({ registration_required: false }) });
+    const user = await renderAt("/events/drafts/7");
+    expect(field("Attendee registration needed").value).toBe("no");
+
+    await user.clear(field("Expected attendance"));
+    await user.type(field("Expected attendance"), "2.5");
+    await user.click(saveButton());
+
+    await waitFor(() => expect(apiClient.put).toHaveBeenCalledTimes(1));
+    const [, body] = apiClient.put.mock.calls[0];
+    expect(body.expected_attendance).toBe("2.5"); // the server says why it isn't valid
+    expect(body.registration_required).toBe(false);
+  });
+
+  it("does nothing when the form itself is submitted", async () => {
+    apiClient.get.mockResolvedValue({ data: draft() });
+    await renderAt("/events/drafts/7");
+
+    expect(fireEvent.submit(field("Event name").closest("form"))).toBe(false); // no page reload
+    expect(apiClient.put).not.toHaveBeenCalled();
+    expect(apiClient.post).not.toHaveBeenCalled();
+  });
+});
+
+describe("SCRUM-28 confirming an uncertain submission", () => {
+  const saved = { ...COMPLETE_REQUEST };
+  const alreadySubmitted = () => Promise.reject(httpFailure(409, {
+    error: "This request has already been submitted and can no longer be edited as a draft.",
+  }));
+
+  function serve({ draftCheck, receipts = [] }) {
+    let loads = 0;
+    apiClient.get.mockImplementation((url) => {
+      if (url === "/events/drafts/7") return loads++ === 0 ? Promise.resolve({ data: COMPLETE_REQUEST }) : draftCheck();
+      if (url === "/events/mine") return Promise.resolve({ data: { drafts: [], submitted: receipts, message: null } });
+      throw new Error(`Unexpected API endpoint: ${url}`);
+    });
+    apiClient.put.mockResolvedValue({ data: saved });
+  }
+
+  it("keeps the refusal and names an unknown missing field when the draft check is inconclusive", async () => {
+    serve({ draftCheck: () => Promise.resolve({ data: { ...saved, id: 8 } }) });
+    apiClient.post.mockRejectedValue(httpFailure(400, {
+      error: "Complete these fields before submitting.", missing: ["description", "budget"],
+    }));
+    const user = await renderAt("/events/drafts/7");
+
+    await user.click(submitButton());
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("Complete these fields before submitting: Description, budget.");
+    expect(alert.textContent).toContain("We could not confirm whether your request was submitted.");
+  });
+
+  it("checks the status, without submitting, when saving the edits first has an uncertain outcome", async () => {
+    serve({ draftCheck: () => Promise.resolve({ data: saved }) });
+    const unsure = "We could not confirm whether your draft was saved. Please check it and try again.";
+    apiClient.put.mockRejectedValue(httpFailure(503, { error: unsure, outcome_uncertain: true, retryable: true }));
+    const user = await renderAt("/events/drafts/7");
+
+    await user.click(submitButton());
+
+    expect((await screen.findByRole("alert")).textContent).toBe(unsure);
+    expect(apiClient.get.mock.calls.filter(([url]) => url === "/events/drafts/7")).toHaveLength(2);
+    expect(apiClient.post).not.toHaveBeenCalled();
+    expect(submitButton().disabled).toBe(false);
+  });
+
+  it("can't confirm a submission that isn't among the organiser's requests", async () => {
+    serve({ draftCheck: alreadySubmitted, receipts: [] });
+    apiClient.post.mockRejectedValue(new Error("Network Error"));
+    const user = await renderAt("/events/drafts/7");
+
+    await user.click(submitButton());
+
+    expect((await screen.findByRole("alert")).textContent).toMatch(/^We could not confirm whether your request was submitted/);
+    expect(screen.getByText("Status: Draft")).toBeTruthy();
+  });
+
+  it("checks the status instead of submitting again, and says when it has moved on", async () => {
+    let checks = 0;
+    serve({
+      draftCheck: () => (checks++ === 0 ? Promise.reject(new Error("Network Error")) : alreadySubmitted()),
+      receipts: [{ id: 7, title: saved.title, status: "under_review", submitted_at: "2026-10-14T02:00:00" }],
+    });
+    apiClient.post.mockRejectedValue(new Error("Network Error"));
+    const user = await renderAt("/events/drafts/7");
+    await user.click(submitButton());
+    await screen.findByRole("alert");
+
+    await user.click(screen.getByRole("button", { name: "Check submission status" }));
+
+    expect((await screen.findByText(/has been submitted for review/)).textContent)
+      .toBe("Your request has been submitted for review. Request #7. Current status: Under review.");
+    expect(apiClient.post).toHaveBeenCalledTimes(1);
+  });
 });

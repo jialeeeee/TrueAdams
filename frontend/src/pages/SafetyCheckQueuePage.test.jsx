@@ -127,3 +127,16 @@ describe("SCRUM-90 safety check queue", () => {
     }
   });
 });
+
+describe("SCRUM-90 missing details", () => {
+  it("says what is not recorded rather than leaving it blank", async () => {
+    const missing = { ...WORKSHOP, title: "", venues: [{ id: 10, name: "" }], start_time: null, end_time: null, expected_attendance: null };
+    apiClient.get.mockResolvedValue({ data: { events: [missing], message: null } });
+    openPage();
+
+    const row = within(await screen.findByRole("heading", { level: 2, name: "Not recorded" }).then((h) => h.closest("li")));
+    expect(row.getByText("Venue: Not recorded")).toBeTruthy();
+    expect(row.getByText("Date: Not recorded to Not recorded")).toBeTruthy();
+    expect(row.getByText("Expected attendance: Not recorded")).toBeTruthy();
+  });
+});

@@ -96,3 +96,12 @@ describe("SCRUM-70 change requests to review", () => {
     expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
   });
 });
+
+describe("SCRUM-70 missing details", () => {
+  it("says who asked is not recorded when the requester is missing", async () => {
+    apiClient.get.mockResolvedValue({ data: { requests: [{ ...REQUESTS[0], requested_by: null }], message: null } });
+    renderPage();
+
+    expect(await screen.findByText(/^Requested by not recorded on /)).toBeTruthy();
+  });
+});

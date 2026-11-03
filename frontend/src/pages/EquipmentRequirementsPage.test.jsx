@@ -834,3 +834,54 @@ describe("SCRUM-97 Technical Support update an event's equipment requirements", 
     expect(within(items()[0]).getByText("Status: Requested")).toBeTruthy();
   });
 });
+
+describe("SCRUM-42 edge cases", () => {
+  it("says when the event's times are not recorded", async () => {
+    apiClient.get.mockResolvedValue(loaded({ event: { ...EVENT, start_time: null } }));
+    renderPage();
+
+    expect(await screen.findByText("When: Not recorded")).toBeTruthy();
+  });
+
+  it("sends a blank quantity as no value, so the server can say it is required", async () => {
+    apiClient.get.mockResolvedValue(loaded());
+    apiClient.post.mockRejectedValue(failed(422, { error: "Some details are invalid.", fields: { quantity: "Enter the quantity." } }));
+    const user = renderPage();
+    await screen.findByRole("heading", { name: "Equipment requirements" });
+
+    await user.type(typeInput(), "Speaker");
+    await user.click(recordButton());
+
+    expect(apiClient.post).toHaveBeenCalledWith("/events/7/equipment-requirements", {
+      equipment_type: "Speaker", quantity: null, technical_requirements: "",
+    });
+    expect(await screen.findByText("Enter the quantity.")).toBeTruthy();
+  });
+
+  it("edits a requirement with no technical requirements, and clears the form when it is removed", async () => {
+    apiClient.get.mockResolvedValue(loaded({ requirements: [MIC, PROJECTOR] }));
+    apiClient.delete.mockResolvedValue({ data: { ...PAGE, requirements: [MIC], confirmation: "Removed 1 × Projector." } });
+    const user = renderPage();
+
+    await user.click(await screen.findByRole("button", { name: "Edit 1 × Projector" }));
+    expect(typeInput().value).toBe("Projector");
+    expect(technicalInput().value).toBe("");
+
+    await user.click(screen.getByRole("button", { name: "Remove 1 × Projector" }));
+
+    expect((await screen.findByRole("status")).textContent).toContain("Removed 1 × Projector.");
+    expect(typeInput().value).toBe("");
+    expect(recordButton()).toBeTruthy();
+  });
+
+  it("says why a requirement could not be removed, and keeps it", async () => {
+    apiClient.get.mockResolvedValue(loaded());
+    apiClient.delete.mockRejectedValue(failed(409, { error: "Its equipment is reserved, so it can't be removed." }));
+    const user = renderPage();
+
+    await user.click(await screen.findByRole("button", { name: "Remove 2 × Wireless microphone" }));
+
+    expect((await screen.findByRole("alert")).textContent).toBe("Its equipment is reserved, so it can't be removed.");
+    expect(within(list()).getByText(/Wireless microphone/)).toBeTruthy();
+  });
+});

@@ -421,3 +421,24 @@ describe("SCRUM-44 pages for another event or out of order", () => {
     expect(items()[0].textContent).toContain("1 × Lectern");
   });
 });
+
+describe("SCRUM-44 edge cases", () => {
+  it("credits Technical Support when who reserved it is not recorded", async () => {
+    const mics = { ...MICS, reservations: [reservation(5, "Shure SLX-D", 1, { reserved_by: null })] };
+    apiClient.get.mockResolvedValue({ data: { ...PAGE, requirements: [mics, PROJECTOR, HOLOGRAM] } });
+    renderPage();
+
+    expect(await screen.findByText("1 × Shure SLX-D reserved by Technical Support")).toBeTruthy();
+  });
+
+  it("sends an empty selection when nothing was entered, and shows the server's answer", async () => {
+    apiClient.get.mockResolvedValue({ data: PAGE });
+    apiClient.post.mockRejectedValue(failed(422, { error: "Enter how many of each to reserve." }));
+    const user = renderPage();
+
+    await user.click(await screen.findByRole("button", { name: "Reserve for 1 × Projector" }));
+
+    expect(apiClient.post).toHaveBeenCalledWith("/events/7/equipment-reservations", { requirement_id: 12, items: [] });
+    expect(await screen.findByText("Enter how many of each to reserve.")).toBeTruthy();
+  });
+});

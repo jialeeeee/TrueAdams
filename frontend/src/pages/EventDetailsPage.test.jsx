@@ -365,3 +365,13 @@ describe("SCRUM-74 when the event cannot be shown", () => {
     expect(screen.queryByText("Chem Open House")).toBeNull();
   });
 });
+
+describe("SCRUM-74 missing details", () => {
+  it("says the times are not provided when they are missing", async () => {
+    apiClient.get.mockResolvedValue(withEvent({ start_time: null, end_time: null }));
+    renderPage();
+
+    expect(await screen.findByText("Starts: Not provided")).toBeTruthy();
+    expect(screen.getByText("Ends: Not provided")).toBeTruthy();
+  });
+});

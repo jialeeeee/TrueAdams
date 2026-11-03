@@ -448,3 +448,23 @@ describe("SCRUM-69 reject a pending venue booking request", () => {
     }
   });
 });
+
+describe("SCRUM-39 missing details", () => {
+  it("says what is not recorded rather than leaving it blank", async () => {
+    apiClient.get.mockResolvedValue({
+      data: {
+        bookings: [{
+          ...BOOKING, venue: { ...BOOKING.venue, location: null }, requested_by: null,
+          event: { ...BOOKING.event, expected_attendance: null },
+        }],
+        message: null,
+      },
+    });
+    renderPage();
+
+    const item = within(await screen.findByRole("listitem", { name: "Harbour Lights Festival" }));
+    expect(item.getByText("Venue: Aurora Ballroom")).toBeTruthy();
+    expect(item.getByText("Expected attendance: Not recorded")).toBeTruthy();
+    expect(item.getByText(/^Requested by an unknown user on /)).toBeTruthy();
+  });
+});

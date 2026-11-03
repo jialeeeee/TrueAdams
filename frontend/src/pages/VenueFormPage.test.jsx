@@ -246,3 +246,66 @@ describe("who can see add and edit", () => {
       .getAttribute("href")).toBe("/venues/1/unavailable");
   });
 });
+
+describe("edit venue edge cases", () => {
+  it("shows a venue's unrecorded details as empty, and an edit in its history", async () => {
+    apiClient.get.mockImplementation(async (url) => {
+      if (url === "/venues/options") return { data: OPTIONS };
+      if (url === "/venues/1") return { data: { id: 1, name: null, location: null, capacity: null, facilities: null,
+        accessibility_features: null, room_layouts: null, operating_hours: null, setup_minutes: null, turnaround_minutes: null } };
+      if (url === "/venues/1/history") return { data: { history: [{ ...HISTORY.history[0], action: "edited" }] } };
+      throw new Error(`unexpected GET ${url}`);
+    });
+    renderAt("/venues/1/edit");
+
+    expect(await screen.findByText(/^Edited by venue_staff1@test\.example on /)).toBeTruthy();
+    for (const label of ["Name", "Location", "Capacity", "Operating hours", "Setup time (minutes)", "Turnaround time (minutes)"]) {
+      expect(screen.getByLabelText(label).value).toBe("");
+    }
+    expect(screen.getAllByRole("checkbox").every((box) => !box.checked)).toBe(true);
+  });
+
+  it("unticks a facility that was recorded", async () => {
+    apiClient.put.mockResolvedValue({ data: { message: "Orchard Hall was updated." } });
+    const user = renderAt("/venues/1/edit");
+    const projector = await screen.findByLabelText("Projector");
+    await waitFor(() => expect(projector.checked).toBe(true));
+
+    await user.click(projector);
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(apiClient.put.mock.calls[0][1].facilities).toEqual([]);
+  });
+
+  it("marks a list the server refuses, and says why", async () => {
+    apiClient.put.mockRejectedValue(httpFailure(400, { error: "Some details are invalid.", fields: { facilities: "Choose from the list." } }));
+    const user = renderAt("/venues/1/edit");
+    await waitFor(() => expect(screen.getByLabelText("Name").value).toBe("Orchard Hall"));
+
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect((await screen.findByRole("alert")).textContent).toBe("Choose from the list.");
+    expect(screen.getByRole("group", { name: "Facilities" }).getAttribute("aria-invalid")).toBe("true");
+  });
+
+  it("keeps the edit heading when the venue can't be loaded", async () => {
+    apiClient.get.mockImplementation(async (url) => {
+      if (url === "/venues/options") return { data: OPTIONS };
+      throw httpFailure(503, { error: "The venue could not be loaded. Please try again.", retryable: true });
+    });
+    renderAt("/venues/1/edit");
+
+    expect((await screen.findByRole("alert")).textContent).toBe("The venue could not be loaded. Please try again.");
+    expect(screen.getByRole("heading", { name: "Edit venue" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
+  });
+
+  it("keeps the add heading, without a retry, when someone else is refused", async () => {
+    serve({ options: null });
+    renderAt("/venues/new");
+
+    expect((await screen.findByRole("alert")).textContent).toBe("Only Venue Staff can add or edit venues.");
+    expect(screen.getByRole("heading", { name: "Add venue" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+  });
+});
