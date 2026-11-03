@@ -16,7 +16,8 @@ cp .env.example .env                          # first time only; fill in DATABAS
 flask --app wsgi run                          # API on http://localhost:5000
 python -m unittest discover -v                # whole suite (what CI runs)
 python -m unittest -v tests.test_event_drafts # one file
-coverage run -m unittest && coverage report
+coverage run -m unittest discover && coverage report   # fails below 100% (.coveragerc)
+DEMO_PASSWORD=... python seed_demo.py         # demo accounts and events (see the script; --allow-remote for Supabase)
 
 # Celery worker (needs Redis: docker compose up redis)
 celery -A celery_worker.celery worker --loglevel=info
@@ -27,6 +28,7 @@ npm install
 cp .env.example .env                          # first time only
 npm run dev                                   # http://localhost:5173, proxies /api to :5000
 npm test                                      # Vitest, run once
+npm run coverage                              # Vitest with coverage; fails below the floor in vitest.config.js
 
 # Everything except the frontend
 docker compose up --build                     # backend (gunicorn) + worker + beat + Redis
@@ -37,6 +39,7 @@ docker compose up --build                     # backend (gunicorn) + worker + be
   - `supabase-schema` runs `tests.test_app_factory` against Supabase, so a model that Supabase doesn't match (for example, a `db/*.sql` script that hasn't been run) still fails CI.
 
   Frontend tests are not in CI: run `npm test` yourself before pushing frontend changes.
+- **Backend coverage must stay at 100%** ([backend/.coveragerc](backend/.coveragerc) makes `coverage report` fail below it): give every new line a test, or mark it `# pragma: no cover` with the reason it can't have one. `npm run coverage` fails below the floor in [frontend/vitest.config.js](frontend/vitest.config.js); raise it as coverage rises (100 is the target). CI does not run either yet, so run them before pushing.
 - Locally, both the app and the tests use the team's Supabase Postgres; the backend tests need `TEST_DATABASE_URL` in `backend/.env` and fail at start-up without it. A full run against Supabase takes about 30 minutes. For a quick run, build a local PostgreSQL with `ci/build_test_database.py` (it refuses any host but localhost) and point `TEST_DATABASE_URL` at its `connectsphere_test` role, as CI does.
 - `SQLAlchemy` is pinned to 2.0.x on purpose (2.1 switches `postgresql://` to psycopg 3; we use psycopg2). Do not upgrade it casually.
 
@@ -53,18 +56,18 @@ React SPA → Flask monolith → Supabase Postgres, with Celery + Redis for back
 | Config | [backend/app/config.py](backend/app/config.py) | `Config` reads `backend/.env`; `TestConfig` is the test suite's. Never hardcode secrets or URLs. |
 | Background jobs | [backend/app/tasks.py](backend/app/tasks.py) | Celery tasks: `send_notification_email`, and `check_hold_expiries` (SCRUM-86), which Celery beat runs every 5 minutes from `beat_schedule` in `create_app`. Registered via `celery_worker.py`. A timed task does its work in a module of its own (e.g. `venues/hold_expiry.py`) and is tested by calling the task with "now" patched. |
 | Schema changes | `backend/db/*.sql` | Hand-run SQL scripts, one per story. No migration tool. |
-| Frontend pages | `frontend/src/pages/<Name>Page.jsx` + `<Name>Page.test.jsx` | One page per screen, route added in [App.jsx](frontend/src/App.jsx) (and the nav if users reach it directly). |
+| Frontend pages | `frontend/src/pages/<Name>Page.jsx` + `<Name>Page.test.jsx` | One page per screen, route added in [App.jsx](frontend/src/App.jsx). If users reach it directly, add it to `NAV_LINKS` there with the roles whose endpoint it loads (the nav shows each role its own links; it is not a permission check). |
 | API calls | [frontend/src/api/client.js](frontend/src/api/client.js) | Always use this axios client. It adds the bearer token from `sessionStorage["access_token"]`. |
 | Shared UI helpers | `frontend/src/utils/` | e.g. `statusLabel`, `formatSavedAt`. |
 
-Stubs (they return **501** or an empty list) that are free to be built by their story: `GET/POST /api/events/`, `POST /api/venues/`, `POST /api/auth/register`, everything under `/api/resources`, and `GET /api/registrations/`. Keep the URL when implementing one. `POST /api/events/<id>/change-requests` is built (SCRUM-46, the event's organiser only); `SCRUM-52`'s `requires_review.next_step` points at it via `url_for`, so keep its function name `submit_change_request`. The event's coordinator reviews and decides a request at `GET /api/events/<id>/change-requests/<request id>` and `POST …/decision` (SCRUM-70); accepting one applies its values to the event.
+Stubs (they return **501** or an empty list) that are free to be built by their story: `POST /api/events/`, `POST /api/auth/register` and everything under `/api/resources` (signed-in users only). `GET /api/events/` (SCRUM-74), `POST /api/venues/` (SCRUM-63) and `GET /api/registrations/` (SCRUM-68) are built. In-app notifications are listed at `GET /api/notifications/` and marked read at `POST /api/notifications/<id>/read`, shown on the Notifications page. Keep the URL when implementing one. `POST /api/events/<id>/change-requests` is built (SCRUM-46, the event's organiser only); `SCRUM-52`'s `requires_review.next_step` points at it via `url_for`, so keep its function name `submit_change_request`. The event's coordinator reviews and decides a request at `GET /api/events/<id>/change-requests/<request id>` and `POST …/decision` (SCRUM-70); accepting one applies its values to the event.
 
 ## Backend conventions — follow the existing pattern
 
 ### Who is calling
 - Login (`POST /api/auth/login`) issues a JWT whose identity is `str(user.id)`. Protected routes use `@jwt_required()`.
 - **Load the `User` row on every request** (`_current_user()` in events, `_require_viewer()` in venues) and check `user.role` from the database, not from token claims, so role changes apply without re-issuing tokens. A missing or unparsable identity is a 401: `"Your session is no longer valid. Please log in again."`
-- Roles in use: `admin`, `coordinator`, `coordinator_lead` (Event Coordinator Lead, SCRUM-83), `organiser`, `venue_staff`, `tech_staff`, `attendee` (default). Define who may do what as a module-level set (`ASSIGNER_ROLES`, `VENUE_VIEWER_ROLES`, …) with a comment, not inline string checks.
+- Roles in use: `admin`, `coordinator`, `coordinator_lead` (Event Coordinator Lead, SCRUM-83), `organiser`, `venue_staff`, `tech_staff`, `safety_officer` (SCRUM-90/91/92), `attendee` (default). Define who may do what as a module-level set (`ASSIGNER_ROLES`, `VENUE_VIEWER_ROLES`, …) with a comment, not inline string checks.
 - "The event's coordinator" means `user.role == "coordinator" and event.coordinator_id == user.id` (`_is_current_coordinator`). An organiser owns an event through `event.organiser_id`.
 
 ### Order of checks and status codes
@@ -85,8 +88,8 @@ Check in this order and return the first failure: **401** (no valid user) → **
 ### Data meaning
 - **NULL means "not recorded".** For venue characteristics an empty list, `False` or `0` is a recorded fact, so those columns have no defaults and the API distinguishes them (`not_recorded` lists, `_recorded()` helper).
 - **Times:** event, booking and block times are Singapore local time stored as naive `timestamp`s; audit timestamps (`created_at`, `last_saved_at`, `submitted_at`, `decided_at`, `coordinator_assigned_at`) are naive UTC from `datetime.utcnow()`. Periods are half-open `[start, end)`, so touching periods do not overlap. Use `scheduling.overlapping()` rather than writing your own comparison.
-- Event statuses in use: `draft`, `submitted`, `under_review`, `approved`, `rejected`, `cancelled`.
-- Venue booking statuses: `pending`, `tentative` (a hold, SCRUM-87), `expired` (SCRUM-86), `confirmed`, `rejected`, `cancelled`. Confirmed bookings block a venue, and so do tentative holds until their expiry. A hold is expired from its expiry even before the expiry check records it, so read a booking's status through `scheduling.current_status()`.
+- Event statuses in use: `draft`, `submitted`, `under_review`, `approved`, `confirmed` (SCRUM-93), `rejected`, `cancelled`. Approved and confirmed events are published and take registrations (`REGISTRABLE_STATUSES`; SCRUM-93 A4, still an open question). Venue, equipment and change-request workflows need `approved`; SCRUM-88 sends a confirmed event back to `approved` when one of its venues becomes unavailable.
+- Venue booking statuses: `pending`, `tentative` (a hold, SCRUM-87), `expired` (SCRUM-86), `confirmed`, `rejected`, `cancelled`, `replaced` (SCRUM-89: a flagged booking whose replacement was approved, or whose held replacement was confirmed). Confirmed bookings block a venue, and so do tentative holds until their expiry. A hold is expired from its expiry even before the expiry check records it, so read a booking's status through `scheduling.current_status()`.
 
 ### Editing an event's planning information (SCRUM-53 / SCRUM-52)
 `PATCH /api/events/<id>` saves "normal" fields (`NORMAL_FIELD_VALIDATORS`) directly and refuses "restricted" fields (`RESTRICTED_FIELD_LABELS`: venue, times, expected attendance, venue requirements, registration requirement), returning `requires_review` instead. **When you add a field to `Event`, decide which list it belongs to** (or leave it non-editable) and update the SCRUM-53/52 test cases; past merges did this explicitly.
