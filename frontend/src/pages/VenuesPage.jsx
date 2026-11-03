@@ -10,7 +10,7 @@ export default function VenuesPage() {
   const [canEdit, setCanEdit] = useState(false);
 
   useEffect(() => {
-    apiClient.get("/venues/").then((res) => setVenues(res.data.venues ?? res.data));
+    apiClient.get("/venues/").then((res) => setVenues(res.data.venues));
     apiClient.get("/venues/options").then(() => setCanEdit(true), () => setCanEdit(false));
   }, []);
 

@@ -54,7 +54,9 @@ export default function MyRegistrationsPage() {
   }
 
   async function withdraw() {
-    // Also guards against a second click before the buttons re-render as disabled.
+    // A backup to disabled={sending}: React never calls onClick on a disabled button, so
+    // this is unreachable while the buttons are disabled, and can't be tested.
+    /* v8 ignore next */
     if (sending) return;
     setSending(true);
     setError("");

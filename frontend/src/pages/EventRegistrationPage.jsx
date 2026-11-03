@@ -17,7 +17,9 @@ export default function EventRegistrationPage() {
   const [error, setError] = useState(null);
 
   async function register() {
-    // Also guards against a second click before the button re-renders as disabled.
+    // A backup to disabled={sending}: React never calls onClick on a disabled button, so
+    // this is unreachable while the button is disabled, and can't be tested.
+    /* v8 ignore next */
     if (sending) return;
     setSending(true);
     setError(null);

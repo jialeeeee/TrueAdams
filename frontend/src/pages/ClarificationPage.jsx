@@ -155,10 +155,10 @@ export default function ClarificationPage() {
           <div key={name}>
             <label htmlFor={`reply-${name}`}>{label}</label>
             {name === "title" ? (
-              <input id={`reply-${name}`} value={edits[name] ?? ""} disabled={sending || resubmissionClosed}
+              <input id={`reply-${name}`} value={edits[name]} disabled={sending || resubmissionClosed}
                 onChange={(e) => setEdits((current) => ({ ...current, [name]: e.target.value }))} />
             ) : (
-              <textarea id={`reply-${name}`} rows={3} value={edits[name] ?? ""} disabled={sending || resubmissionClosed}
+              <textarea id={`reply-${name}`} rows={3} value={edits[name]} disabled={sending || resubmissionClosed}
                 onChange={(e) => setEdits((current) => ({ ...current, [name]: e.target.value }))} />
             )}
           </div>

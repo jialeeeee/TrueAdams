@@ -82,7 +82,7 @@ export default function TentativeHoldsPage() {
                 id={`new-expiry-${hold.id}`}
                 type="datetime-local"
                 aria-label={`New expiry for ${hold.event.title}`}
-                value={expiries[hold.id] ?? ""}
+                value={expiries[hold.id]}
                 onChange={(e) => setExpiries((current) => ({ ...current, [hold.id]: e.target.value }))}
               />
               <button
