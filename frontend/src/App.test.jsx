@@ -1,6 +1,6 @@
 // SCRUM-75-test-cases.md TC-75-06..08; backend/tests/test_auth_unit.py verifies
 // that protected API requests without the browser token are refused.
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useNavigate } from "react-router-dom";
 import { beforeEach, expect, it, vi } from "vitest";
@@ -46,7 +46,7 @@ beforeEach(() => {
   apiClient.post.mockResolvedValue({ data: { access_token: "new-token", role: "coordinator" } });
 });
 
-it.each(["/", "/events/75/planning", "/venues/bookings", "/resources", "/registrations"])(
+it.each(["/", "/events/75/planning", "/venues/bookings", "/notifications", "/registrations"])(
   "refuses signed-out direct navigation to %s before loading protected data", async (path) => {
     renderApp(path);
     expect(await screen.findByRole("heading", { name: "Login" })).toBeTruthy();
@@ -131,4 +131,41 @@ it.each(["before", "after"])("ignores a superseded login response arriving %s th
   await user.click(screen.getByRole("button", { name: "Sign out" }));
   expect(sessionStorage.getItem("access_token")).toBeNull();
   expect(screen.getByRole("heading", { name: "Login" })).toBeTruthy();
+});
+
+// The nav shows each role its own pages. The backend still refuses everyone else.
+it.each([
+  ["attendee", ["Events", "Notifications", "My registrations"]],
+  ["venue_staff", ["Events", "Notifications", "Venues", "Venue availability", "Venue booking requests",
+    "Tentative holds", "Setup or turnaround conflicts", "Replacement venues needed"]],
+  ["safety_officer", ["Events", "Notifications", "Safety checks"]],
+])("shows a signed-in %s only their own links", async (role, links) => {
+  apiClient.post.mockResolvedValue({ data: { access_token: "role-token", role } });
+  apiClient.get.mockResolvedValue({
+    data: { events: [], notifications: [], requests: [], bookings: [], message: "Nothing." },
+  });
+  const user = renderApp("/login");
+  await enterCredentials(user);
+  await user.click(screen.getByRole("button", { name: "Login" }));
+  await waitFor(() => expect(sessionStorage.getItem("user_role")).toBe(role));
+
+  const shown = within(screen.getByRole("navigation")).getAllByRole("link").map((link) => link.textContent);
+  expect(shown).toEqual(links);
+
+  await user.click(screen.getByRole("button", { name: "Sign out" }));
+  expect(sessionStorage.getItem("user_role")).toBeNull();
+});
+
+it("shows an administrator, or a session without a role, every link", async () => {
+  sessionStorage.setItem("access_token", "admin-token");
+  sessionStorage.setItem("user_role", "admin");
+  apiClient.get.mockResolvedValue({ data: { notifications: [], message: "You have no notifications." } });
+  renderApp("/notifications");
+  expect(await screen.findByText("You have no notifications.")).toBeTruthy();
+
+  const nav = screen.getByRole("navigation");
+  expect(within(nav).getByRole("link", { name: "Safety checks" })).toBeTruthy();
+  expect(within(nav).getByRole("link", { name: "My registrations" })).toBeTruthy();
+  expect(within(nav).queryByRole("link", { name: "Resources" })).toBeNull();
+  sessionStorage.clear();
 });

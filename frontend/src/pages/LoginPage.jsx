@@ -11,6 +11,9 @@ const ROLE_HOME_PATHS = {
   venue_staff: "/venues/bookings",
 };
 
+// The signed-in user's role, kept only to choose which nav links to show (App.jsx).
+export const ROLE_KEY = "user_role";
+
 export default function LoginPage({ loginAttempt }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -38,6 +41,11 @@ export default function LoginPage({ loginAttempt }) {
         return;
       }
       sessionStorage.setItem("access_token", token);
+      if (typeof response.data.role === "string") {
+        sessionStorage.setItem(ROLE_KEY, response.data.role);
+      } else {
+        sessionStorage.removeItem(ROLE_KEY);
+      }
       navigate(ROLE_HOME_PATHS[response.data.role] ?? "/", { replace: true });
     } catch (failure) {
       if (attempt !== loginAttempt.current) return;

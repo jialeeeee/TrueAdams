@@ -40,6 +40,7 @@ ALL_ROUTES = [
     ("GET", "/api/events/1/clarifications"),
     ("POST", "/api/events/1/clarifications"),
     ("GET", "/api/notifications/"),
+    ("POST", "/api/notifications/1/read"),
     ("GET", "/api/venues/"),
     ("POST", "/api/venues/"),
     ("PUT", "/api/venues/1"),
@@ -70,6 +71,11 @@ UNIMPLEMENTED_ROUTES = [
 
 
 class RouteTests(AppTestCase):
+    def test_resource_stubs_need_a_session(self):
+        for method, path in (("GET", "/api/resources/"), ("POST", "/api/resources/1/reservations")):
+            with self.subTest(method=method, path=path):
+                self.assertEqual(self.client.open(path, method=method).status_code, 401)
+
     def test_route_is_reachable(self):
         for method, path in ALL_ROUTES:
             with self.subTest(method=method, path=path):
@@ -83,17 +89,19 @@ class RouteTests(AppTestCase):
                 )
 
     def test_collection_endpoints_return_a_json_list(self):
+        headers = self.auth_headers(self.make_user())
         for path in COLLECTION_ENDPOINTS:
             with self.subTest(path=path):
-                response = self.client.get(path)
+                response = self.client.get(path, headers=headers)
 
                 self.assertEqual(response.status_code, 200)
                 self.assertEqual(response.get_json(), [])
 
     def test_stub_returns_not_implemented(self):
         """Delete each case from UNIMPLEMENTED_ROUTES as the endpoint is built."""
+        headers = self.auth_headers(self.make_user())
         for method, path in UNIMPLEMENTED_ROUTES:
             with self.subTest(method=method, path=path):
-                response = self.client.open(path, method=method)
+                response = self.client.open(path, method=method, headers=headers)
 
                 self.assertEqual(response.status_code, 501)
