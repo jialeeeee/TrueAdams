@@ -186,8 +186,9 @@ describe("SCRUM-39 request a venue from the planning view", () => {
 
 // SCRUM-45 AC7 (TC-45-35): the event's coordinator sets up registration from here.
 describe("SCRUM-45 set up registration from the planning view", () => {
-  it("links an approved event that needs registration to its settings", async () => {
-    apiClient.get.mockResolvedValue({ data: { ...FESTIVAL, status: "approved" } });
+  // A confirmed event still takes registrations (SCRUM-93 A4).
+  it.each(["approved", "confirmed"])("links an %s event that needs registration to its settings", async (status) => {
+    apiClient.get.mockResolvedValue({ data: { ...FESTIVAL, status } });
     renderPage();
 
     const link = await screen.findByRole("link", { name: "Set up registration" });

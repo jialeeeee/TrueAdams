@@ -43,7 +43,7 @@ from datetime import datetime
 from unittest import mock
 
 from sqlalchemy import event as sa_event
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import OperationalError, SQLAlchemyError
 
 from app import tasks
 from app.models import EquipmentRequirement, Event, Notification, Resource
@@ -898,3 +898,49 @@ class ReserveAccessTests(ReservationTestCase):
                                                        ("Shure SLX-D", 1)), 409)
                 self.assertIn(self.events[event].status, error["error"])
                 self.assertEqual(self.rows(event), [])
+
+
+class ReviewGapTests(ReservationTestCase):
+    # TC-44-08 · AC9 — equipment that no longer suits the requirement is still named.
+    def test_a_reservation_keeps_its_equipment_name_once_the_equipment_no_longer_suits(self):
+        self.reserved("R1", "Wireless microphone", ("Shure SLX-D", 1))
+        self.items["Shure SLX-D"].category = "Retired" + SUFFIX
+        self.db.session.commit()
+
+        line = self.requirement(self.page("R1"), "Wireless microphone")
+
+        self.assertEqual([r["resource"]["name"] for r in line["reservations"]], ["Shure SLX-D"])
+
+    # TC-44-49 · AC1 (A13) — reserving for an approved event without times names them.
+    def test_reserving_for_an_approved_event_without_times_names_the_times(self):
+        event = self.make_event(organiser=self.users["dana"], status="approved",
+                                coordinator_id=self.users["alice"].id)
+        event.start_time = None
+        requirement = EquipmentRequirement(event_id=event.id,
+                                           equipment_type="Wireless microphone" + SUFFIX,
+                                           quantity=1, recorded_by_id=self.users["alice"].id)
+        self.db.session.add(requirement)
+        self.db.session.commit()
+
+        response = self.client.post(
+            self.url(event.id), headers=self.headers("hana"),
+            json={"requirement_id": requirement.id,
+                  "items": [{"resource_id": self.items["Shure SLX-D"].id, "quantity": 1}]})
+
+        self.assertEqual(response.status_code, 422, response.get_json())
+        self.assertIn("start", str(response.get_json()).lower())
+        self.assertEqual(_reservation_model().query.filter_by(event_id=event.id).all(), [])
+
+    # TC-44-27 · AC5 — a reservation saved but not reloaded says it was saved.
+    def test_a_page_that_cannot_be_reloaded_after_saving_still_confirms_the_save(self):
+        from app.events import routes as event_routes
+        with mock.patch.object(event_routes, "_reservation_page",
+                               side_effect=SQLAlchemyError("reload failed")):
+            response = self.reserve("R1", "Wireless microphone", ("Shure SLX-D", 1))
+
+        self.assertEqual(response.status_code, 201, response.get_json())
+        body = response.get_json()
+        self.assertIs(body["saved"], True)
+        self.assertTrue(body["refresh_error"])
+        self.assertNotIn("reload failed", response.get_data(as_text=True))
+        self.assertEqual(len(self.rows("R1")), 1)

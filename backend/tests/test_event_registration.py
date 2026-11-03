@@ -81,7 +81,8 @@ REGISTRATIONS = [
     ("E3", "ivy", "registered"),
 ]
 
-NOT_APPROVED = ["draft", "submitted", "under_review", "confirmed", "rejected", "cancelled"]
+# A confirmed event still takes registrations (SCRUM-93 A4, open question Q4).
+NOT_APPROVED = ["draft", "submitted", "under_review", "rejected", "cancelled"]
 NON_ATTENDEES = ["admin", "alice", "dana", "gus", "hana"]
 
 
@@ -193,6 +194,14 @@ class EligibilityTests(RegistrationTestCase):
                 self.assertNotIn("Harbour Lights Festival", body["error"])
                 self.assertNotIn(status.replace("_", " "), body["error"].lower())
         self.assertEqual(self.saved(), before)
+
+    # TC-45-02 · AC1 (A2; SCRUM-93 A4) — confirming an event keeps registration open.
+    def test_a_confirmed_event_still_accepts_registrations(self):
+        self.update_event("E1", status="confirmed")
+
+        body = self.assert_registered(self.register("E1"))
+
+        self.assertIn("Harbour Lights Festival", body["message"])
 
     # TC-45-03 · AC1, AC5 (A3/Q3) — registration disabled.
     def test_registration_disabled(self):
@@ -373,6 +382,35 @@ class AlreadyRegisteredTests(RegistrationTestCase):
         self.assertEqual([r.status for r in self.rows_for("E1", "farah")],
                          ["cancelled", "registered"])
 
+    # TC-45-16 · AC2, AC3 (A7) — two registrations at once: the database index stops the
+    # second, which is shown the one that was saved.
+    def test_a_simultaneous_second_registration_is_shown_the_first(self):
+        real_commit = self.db.session.commit
+
+        def the_other_request_wins():
+            # Undo this save and record the other request's, as the unique index would.
+            self.db.session.rollback()
+            self.db.session.add(Registration(event_id=self.events["E1"].id,
+                                             attendee_id=self.users["farah"].id,
+                                             status="registered"))
+            real_commit()
+            raise IntegrityError("insert", {}, Exception("registrations_one_active"))
+
+        with mock.patch.object(self.db.session, "commit", side_effect=the_other_request_wins):
+            response = self.register("E1")
+        body = self.assert_registered(response, code=200)
+        self.assertTrue(body.get("already_registered"))
+        self.assertEqual(len(self.rows_for("E1", "farah")), 1)
+
+    # TC-45-16 · AC2 (A7) — an index failure that saved nothing is reported, not hidden.
+    def test_an_index_failure_with_nothing_saved_is_retryable(self):
+        with mock.patch.object(self.db.session, "commit",
+                               side_effect=IntegrityError("insert", {}, Exception("other"))):
+            response = self.register("E1")
+        body = self.assert_error(response, 503)
+        self.assertIs(body["retryable"], True)
+        self.assertEqual(self.rows_for("E1", "farah"), [])
+
     # TC-45-16 · AC2, AC3 (A7) — the database allows only one active registration.
     def test_database_allows_only_one_active_registration(self):
         for first, second in (("registered", "registered"),):
@@ -420,7 +458,7 @@ class FullEventTests(RegistrationTestCase):
         self.update_event("E2", registration_required=False)
         self.assert_blocked(self.register("E2"), "disabled")
 
-        self.update_event("E2", registration_required=True, status="confirmed")
+        self.update_event("E2", registration_required=True, status="under_review")
         self.assert_blocked(self.register("E2"), "not_approved")
 
         self.assertEqual(self.saved(), before)

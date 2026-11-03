@@ -10,8 +10,8 @@ import statusLabel from "../utils/statusLabel.js";
 const NOT_LOADED = "The event could not be loaded. Check your connection and try again.";
 const NOT_PROVIDED = "Not provided";
 // Published events (everyone sees them) need no status line. Must match
-// PUBLISHED_STATUSES in backend/app/events/routes.py.
-const PUBLISHED_STATUS = "approved";
+// PUBLISHED_STATUSES in backend/app/events/routes.py (SCRUM-93 A4).
+const PUBLISHED_STATUSES = ["approved", "confirmed"];
 
 function provided(value) {
   return value === null || value === undefined || value === "" ? NOT_PROVIDED : String(value);
@@ -131,7 +131,7 @@ export default function EventDetailsPage() {
   return (
     <section>
       <h1>{event.title}</h1>
-      {event.status !== PUBLISHED_STATUS && <p>{`Status: ${statusLabel(event.status)}`}</p>}
+      {!PUBLISHED_STATUSES.includes(event.status) && <p>{`Status: ${statusLabel(event.status)}`}</p>}
       <p>{`Description: ${provided(event.description)}`}</p>
       <p>{`Starts: ${when(event.start_time)}`}</p>
       <p>{`Ends: ${when(event.end_time)}`}</p>

@@ -32,7 +32,7 @@ from datetime import datetime, timedelta
 from unittest import mock
 
 from flask_jwt_extended import create_access_token
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import DBAPIError, SQLAlchemyError
 
 from app.models import Event
 from tests import seed_data
@@ -467,6 +467,16 @@ class UpdateExistingDraftTests(DraftTestCase):
                 self.assertEqual(response.status_code, 200)
                 self.assertIsNone(self.stored("D1")["purpose"])
 
+    # TC-29-17 · AC4 — times and attendance can be cleared too.
+    def test_times_and_attendance_can_be_cleared(self):
+        for value in (None, ""):
+            with self.subTest(start_time=value):
+                response = self.save("D1", {"start_time": value, "expected_attendance": None})
+                self.assertEqual(response.status_code, 200, response.get_json())
+                stored = self.stored("D1")
+                self.assertIsNone(stored["start_time"])
+                self.assertIsNone(stored["expected_attendance"])
+
     # TC-29-18 · AC4 (boundary) — text is trimmed.
     def test_text_is_trimmed(self):
         created = self.create({"title": "  Spring Garden Party \n"}).get_json()
@@ -494,6 +504,20 @@ class SaveFailureTests(DraftTestCase):
         self.assertIs(body.get("retryable"), True)
         self.assertRegex(body["error"].lower(), r"not saved")
         self.assertRegex(body["error"].lower(), r"try again")
+        self.assertEqual(self.stored("D1"), saved)
+
+    # TC-29-20 · AC5 — a database error during the save that is not a lost connection
+    # is a plain failed save: nothing was saved.
+    def test_a_failed_commit_on_a_live_connection_saves_nothing(self):
+        saved = self.stored("D1")
+        failure = DBAPIError("COMMIT", {}, Exception("simulated"), connection_invalidated=False)
+
+        with mock.patch.object(self.db.session, "commit", side_effect=failure):
+            response = self.save("D1", {"description": "Lost?"})
+
+        body = self.assert_error(response, 503)
+        self.assertIs(body.get("retryable"), True)
+        self.assertNotIn("outcome_uncertain", body)
         self.assertEqual(self.stored("D1"), saved)
 
     # TC-29-21 · AC5 — a failed first save creates nothing.

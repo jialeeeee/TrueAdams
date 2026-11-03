@@ -412,6 +412,10 @@ UNAVAILABLE_DENIED = "Only Venue Staff can record unavailable periods."
 UNAVAILABLE_FIELDS = {"reason", "start_time", "end_time"}
 MAX_UNAVAILABLE_REASON = 500
 UNAVAILABLE_NOTIFICATION = "venue_unavailable"
+# Pending requests and unexpired holds inside a new period are not flagged (A3), but they
+# can no longer be approved or confirmed there, so their coordinators are warned now
+# rather than when that fails (working assumption A10, open question Q1).
+UNAVAILABLE_REQUEST_NOTIFICATION = "venue_unavailable_request"
 CONFIRMED_EVENT_STATUS = "confirmed"
 # Back to Planning for change review is the approved stage (SCRUM-92 A2).
 PLANNING_EVENT_STATUS = "approved"
@@ -467,6 +471,18 @@ def _replacement_entry(flag, booking, block):
                    "end_time": block.end_time.isoformat()},
         "flagged_at": flag.flagged_at.isoformat(),
     }
+
+
+def _requests_inside(venue, start, end):
+    """The venue's pending requests and unexpired holds whose occupied period overlaps the
+    new unavailable period, in time order (A10)."""
+    query = VenueBooking.query.filter(
+        VenueBooking.venue_id == venue.id,
+        (VenueBooking.status == PENDING)
+        | ((VenueBooking.status == TENTATIVE)
+           & (VenueBooking.hold_expires_at > singapore_now())))
+    return scheduling.overlapping(query, VenueBooking, start, end).order_by(
+        VenueBooking.start_time, VenueBooking.id).all()
 
 
 @venues_bp.post("/<int:venue_id>/unavailable")
@@ -538,6 +554,27 @@ def record_unavailable_period(venue_id: int):
             if coordinator.id not in notified:
                 notified.append(coordinator.id)
 
+        requests = _requests_inside(venue, start, end)
+        for event_id in dict.fromkeys(b.event_id for b in requests if b.event_id):
+            event = db.session.get(Event, event_id)
+            coordinator = db.session.get(User, event.coordinator_id) if event.coordinator_id \
+                else None
+            if coordinator is None:
+                continue
+            waiting = [b for b in requests if b.event_id == event_id]
+            message = (
+                f'Venue unavailable: {venue.name} is unavailable from {period} ({reason}). '
+                f'Your venue request for "{event.title}" ('
+                + "; ".join(f"{_period_text(b.start_time, b.end_time)}, "
+                            f"{'on hold' if b.status == TENTATIVE else 'pending'}"
+                            for b in waiting)
+                + ") can no longer be approved or confirmed there. Request another venue.")
+            db.session.add(Notification(recipient_id=coordinator.id,
+                                        kind=UNAVAILABLE_REQUEST_NOTIFICATION,
+                                        message=message, event_id=event.id))
+            emails.append((coordinator.email,
+                           f"Venue unavailable for {event.title}: {venue.name}", message, event.id))
+
         db.session.flush()
         payload = {
             "message": (f"The unavailable period was recorded: {venue.name} is unavailable "
@@ -546,6 +583,7 @@ def record_unavailable_period(venue_id: int):
             "period": _unavailable_payload(block),
             "flagged": [_replacement_entry(flag, booking, block) for flag, booking in flags],
             "notified": notified,
+            "requests_warned": [b.id for b in requests],
         }
         db.session.commit()
     except _Rejected as rejected:
@@ -1318,7 +1356,6 @@ def approve_booking(booking_id: int):
         booking.decided_by_id = user.id
         if first_venue:
             event.venue_id = venue.id
-        original = _mark_replaced(booking, event, venue)
         try:
             # Written now, so the database rule is checked before anything is announced.
             db.session.flush()
@@ -1327,6 +1364,9 @@ def approve_booking(booking_id: int):
             # venue was confirmed by code that did not take the venue lock.
             db.session.rollback()
             raise _clash(venue, _approval_conflicts(booking)) from None
+        # After the flush: _mark_replaced's queries would otherwise autoflush the approval
+        # outside the IntegrityError check above, turning a clash into a 503.
+        original = _mark_replaced(booking, event, venue)
         coordinator = db.session.get(User, event.coordinator_id)
         message = (
             f'Your venue request for "{event.title}" at {venue.name} '
@@ -1444,12 +1484,17 @@ def request_replacement(booking_id: int):
             raise _Rejected(
                 "A venue can only be requested for an approved event. "
                 f"This event is {event.status}.", 409, reason="event_not_approved")
-        waiting = VenueBooking.query.filter_by(replaces_booking_id=booking.id,
-                                               status=PENDING).first()
+        # A replacement on an unexpired hold is still waiting: confirming the hold replaces
+        # the booking just as an approval does (SCRUM-86 meets SCRUM-89).
+        waiting = VenueBooking.query.filter(
+            VenueBooking.replaces_booking_id == booking.id,
+            (VenueBooking.status == PENDING)
+            | ((VenueBooking.status == TENTATIVE)
+               & (VenueBooking.hold_expires_at > singapore_now()))).first()
         if waiting:
             raise _Rejected(
-                "This booking already has a replacement request waiting for Venue Staff. Wait for "
-                "them to decide on it, or cancel it, before asking for another venue.",
+                "This booking already has a replacement request waiting for Venue Staff or on "
+                "hold. Wait for it to be decided, or cancel it, before asking for another venue.",
                 409, reason="already_requested", booking_id=waiting.id)
 
         # The same checks as a new request: the venue's setup and turnaround, then every
@@ -2021,10 +2066,23 @@ def confirm_hold(booking_id: int):
         booking.decided_by_id = user.id
         if first_venue:
             event.venue_id = venue.id
+        try:
+            # Written now, so the database rule is checked before anything is announced.
+            db.session.flush()
+        except IntegrityError:
+            # As for an approval: a clashing booking was confirmed without the venue lock.
+            db.session.rollback()
+            raise _clash(venue, _approval_conflicts(booking), refused="confirmed") from None
+        # A held replacement replaces the flagged booking when confirmed, as an approval
+        # does. After the flush, so its queries can't autoflush past the IntegrityError check.
+        original = _mark_replaced(booking, event, venue)
+        replaced_text = (f" It replaces the booking at "
+                         f"{db.session.get(Venue, original.venue_id).name}, which is now marked "
+                         "Replaced." if original else "")
         message = (
             f'{user.email} confirmed the tentative hold on {venue.name} for "{event.title}" '
             f"({_period_text(booking.start_time, booking.end_time)}). It is now a confirmed "
-            "booking."
+            "booking." + replaced_text
         )
         # Saved in the same commit as the confirmation (A5).
         staff_addresses = _notify_venue_staff(message, event.id, HOLD_CONFIRMED_NOTIFICATION)
@@ -2045,7 +2103,8 @@ def confirm_hold(booking_id: int):
               for address in staff_addresses]
     return jsonify({
         "message": (f"You confirmed {venue_name} for {title}. It is now a confirmed booking, "
-                    "and Venue Staff have been notified."),
+                    "and Venue Staff have been notified."
+                    + replaced_text.replace("the booking at", "your booking at")),
         "booking": payload,
         "notification": {"in_app": True, "email_queued": all(queued)},
     })

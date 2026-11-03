@@ -92,6 +92,15 @@ describe("SCRUM-27 sign-in", () => {
     await submit(renderLogin());
     await waitFor(() => expect(screen.getByTestId("location").textContent).toBe(path));
     expect(sessionStorage.getItem("access_token")).toBe("issued-token");
+    expect(sessionStorage.getItem("user_role")).toBe(role);
+  });
+
+  it("keeps no role from an earlier sign-in when the response names none", async () => {
+    sessionStorage.setItem("user_role", "venue_staff");
+    apiClient.post.mockResolvedValue({ data: { access_token: "issued-token" } });
+    await submit(renderLogin());
+    await waitFor(() => expect(sessionStorage.getItem("access_token")).toBe("issued-token"));
+    expect(sessionStorage.getItem("user_role")).toBeNull();
   });
 
   it("displays the backend 401 explanation without authenticating or navigating", async () => {

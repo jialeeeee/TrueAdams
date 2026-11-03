@@ -1,0 +1,16 @@
+# Kept out of the image: docker compose passes the settings in with env_file, so the
+# secrets in .env never need to be baked into a layer.
+.env
+.env.*
+!.env.example
+
+# Local tooling and build output: the image installs its own dependencies.
+.venv/
+venv/
+__pycache__/
+*.pyc
+.coverage
+htmlcov/
+celerybeat-schedule*
+.DS_Store
+.pytest_cache/

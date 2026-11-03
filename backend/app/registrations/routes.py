@@ -12,9 +12,11 @@ from ..models import Event, Registration, User
 registrations_bp = Blueprint("registrations", __name__)
 
 ATTENDEE_ROLE = "attendee"
-# Only approved events take registrations (SCRUM-45 AC1, reopened 18 Oct 2026). SCRUM-74
-# publishes the same status, so attendees can find every event they can register for.
-REGISTRABLE_STATUS = "approved"
+# Approved events take registrations (SCRUM-45 AC1, reopened 18 Oct 2026), and so do
+# confirmed ones: SCRUM-93 confirms an approved event, which should not take it away from
+# its attendees (working assumption A4, SCRUM-93 open question Q4). SCRUM-74 publishes the
+# same statuses, so attendees can find every event they can register for.
+REGISTRABLE_STATUSES = ("approved", "confirmed")
 # The only active status: there is no waiting list since 18 Oct 2026 (A6, A7).
 REGISTERED = "registered"
 # The attendee left (SCRUM-68). Not active, so they may register again (A8).
@@ -86,7 +88,7 @@ def _blocked(event, now):
 
     Places are checked afterwards, so a full event that is also closed says why (A10).
     """
-    if event.status != REGISTRABLE_STATUS:
+    if event.status not in REGISTRABLE_STATUSES:
         return "not_approved", BLOCKED_MESSAGES["not_approved"]
     if event.registration_required is not True or event.registration_capacity is None:
         return "disabled", BLOCKED_MESSAGES["disabled"]

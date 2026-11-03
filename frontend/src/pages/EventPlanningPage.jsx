@@ -181,7 +181,8 @@ export default function EventPlanningPage() {
       <Link to={`/events/${event.id}/venue-suitability`}>Check venue suitability</Link>
       {/* SCRUM-42: record what equipment the event needs, for Technical Support Staff. */}
       <Link to={`/events/${event.id}/equipment`}>Equipment requirements</Link>
-      {event.status === "approved" && event.registration_required === true && (
+      {/* Must match REGISTRABLE_STATUSES in backend/app/registrations/routes.py (SCRUM-93 A4). */}
+      {["approved", "confirmed"].includes(event.status) && event.registration_required === true && (
         <Link to={`/events/${event.id}/registration-settings`}>Set up registration</Link>
       )}
 

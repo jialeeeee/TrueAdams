@@ -18,7 +18,7 @@ source .venv/bin/activate
 pip install -r requirements-dev.txt
 python -m unittest                          # whole suite
 python -m unittest -v tests.test_models     # one file
-coverage run -m unittest && coverage report # with coverage
+coverage run -m unittest discover && coverage report  # with coverage; fails below 100%
 ```
 
 Locally they run against the app's own `public` tables in Supabase, connecting as
@@ -29,6 +29,10 @@ CI runs them against a throwaway PostgreSQL built from the models by
 `backend/ci/build_test_database.py`, which takes about a minute instead of 30–60
 against Supabase. A second CI job checks that the Supabase tables still match the
 models (`tests.test_app_factory`, using the `TEST_DATABASE_URL` repository secret).
+Frontend tests run with `npm test` (or `npm run coverage`) in `frontend/`.
+
+Demo data for a live walk-through (one account per role and an event at each step) is
+added by `backend/seed_demo.py`; see its docstring.
 
 - **Each test inserts its own data and rolls it back.** Every test runs in a
   transaction that is rolled back afterwards, so test rows are never saved and

@@ -1,0 +1,8 @@
+# `coverage run -m unittest discover && coverage report`: fails below 100%.
+[run]
+source = app
+
+[report]
+show_missing = True
+skip_covered = True
+fail_under = 100

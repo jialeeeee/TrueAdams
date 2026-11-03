@@ -85,7 +85,7 @@ EVENTS = {
     "E8": {"title": "Full House", "registration_capacity": 2},
     "E9": {"title": "No Details Yet", "description": None},
     "E10": {"title": "Blank Details", "description": "   "},
-    # No story sets "confirmed"; it no longer publishes an event (SCRUM-45, 18 Oct 2026).
+    # SCRUM-93 confirms an approved event; it stays published (SCRUM-93 A4, open question Q4).
     "E11": {"title": "Confirmed Expo", "status": "confirmed"},
 }
 
@@ -101,8 +101,7 @@ REGISTRATIONS = [
     ("E8", "kim", "registered"),
 ]
 
-NOT_PUBLISHED = {"E3": "draft", "E4": "submitted", "E5": "under_review", "E6": "rejected",
-                 "E11": "confirmed"}
+NOT_PUBLISHED = {"E3": "draft", "E4": "submitted", "E5": "under_review", "E6": "rejected"}
 NOT_FOUND = {"error": "Event not found."}
 
 
@@ -203,6 +202,13 @@ class ListTests(DetailsTestCase):
             with self.subTest(user=name):
                 self.assertIn("E1", self.seeded_items(name))
                 self.assertEqual(self.details("E1", name).status_code, 200)
+
+    # TC-74-01 · AC1 (SCRUM-93 A4) — a confirmed event stays published for everyone.
+    def test_a_confirmed_event_stays_published(self):
+        for name in ("farah", "dana", "alice", "gus", "hana", "admin"):
+            with self.subTest(user=name):
+                self.assertIn("E11", self.seeded_items(name))
+                self.assertEqual(self.event_of("E11", name)["status"], "confirmed")
 
     # TC-74-01 · AC1 — the list is soonest first and shows each event's registration state.
     def test_list_is_soonest_first_with_registration_state(self):

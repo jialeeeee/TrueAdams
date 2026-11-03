@@ -23,8 +23,9 @@ import MyDraftsPage from "./pages/MyDraftsPage.jsx";
 import MyEventRequestsPage from "./pages/MyEventRequestsPage.jsx";
 import MyRegistrationsPage from "./pages/MyRegistrationsPage.jsx";
 import MyRequestsPage from "./pages/MyRequestsPage.jsx";
+import NotificationsPage from "./pages/NotificationsPage.jsx";
 import OrganisedEventsPage from "./pages/OrganisedEventsPage.jsx";
-import ResourcesPage from "./pages/ResourcesPage.jsx";
+import { ROLE_KEY } from "./pages/LoginPage.jsx";
 import ReassignCoordinatorPage from "./pages/ReassignCoordinatorPage.jsx";
 import ReassignmentRequestPage from "./pages/ReassignmentRequestPage.jsx";
 import RegistrationOverviewPage from "./pages/RegistrationOverviewPage.jsx";
@@ -46,6 +47,40 @@ import VenueFormPage from "./pages/VenueFormPage.jsx";
 import VenueSuitabilityPage from "./pages/VenueSuitabilityPage.jsx";
 import VenuesPage from "./pages/VenuesPage.jsx";
 
+// Each nav link and the roles whose pages it opens, from the role checks of the endpoint
+// each page loads; null means every role. This only tidies the menu: the backend still
+// refuses anyone else, so a role it doesn't know (or none) sees every link, as before.
+const NAV_LINKS = [
+  ["/", "Events", null],
+  ["/notifications", "Notifications", null],
+  ["/events/mine", "My event requests", ["organiser"]],
+  ["/events/drafts", "My drafts", ["organiser"]],
+  ["/events/requests", "My requests", ["organiser"]],
+  ["/events/organised", "Registrations for my events", ["organiser"]],
+  ["/events/managed", "My managed events", ["coordinator"]],
+  ["/events/managed/registrations", "Registrations for my managed events", ["coordinator"]],
+  ["/events/queue", "Waiting events", ["coordinator_lead"]],
+  ["/events/supervised", "Events I assigned", ["coordinator_lead"]],
+  ["/events/review-requests", "Requests for review", ["coordinator"]],
+  ["/events/change-requests", "Change requests to review", ["coordinator"]],
+  ["/events/safety-checks", "Safety checks", ["safety_officer"]],
+  ["/venues", "Venues", ["coordinator", "venue_staff"]],
+  ["/venues/availability", "Venue availability", ["coordinator", "venue_staff"]],
+  ["/venues/search", "Venue search", ["coordinator"]],
+  ["/venues/bookings", "Venue booking requests", ["venue_staff"]],
+  ["/venues/holds", "Tentative holds", ["venue_staff"]],
+  ["/venues/flagged-bookings", "Setup or turnaround conflicts", ["venue_staff"]],
+  ["/venues/replacement-needed", "Replacement venues needed", ["venue_staff"]],
+  ["/equipment-requests", "Equipment requests", ["tech_staff"]],
+  ["/my-registrations", "My registrations", ["attendee"]],
+];
+const KNOWN_ROLES = new Set(NAV_LINKS.flatMap(([, , roles]) => roles ?? []));
+
+function visibleLinks(role) {
+  if (!KNOWN_ROLES.has(role)) return NAV_LINKS;
+  return NAV_LINKS.filter(([, , roles]) => roles === null || roles.includes(role));
+}
+
 function RequireSignIn() {
   return sessionStorage.getItem("access_token") ? <Outlet /> : <Navigate to="/login" replace />;
 }
@@ -55,40 +90,23 @@ export default function App() {
   useLocation();
   const navigate = useNavigate();
   const signedIn = Boolean(sessionStorage.getItem("access_token"));
+  const role = signedIn ? sessionStorage.getItem(ROLE_KEY) : null;
   // SCRUM-75 AC6: login submissions and logout supersede pending login responses.
   const loginAttempt = useRef(0);
 
   const signOut = () => {
     loginAttempt.current += 1;
     sessionStorage.removeItem("access_token");
+    sessionStorage.removeItem(ROLE_KEY);
     navigate("/login", { replace: true });
   };
 
   return (
     <div>
       <nav>
-        <Link to="/">Events</Link>
-        <Link to="/events/mine">My event requests</Link>
-        <Link to="/events/drafts">My drafts</Link>
-        <Link to="/events/requests">My requests</Link>
-        <Link to="/events/organised">Registrations for my events</Link>
-        <Link to="/events/managed">My managed events</Link>
-        <Link to="/events/managed/registrations">Registrations for my managed events</Link>
-        <Link to="/events/queue">Waiting events</Link>
-        <Link to="/events/supervised">Events I assigned</Link>
-        <Link to="/events/review-requests">Requests for review</Link>
-        <Link to="/events/change-requests">Change requests to review</Link>
-        <Link to="/events/safety-checks">Safety checks</Link>
-        <Link to="/venues">Venues</Link>
-        <Link to="/venues/availability">Venue availability</Link>
-        <Link to="/venues/search">Venue search</Link>
-        <Link to="/venues/bookings">Venue booking requests</Link>
-        <Link to="/venues/holds">Tentative holds</Link>
-        <Link to="/venues/flagged-bookings">Setup or turnaround conflicts</Link>
-        <Link to="/venues/replacement-needed">Replacement venues needed</Link>
-        <Link to="/resources">Resources</Link>
-        <Link to="/equipment-requests">Equipment requests</Link>
-        <Link to="/my-registrations">My registrations</Link>
+        {visibleLinks(role).map(([path, label]) => (
+          <Link key={path} to={path}>{label}</Link>
+        ))}
         {signedIn ? <button type="button" onClick={signOut}>Sign out</button> : <Link to="/login">Login</Link>}
       </nav>
       <Routes>
@@ -137,7 +155,7 @@ export default function App() {
           <Route path="/venues/flagged-bookings" element={<FlaggedBookingsPage />} />
           <Route path="/venues/replacement-needed" element={<ReplacementNeededPage />} />
           <Route path="/venues/:venueId/unavailable" element={<VenueUnavailablePage />} />
-          <Route path="/resources" element={<ResourcesPage />} />
+          <Route path="/notifications" element={<NotificationsPage />} />
           <Route path="/equipment-requests" element={<EquipmentRequestsPage />} />
           <Route path="/my-registrations" element={<MyRegistrationsPage />} />
           <Route path="/registrations" element={<Navigate to="/my-registrations" replace />} />
