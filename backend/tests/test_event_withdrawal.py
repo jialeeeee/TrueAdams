@@ -403,6 +403,17 @@ class RefusedWithdrawalTests(WithdrawalTestCase):
         self.assertEqual(self.registered_count("E1"), 1)  # jon only: 1, not 0
         self.assertEqual(self.status_of("E1", "jon"), "registered")
 
+    # TC-68-12 · AC8 — a registration that is no longer active (e.g. cancelled) can't be withdrawn.
+    def test_an_inactive_registration_is_rejected(self):
+        registration = self.reg("E1", "farah")
+        registration.status = "cancelled"
+        self.db.session.commit()
+
+        body = self.assert_refused(self.withdraw("E1", "farah"), "already_withdrawn")
+
+        self.assertEqual(body["error"], "This registration is no longer active.")
+        self.assertEqual(self.status_of("E1", "farah"), "cancelled")
+
 
 # ---------- AC9: registering again ----------
 

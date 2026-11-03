@@ -49,8 +49,8 @@ def _changed(session, obj, names):
     model = type(obj)
     saved = (session.query(*[getattr(model, name) for name in unknown])
              .filter(model.id == obj.id).one_or_none())
-    if saved is None:
-        return True
+    if saved is None:  # pragma: no cover - deleted by another transaction mid-save; no
+        return True    # test can interleave two sessions on the rolled-back test connection
     return any(getattr(obj, name) != value for name, value in zip(unknown, saved))
 
 

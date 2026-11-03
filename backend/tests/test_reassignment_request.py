@@ -42,7 +42,7 @@ from datetime import datetime, timedelta
 from unittest import mock
 
 from flask_jwt_extended import create_access_token
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from app import tasks
 from app.events import routes as event_routes
@@ -532,6 +532,18 @@ class SaveFailureTests(ReassignmentTestCase):
         retry = self.submit(coordinator="ben")
         self.assertEqual(retry.status_code, 201, retry.get_json())
         self.assertEqual(self.saved(), [("E1", "alice", "ben", REASON, "pending")])
+
+    # TC-61-11 · AC6 — two requests at once: the unique index lets one through and the
+    # other is told a request is already pending, with nothing of its own saved.
+    def test_a_simultaneous_second_request_is_told_one_is_pending(self):
+        with mock.patch.object(self.db.session, "flush",
+                               side_effect=IntegrityError("insert", {}, Exception("one pending"))):
+            response = self.submit(coordinator="ben")
+
+        body = self.assert_error(response, 409)
+        self.assertEqual(body["reason"], "pending")
+        self.assertEqual(self.saved(), [])
+        self.email.assert_not_called()
 
     # TC-61-16 · AC10 — a failed load is a failure, not an empty or open form.
     def test_failed_load_is_reported_as_a_failure(self):
