@@ -54,7 +54,34 @@ jobs:
         env:
           # The restricted connectsphere_test role, as on Supabase (db/test_role.sql).
           TEST_DATABASE_URL: postgresql://connectsphere_test:ci-only@localhost:5432/postgres
-        run: python -m unittest discover -v
+        run: coverage run -m unittest discover -v
+
+      # Fails below 100% (backend/.coveragerc): a new line needs a test, or a
+      # "# pragma: no cover" with the reason it can't have one.
+      - name: Coverage
+        run: coverage report
+
+  # The frontend suite with coverage; fails below the floor in frontend/vitest.config.js.
+  vitest:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests with coverage
+        run: npm run coverage
 
   # The CI database is built from the models, so it can't notice a model that Supabase
   # doesn't match. This checks the real Supabase tables, and the test role's access to
