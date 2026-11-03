@@ -16,9 +16,9 @@ export default defineConfig({
       include: ["src/**/*.{js,jsx}"],
       exclude: ["src/main.jsx", "src/test/**", "src/**/*.test.{js,jsx}"],
       reporter: ["text-summary", "text"],
-      // The floor measured when coverage was added (3 Nov 2026), so it can only rise.
-      // Raise these as the remaining branches get tests; 100 is the target.
-      thresholds: { statements: 99, lines: 99, functions: 97, branches: 93 },
+      // Every line and branch is tested. Code that can't be reached is marked with
+      // `/* v8 ignore next */` and the reason, as the backend uses "# pragma: no cover".
+      thresholds: { statements: 100, lines: 100, functions: 100, branches: 100 },
     },
   },
 });
