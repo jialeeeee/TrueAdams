@@ -194,3 +194,14 @@ describe("SCRUM-82 a Lead reassigns an event to a different coordinator", () => 
     expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
   });
 });
+
+describe("SCRUM-82 missing details", () => {
+  it("says the event name is not recorded when it is missing", async () => {
+    apiClient.get.mockResolvedValue({
+      data: { event_id: 7, event: { ...EVENT, title: "" }, current_coordinator: ALICE, coordinators: [BEN], message: null },
+    });
+    renderPage();
+
+    expect(await screen.findByRole("heading", { level: 2, name: "Not recorded" })).toBeTruthy();
+  });
+});

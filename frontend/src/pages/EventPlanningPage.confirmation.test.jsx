@@ -1,6 +1,6 @@
 // SCRUM-93 TC-93-05/06; docs/test-cases/SCRUM-93-confirm-event.md and
 // backend/tests/test_event_confirmation.py. Additive confirmation API.
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -126,5 +126,57 @@ describe("SCRUM-93 confirmation on the existing planning page", () => {
     await user.click(screen.getByRole("button", { name: /mark.*confirmed|confirm event/i }));
     await waitFor(() => expect(apiClient.post).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(eventStatus()).toBe("Confirmed"));
+  });
+});
+
+describe("SCRUM-93 confirmation edge cases", () => {
+  it("ignores a failed confirmation after navigating to another event", async () => {
+    let failConfirmation;
+    apiClient.post.mockReturnValueOnce(new Promise((_, reject) => { failConfirmation = reject; }));
+    const secondEvent = { ...EVENT, id: 2, title: "Second workshop" };
+    apiClient.get.mockResolvedValueOnce({ data: EVENT }).mockResolvedValueOnce({ data: secondEvent });
+    const user = renderPage();
+    await screen.findByRole("heading", { name: EVENT.title });
+    await user.click(screen.getByRole("button", { name: /mark.*confirmed|confirm event/i }));
+
+    await user.click(screen.getByRole("link", { name: "Open second event" }));
+    await screen.findByRole("heading", { name: secondEvent.title });
+    await act(async () => failConfirmation({ response: { status: 409, data: { error: "Not ready." } } }));
+
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByRole("button", { name: /mark.*confirmed|confirm event/i }).disabled).toBe(false);
+  });
+
+  it("explains a failure that has no message from the server", async () => {
+    apiClient.post.mockRejectedValueOnce(new Error("Network Error"));
+    const user = renderPage();
+    await screen.findByRole("heading", { name: EVENT.title });
+
+    await user.click(screen.getByRole("button", { name: /mark.*confirmed|confirm event/i }));
+
+    expect((await screen.findByRole("alert")).textContent).toBe("The event was not confirmed. Please try again.");
+  });
+});
+
+describe("SCRUM-91/53 planning page with missing details", () => {
+  it("says what is not recorded rather than leaving it blank", async () => {
+    apiClient.get.mockResolvedValue({
+      data: { ...EVENT, title: "", safety_check: { ...EVENT.safety_check, officer: null, decided_at: null } },
+    });
+    renderPage();
+
+    expect(await screen.findByRole("heading", { level: 1, name: "Not recorded" })).toBeTruthy();
+    const safety = within(screen.getByRole("region", { name: "Safety check" }));
+    expect(safety.getByText("Safety Officer: Not recorded")).toBeTruthy();
+    expect(safety.getByText("Decided: Not recorded")).toBeTruthy();
+  });
+
+  it("explains a load failure that has no message from the server, and offers a retry", async () => {
+    apiClient.get.mockRejectedValue(new Error("Network Error"));
+    renderPage();
+
+    expect((await screen.findByRole("alert")).textContent)
+      .toBe("The event's information could not be loaded. Check your connection and try again.");
+    expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
   });
 });

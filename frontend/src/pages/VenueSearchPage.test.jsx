@@ -259,3 +259,57 @@ describe("VenueSearchPage", () => {
     expect(screen.queryByRole("alert")).toBeNull();
   });
 });
+
+describe("venue search edge cases", () => {
+  it("explains a failed search that has no message from the server", async () => {
+    apiClient.get.mockRejectedValueOnce(new Error("Network Error"));
+    const user = renderPage();
+
+    await user.click(searchButton());
+
+    expect((await screen.findByRole("alert")).textContent).toBe("The venue search could not be completed. Please try again.");
+  });
+
+  it("says what is not recorded in a result and its details", async () => {
+    apiClient.get
+      .mockResolvedValueOnce(found({ ...EVERGREEN, capacity: null }))
+      .mockResolvedValueOnce({ data: { description: null, facilities: [], accessibility_features: null,
+        room_layouts: [], operating_hours: null } });
+    const user = renderPage();
+    await user.click(searchButton());
+    const result = within(await screen.findByRole("listitem", { name: "Evergreen Loft" }));
+    expect(result.getByText("Capacity: Not recorded")).toBeTruthy();
+
+    await user.click(result.getByRole("button", { name: "View details" }));
+
+    const details = await screen.findByLabelText("Evergreen Loft details");
+    expect(within(details).getAllByText("Not recorded")).toHaveLength(5);
+  });
+
+  it("shows why a venue's details could not be loaded", async () => {
+    apiClient.get
+      .mockResolvedValueOnce(found(AURORA))
+      .mockRejectedValueOnce(httpFailure(503, "Venue details could not be loaded. Please try again."));
+    const user = renderPage();
+    await user.click(searchButton());
+    const result = within(await screen.findByRole("listitem", { name: "Aurora Ballroom" }));
+
+    await user.click(result.getByRole("button", { name: "View details" }));
+
+    expect((await result.findByRole("alert")).textContent).toBe("Venue details could not be loaded. Please try again.");
+    expect(result.getByRole("button", { name: "View details" })).toBeTruthy();
+  });
+
+  it("clears the filters, the results and any message", async () => {
+    apiClient.get.mockResolvedValueOnce(found(AURORA));
+    const user = renderPage();
+    await user.type(field("Minimum capacity"), "100");
+    await user.click(searchButton());
+    await screen.findByRole("listitem", { name: "Aurora Ballroom" });
+
+    await user.click(screen.getByRole("button", { name: "Clear filters" }));
+
+    expect(field("Minimum capacity").value).toBe("");
+    expect(screen.queryByRole("listitem", { name: "Aurora Ballroom" })).toBeNull();
+  });
+});

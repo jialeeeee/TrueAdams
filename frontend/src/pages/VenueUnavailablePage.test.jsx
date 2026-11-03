@@ -146,3 +146,46 @@ describe("who can record (AC6)", () => {
     expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
   });
 });
+
+describe("loading and saving failures", () => {
+  it("shows why the periods could not be loaded and offers a retry", async () => {
+    apiClient.get.mockImplementation(async (url) => {
+      if (url === "/venues/1/unavailable") throw httpFailure(503, { error: "Unavailable periods could not be loaded. Please try again.", retryable: true });
+      return { data: V101 };
+    });
+    const user = renderPage();
+
+    expect((await screen.findByRole("alert")).textContent).toBe("Unavailable periods could not be loaded. Please try again.");
+    serve();
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+
+    expect(await screen.findByRole("heading", { name: /Orchard Hall/ })).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("shows why the venue could not be loaded, with no retry for a refusal", async () => {
+    apiClient.get.mockImplementation(async (url) => {
+      if (url === "/venues/1") throw httpFailure(404, { error: "Venue not found." });
+      return { data: { periods: [], message: "No unavailable periods are recorded for this venue." } };
+    });
+    renderPage();
+
+    expect((await screen.findByRole("alert")).textContent).toBe("Venue not found.");
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+  });
+
+  it("still confirms a saved period when the list can't be refreshed", async () => {
+    apiClient.post.mockResolvedValue({ data: {
+      message: "Orchard Hall is unavailable from 2027-11-20 09:00 to 2027-11-20 18:00. 0 bookings were flagged.",
+      period: PERIOD, flagged: [], notified: [],
+    } });
+    const user = renderPage();
+    await fill(user);
+    apiClient.get.mockRejectedValue(new Error("Network Error"));
+
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect((await screen.findByRole("status")).textContent).toContain("0 bookings were flagged");
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+});

@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -223,5 +223,53 @@ describe("SCRUM-70 the coordinator reviews a change request", () => {
 
     expect((await screen.findByRole("alert")).textContent).toBe("Only the event's coordinator can review its change requests.");
     expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+  });
+});
+
+describe("SCRUM-70 edge cases", () => {
+  it("shows what is not recorded, and equipment with nothing reserved", async () => {
+    const request = { ...REQUEST, requested_by: null,
+      changes: [{ field: "equipment_requirements", label: "Equipment requirements", from: null, to: "2 microphones" }] };
+    const impact = { ...IMPACT, equipment: [{ ...IMPACT.equipment[0], reserved: 0 }] };
+    apiClient.get.mockResolvedValue({ data: { ...REVIEW, request, impact } });
+    renderPage();
+
+    expect(await screen.findByText(/^Requested by not recorded on /)).toBeTruthy();
+    expect(screen.getByText("Equipment requirements: none → 2 microphones")).toBeTruthy();
+    const equipment = within(screen.getByRole("region", { name: "Equipment affected" }));
+    expect(equipment.getByText("Wireless microphone × 2")).toBeTruthy();
+  });
+
+  it("says when some emails about the decision could not be sent", async () => {
+    apiClient.get.mockResolvedValue({ data: REVIEW });
+    const decided = { ...REQUEST, status: "accepted", status_label: "Accepted",
+      decided_at: "2026-10-28T03:00:00", decided_by: ALICE };
+    apiClient.post.mockResolvedValue({ data: { message: "You accepted the change request.", request: decided,
+      notification: { in_app: true, email_queued: false, attendees_notified: 2 } } });
+    const user = renderPage();
+
+    await user.click(await screen.findByRole("button", { name: "Accept" }));
+
+    expect(await screen.findByText(
+      "Some emails could not be sent, but everyone notified will still see it in ConnectSphere.",
+    )).toBeTruthy();
+  });
+
+  it("says how many characters to remove when it is more than one", async () => {
+    apiClient.get.mockResolvedValue({ data: REVIEW });
+    const user = renderPage();
+    await user.click(await screen.findByLabelText(/Reason for rejecting/));
+    await user.paste("x".repeat(502));
+
+    expect(screen.getByText(/Remove 2 characters to continue\.$/)).toBeTruthy();
+  });
+
+  it("does nothing when the decision form itself is submitted", async () => {
+    apiClient.get.mockResolvedValue({ data: REVIEW });
+    renderPage();
+    const form = await screen.findByRole("form", { name: "Decision" });
+
+    expect(fireEvent.submit(form)).toBe(false); // the browser's default (a page reload) is prevented
+    expect(apiClient.post).not.toHaveBeenCalled();
   });
 });

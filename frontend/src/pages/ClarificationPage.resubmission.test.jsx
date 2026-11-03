@@ -145,3 +145,40 @@ describe("SCRUM-95 organiser clarification resubmission", () => {
     expect(screen.queryByRole("status")).toBeNull();
   });
 });
+
+describe("SCRUM-95 edge cases", () => {
+  it("sends a changed event name, and says when the coordinator's email could not be sent", async () => {
+    apiClient.post.mockResolvedValue({ data: {
+      message: "Your request has been resubmitted for review.",
+      request: { id: 7, status: "submitted", title: "Charity Gala Night" },
+      notification: { in_app: true, email_queued: false },
+    } });
+    const user = await openPage();
+    await replace(user, screen.getByRole("textbox", { name: /your reply/i }), REPLY);
+    await replace(user, screen.getByRole("textbox", { name: /^event name$/i }), "Charity Gala Night");
+    await user.click(screen.getByRole("button", { name: /resubmit/i }));
+
+    await waitFor(() => expect(apiClient.post).toHaveBeenCalledWith("/events/7/resubmit", {
+      message: REPLY, changes: { title: "Charity Gala Night" },
+    }));
+    expect(await screen.findByText(
+      "The email could not be sent, but the coordinator will still see your reply in ConnectSphere.",
+    )).toBeTruthy();
+  });
+
+  it("keeps resubmission stopped when its eligibility can't be reloaded after a 409", async () => {
+    apiClient.get
+      .mockResolvedValueOnce({ data: thread() })
+      .mockRejectedValueOnce(new Error("Network Error"));
+    const error = "This request is not awaiting a clarification reply. Reload its questions.";
+    apiClient.post.mockRejectedValue({ response: { status: 409, data: { error } } });
+    const user = await openPage();
+    await replace(user, screen.getByRole("textbox", { name: /your reply/i }), REPLY);
+    await user.click(screen.getByRole("button", { name: /resubmit/i }));
+
+    expect((await screen.findByRole("alert")).textContent).toContain(error);
+    await waitFor(() => expect(apiClient.get).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole("button", { name: /resubmit/i }).disabled).toBe(true);
+    expect(screen.getByRole("textbox", { name: /your reply/i }).value).toBe(REPLY);
+  });
+});

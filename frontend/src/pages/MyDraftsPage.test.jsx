@@ -63,3 +63,14 @@ describe("SCRUM-29 my drafts", () => {
     expect(await screen.findByText("You have no draft event requests.")).toBeTruthy();
   });
 });
+
+describe("SCRUM-29 my drafts without a connection", () => {
+  it("explains a failure that has no message from the server", async () => {
+    apiClient.get.mockRejectedValueOnce(new Error("Network Error"));
+    renderPage();
+
+    expect((await screen.findByRole("alert")).textContent).toBe(
+      "Your drafts could not be loaded. Check your connection and try again.",
+    );
+  });
+});

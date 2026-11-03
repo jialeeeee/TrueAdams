@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -206,5 +206,22 @@ describe("SCRUM-31 request clarification", () => {
     expect((await screen.findByRole("alert")).textContent).toMatch(/could not be loaded/i);
     await user.click(screen.getByRole("button", { name: "Retry" }));
     await waitFor(() => expect(screen.getByRole("heading", { name: /Charity Gala/ })).toBeTruthy());
+  });
+});
+
+describe("SCRUM-31 edge cases", () => {
+  it("says how many words to remove when it is more than one", async () => {
+    const user = await renderPage();
+    await enter(user, words(1002));
+
+    expect(screen.getByText(/remove 2 words to send/i)).toBeTruthy();
+  });
+
+  it("sends nothing when the form is submitted with no question", async () => {
+    await renderPage();
+
+    fireEvent.submit(box().closest("form"));
+
+    expect(apiClient.post).not.toHaveBeenCalled();
   });
 });

@@ -365,3 +365,33 @@ describe("SCRUM-87 tentative holds on the calendar", () => {
     );
   });
 });
+
+describe("VenueAvailabilityPage edge cases", () => {
+  it("asks for a date when none is chosen", async () => {
+    const user = await renderPage();
+
+    await view(user, { from: null });
+
+    expect(screen.getByRole("alert").textContent).toContain("Select a date.");
+    expect(availabilityCalls()).toHaveLength(0);
+  });
+
+  it("explains a failure that has no message from the server", async () => {
+    vi.mocked(apiClient.get).mockRejectedValueOnce(new Error("Network Error"));
+    const user = await renderPage();
+
+    await view(user);
+
+    expect((await screen.findByRole("alert")).textContent).toContain("Availability could not be loaded. Please try again.");
+  });
+
+  it("names a venue that is not in the venue list generically", async () => {
+    vi.mocked(apiClient.get).mockResolvedValueOnce({ data: { ...AURORA_15_OCT.data, venue_id: 99 } });
+    const user = await renderPage();
+
+    await view(user);
+
+    const calendar = await screen.findByRole("article", { name: "Availability calendar" });
+    expect(within(calendar).getByRole("heading", { level: 2, name: "Selected venue" })).toBeTruthy();
+  });
+});

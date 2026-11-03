@@ -74,3 +74,15 @@ describe("Bookings that need a replacement venue (TC9)", () => {
     expect(await screen.findByRole("listitem", { name: "Harbour Lights Festival" })).toBeTruthy();
   });
 });
+
+describe("Replacement-needed bookings with missing details", () => {
+  it("names a booking without an event by its number, and a venue without a location alone", async () => {
+    apiClient.get.mockResolvedValue({
+      data: { bookings: [{ ...FLAGGED, event: null, venue: { ...FLAGGED.venue, location: null } }], message: null },
+    });
+    renderPage();
+
+    expect(await screen.findByRole("heading", { level: 2, name: "Booking 801" })).toBeTruthy();
+    expect(screen.getByText("Venue: Orchard Hall")).toBeTruthy();
+  });
+});

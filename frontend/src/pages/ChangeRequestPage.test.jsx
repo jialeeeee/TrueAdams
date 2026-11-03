@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -264,5 +264,43 @@ describe("SCRUM-70 the organiser sees the coordinator's decision", () => {
 
     await screen.findByRole("heading", { name: "Charity Gala" });
     expect(screen.queryByRole("region", { name: "Your last change request" })).toBeNull();
+  });
+});
+
+describe("SCRUM-46 edge cases", () => {
+  it("shows a value that is not recorded as empty, and as none in a pending request", async () => {
+    const current = { ...FORM.event.current, equipment_requirements: null };
+    const pending = { ...REQUEST, changes: [{ field: "equipment_requirements", label: "Equipment requirements", from: null, to: "2 microphones" }] };
+    apiClient.get.mockResolvedValue({ data: { ...FORM, event: { ...FORM.event, current }, pending_request: pending, can_request: false } });
+    renderPage();
+
+    const changes = await screen.findByRole("list", { name: "Requested changes" });
+    expect(within(changes).getByText("Equipment requirements: none → 2 microphones")).toBeTruthy();
+  });
+
+  it("sends a cleared attendance as no value", async () => {
+    apiClient.get.mockResolvedValue({ data: FORM });
+    apiClient.post.mockResolvedValue({ data: { message: CONFIRMATION, request: REQUEST } });
+    const user = renderPage();
+    await screen.findByRole("form", { name: "Change request" });
+
+    await user.clear(field("Expected attendance"));
+    await user.click(submitButton());
+
+    expect(apiClient.post).toHaveBeenCalledWith("/events/7/change-requests", { expected_attendance: null });
+  });
+
+  it("sends one request when the form is submitted again while sending", async () => {
+    apiClient.get.mockResolvedValue({ data: { ...FORM, event: { ...FORM.event, current: { ...FORM.event.current, equipment_requirements: null } } } });
+    apiClient.post.mockReturnValue(new Promise(() => {}));
+    const user = renderPage();
+    await screen.findByRole("form", { name: "Change request" });
+    expect(field("Equipment requirements").value).toBe("");
+    await user.type(field("Venue requirements"), " with a stage");
+
+    fireEvent.submit(screen.getByRole("form", { name: "Change request" }));
+    fireEvent.submit(screen.getByRole("form", { name: "Change request" }));
+
+    expect(apiClient.post).toHaveBeenCalledTimes(1);
   });
 });

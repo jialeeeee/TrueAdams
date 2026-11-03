@@ -121,3 +121,18 @@ describe("SCRUM-55 submitted requests list (UNEXECUTED)", () => {
     ]);
   });
 });
+
+describe("SCRUM-55 missing details", () => {
+  it("says what is not recorded rather than leaving it blank", async () => {
+    apiClient.get.mockResolvedValue({
+      data: { requests: [{ ...SUMMARY, title: "", organiser: null, start_time: null, submitted_at: null }], message: null },
+    });
+    renderPage();
+
+    const item = await screen.findByRole("listitem");
+    expect(within(item).getByRole("link", { name: "Not recorded" })).toBeTruthy();
+    for (const line of ["Organiser: Not recorded", "Proposed date: Not recorded", "Submitted: Not recorded"]) {
+      expect(within(item).getByText(line)).toBeTruthy();
+    }
+  });
+});

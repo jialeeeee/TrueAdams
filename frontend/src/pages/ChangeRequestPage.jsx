@@ -172,7 +172,7 @@ function EventChangeRequest({ eventId }) {
         <form aria-label="Change request" noValidate onSubmit={submit}>
           <p>The approved event stays as it is until the coordinator reviews your request.</p>
           {form.fields.map((field) => (
-            <Field key={field.name} field={field} value={values[field.name] ?? ""}
+            <Field key={field.name} field={field} value={values[field.name]}
                    problem={problems[field.name]} onChange={change} />
           ))}
           {failure && <p role="alert">{failure}</p>}

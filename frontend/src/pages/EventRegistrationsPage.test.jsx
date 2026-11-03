@@ -193,3 +193,14 @@ describe("SCRUM-54 an event's registrations", () => {
     },
   );
 });
+
+describe("SCRUM-54 missing details", () => {
+  it("shows a missing event name as not recorded and an unknown status as sent", async () => {
+    const odd = [{ ...REGISTRATIONS[0], status: "transferred" }];
+    apiClient.get.mockResolvedValue(loaded(odd, null, { ...EVENT, title: "" }));
+    renderPage();
+
+    expect(await screen.findByRole("heading", { level: 1, name: "Not recorded" })).toBeTruthy();
+    expect(screen.getByRole("cell", { name: "transferred" })).toBeTruthy();
+  });
+});

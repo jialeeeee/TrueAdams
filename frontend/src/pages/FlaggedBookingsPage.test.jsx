@@ -86,3 +86,12 @@ describe("Bookings flagged for a setup or turnaround conflict (TC18)", () => {
     expect(await screen.findByRole("listitem", { name: "Booking 501" })).toBeTruthy();
   });
 });
+
+describe("Flagged bookings with missing details", () => {
+  it("names the venue alone when its location is not recorded", async () => {
+    apiClient.get.mockResolvedValue({ data: { bookings: [{ ...FLAGGED, venue: { ...FLAGGED.venue, location: null } }], message: null } });
+    renderPage();
+
+    expect(await screen.findByText("Venue: Aurora Ballroom")).toBeTruthy();
+  });
+});
