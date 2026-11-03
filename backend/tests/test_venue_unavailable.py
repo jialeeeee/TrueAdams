@@ -369,6 +369,14 @@ class NotificationTests(UnavailableTestCase):
         self.assertEqual(len(self.notifications("alice")), 2)
         self.assertEqual(body["notified"], [self.users["alice"].id])
 
+    def test_an_affected_event_without_a_coordinator_is_flagged_but_tells_nobody(self):  # AC3
+        self.events["E1"].coordinator_id = None
+        self.db.session.commit()
+        body = self.recorded()
+        self.assertEqual(self.flagged_ids(), [self.b801.id])
+        self.assertEqual(body["notified"], [])
+        self.assertEqual(self.notifications("alice"), [])
+
     def test_nothing_is_notified_when_the_period_affects_no_booking(self):  # AC3
         self.recorded(venue=self.v102)
         self.assertEqual(self.notifications("alice"), [])
@@ -380,6 +388,72 @@ class NotificationTests(UnavailableTestCase):
             self.recorded()
         self.assertEqual(self.stored_blocks(), 1)
         self.assertEqual(len(self.notifications("alice")), 1)
+
+
+# ---------- A10: requests and holds inside the period are warned, not flagged ----------
+
+REQUEST_WARNING = "venue_unavailable_request"
+
+
+class RequestWarningTests(UnavailableTestCase):
+    def warnings(self, user):
+        self.db.session.expire_all()
+        return Notification.query.filter_by(recipient_id=self.users[user].id,
+                                            kind=REQUEST_WARNING).all()
+
+    def held(self, event, venue, start, end, expires):
+        booking = self.book(event, venue, start, end, status="tentative")
+        booking.hold_expires_at = expires
+        self.db.session.commit()
+        return booking
+
+    def test_a_pending_request_inside_the_period_is_warned_about(self):  # A10
+        pending = self.book("E2", self.v101, at(14), at(16), status="pending")
+        body = self.recorded()
+        [note] = self.warnings("ben")
+        self.assertEqual(note.event_id, self.events["E2"].id)
+        for text in ("Winter Networking Night", self.v101.name, REASON,
+                     "2027-11-20 14:00 to 2027-11-20 16:00, pending", "Request another venue"):
+            self.assertIn(text, note.message)
+        self.assertEqual(body["requests_warned"], [pending.id])
+        self.assertEqual(self.flagged_ids(), [self.b801.id])  # warned, not flagged (A3)
+        self.db.session.expire_all()
+        self.assertEqual(self.db.session.get(VenueBooking, pending.id).status, "pending")
+
+    def test_an_unexpired_hold_inside_the_period_is_warned_about(self):  # A10
+        hold = self.held("E2", self.v101, at(14), at(16), datetime(2027, 11, 1, 12, 0))
+        body = self.recorded()
+        [note] = self.warnings("ben")
+        self.assertIn("2027-11-20 14:00 to 2027-11-20 16:00, on hold", note.message)
+        self.assertEqual(body["requests_warned"], [hold.id])
+
+    def test_other_bookings_are_not_warned_about(self):  # A10
+        self.held("E2", self.v101, at(14), at(16), datetime(2020, 1, 1, 12, 0))  # expired
+        for status in ("rejected", "cancelled"):
+            self.book("E2", self.v101, at(10), at(12), status=status)
+        self.book("E2", self.v101, at(18), at(19), status="pending")  # only touches the period
+        self.book("E2", self.v102, at(10), at(12), status="pending")  # another venue
+        body = self.recorded()
+        self.assertEqual(self.warnings("ben"), [])
+        self.assertEqual(body["requests_warned"], [])
+
+    def test_a_request_for_an_event_without_a_coordinator_warns_nobody(self):  # A10
+        self.events["E2"].coordinator_id = None
+        self.db.session.commit()
+        pending = self.book("E2", self.v101, at(14), at(16), status="pending")
+        body = self.recorded()
+        self.assertEqual(body["requests_warned"], [pending.id])
+        self.db.session.expire_all()
+        self.assertEqual(Notification.query.filter_by(kind=REQUEST_WARNING,
+                                                      event_id=self.events["E2"].id).all(), [])
+
+    def test_the_warning_is_emailed_too(self):  # A10
+        from unittest import mock
+        self.book("E2", self.v101, at(14), at(16), status="pending")
+        with mock.patch("app.venues.routes.tasks.send_notification_email.delay") as delay:
+            self.recorded()
+        addresses = [call.args[0] for call in delay.call_args_list]
+        self.assertIn(self.users["ben"].email, addresses)
 
 
 # ---------- AC4: a confirmed event returns to planning ----------

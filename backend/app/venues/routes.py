@@ -412,6 +412,10 @@ UNAVAILABLE_DENIED = "Only Venue Staff can record unavailable periods."
 UNAVAILABLE_FIELDS = {"reason", "start_time", "end_time"}
 MAX_UNAVAILABLE_REASON = 500
 UNAVAILABLE_NOTIFICATION = "venue_unavailable"
+# Pending requests and unexpired holds inside a new period are not flagged (A3), but they
+# can no longer be approved or confirmed there, so their coordinators are warned now
+# rather than when that fails (working assumption A10, open question Q1).
+UNAVAILABLE_REQUEST_NOTIFICATION = "venue_unavailable_request"
 CONFIRMED_EVENT_STATUS = "confirmed"
 # Back to Planning for change review is the approved stage (SCRUM-92 A2).
 PLANNING_EVENT_STATUS = "approved"
@@ -467,6 +471,18 @@ def _replacement_entry(flag, booking, block):
                    "end_time": block.end_time.isoformat()},
         "flagged_at": flag.flagged_at.isoformat(),
     }
+
+
+def _requests_inside(venue, start, end):
+    """The venue's pending requests and unexpired holds whose occupied period overlaps the
+    new unavailable period, in time order (A10)."""
+    query = VenueBooking.query.filter(
+        VenueBooking.venue_id == venue.id,
+        (VenueBooking.status == PENDING)
+        | ((VenueBooking.status == TENTATIVE)
+           & (VenueBooking.hold_expires_at > singapore_now())))
+    return scheduling.overlapping(query, VenueBooking, start, end).order_by(
+        VenueBooking.start_time, VenueBooking.id).all()
 
 
 @venues_bp.post("/<int:venue_id>/unavailable")
@@ -538,6 +554,27 @@ def record_unavailable_period(venue_id: int):
             if coordinator.id not in notified:
                 notified.append(coordinator.id)
 
+        requests = _requests_inside(venue, start, end)
+        for event_id in dict.fromkeys(b.event_id for b in requests if b.event_id):
+            event = db.session.get(Event, event_id)
+            coordinator = db.session.get(User, event.coordinator_id) if event.coordinator_id \
+                else None
+            if coordinator is None:
+                continue
+            waiting = [b for b in requests if b.event_id == event_id]
+            message = (
+                f'Venue unavailable: {venue.name} is unavailable from {period} ({reason}). '
+                f'Your venue request for "{event.title}" ('
+                + "; ".join(f"{_period_text(b.start_time, b.end_time)}, "
+                            f"{'on hold' if b.status == TENTATIVE else 'pending'}"
+                            for b in waiting)
+                + ") can no longer be approved or confirmed there. Request another venue.")
+            db.session.add(Notification(recipient_id=coordinator.id,
+                                        kind=UNAVAILABLE_REQUEST_NOTIFICATION,
+                                        message=message, event_id=event.id))
+            emails.append((coordinator.email,
+                           f"Venue unavailable for {event.title}: {venue.name}", message, event.id))
+
         db.session.flush()
         payload = {
             "message": (f"The unavailable period was recorded: {venue.name} is unavailable "
@@ -546,6 +583,7 @@ def record_unavailable_period(venue_id: int):
             "period": _unavailable_payload(block),
             "flagged": [_replacement_entry(flag, booking, block) for flag, booking in flags],
             "notified": notified,
+            "requests_warned": [b.id for b in requests],
         }
         db.session.commit()
     except _Rejected as rejected:

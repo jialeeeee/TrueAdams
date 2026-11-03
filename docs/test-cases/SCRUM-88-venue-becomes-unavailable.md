@@ -25,6 +25,7 @@
 - **A6 — Notification (AC3):** each affected event's current coordinator gets one in-app notification per recorded period (kind `venue_unavailable`) naming the event, the venue, the unavailable period and the reason, saved in the same commit as the period; the email is queued afterwards and a broker outage does not undo the save. A coordinator with two affected events is told about each. Coordinators of unaffected events get nothing.
 - **A7 — The event (AC4):** an affected event whose status is `confirmed` goes back to `approved`, which is the Planning stage (SCRUM-92 A2). Nothing else about it changes, including the confirmation audit fields. An event in any other status keeps it. The event's planning view shows `flag` on the booking and `change_review: {needed: true, reason}` on the event while a booking is flagged; both keys are left out otherwise, as `safety_check` is.
 - **A8 — New bookings (AC5):** a request inside the period is refused up front with `409 reason: "conflict"`, naming the unavailable period and its reason in the message; a request that starts exactly when the period ends is allowed; other venues are unaffected. A pending request that is already waiting cannot be approved inside the period (SCRUM-41 conflict check).
+- **A10 — Pending requests and holds (added 3 Nov 2026):** they are not flagged (A3), but they can no longer be approved or confirmed inside the period, so each affected event's coordinator is told now rather than when that fails: one in-app notification per event (kind `venue_unavailable_request`) naming the venue, the period, the reason and each request's times and whether it is pending or on hold, saved in the same commit, with the email queued afterwards. Expired holds, rejected and cancelled requests are not mentioned. The response lists them as `requests_warned`. Nothing about the requests changes. *(Q1)*
 - **A9 — All or nothing:** the period, the flags, the notifications and the event status changes are saved in one transaction. If any part fails, nothing is saved and the reply is 503 (retryable).
 
 ## Test cases
@@ -62,6 +63,12 @@
 | TC29 | `test_tc29_a_second_venue_staff_user_can_record_a_period` | The role, not one user |
 
 Extra cases: bad formats and non-text values; every problem named at once; unknown field; reason over 500 characters; periods listed per venue in time order; 404 before 403; 401 without a session or for a deleted user; a booking that has already ended is not flagged; a booking overlapped by two periods is listed once; a cancelled booking leaves the list; the empty list says so; only Venue Staff can list; the list reports 503; a coordinator with two affected events is told about each; the period is saved even when the email cannot be queued; other event statuses are left alone; the planning view of an unaffected event has no flag; a pending request cannot be approved inside a new period; venue search does not offer the venue inside the period; a failed save of the flags or the notifications saves nothing, and a retry works.
+
+## Open questions for the customer
+
+| ID | Question | Affects |
+|---|---|---|
+| Q1 | Should a coordinator with a pending venue request or a tentative hold inside a new unavailable period be told when the period is recorded? **Assumed yes (A10)**: they are warned, but the request is neither flagged nor changed. | A10; `RequestWarningTests` |
 
 ## Before merging
 
