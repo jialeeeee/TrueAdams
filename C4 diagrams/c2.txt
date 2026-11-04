@@ -21,7 +21,7 @@ workspace "ConnectSphere" "C4 model of the ConnectSphere platform: system contex
 
             # Core Execution Layer
             monolithApp = container "ConnectSphere Monolithic Application" "REST API under /api. Checks each caller's stored role and relationship to the event, applies the workflow rules, and saves each change together with its in-app notifications." "Python / Flask / SQLAlchemy" "CoreApp" {
-                auth = component "Authentication" "Signs users in and issues the JWT every other API requires. Each request reloads the user, so permissions follow their current role (CF01)." "Flask blueprint: auth"
+                auth = component "Authentication" "Signs users in and issues the JWT every other API requires. Each request reloads the user, so permissions follow every role they currently hold (CF01)." "Flask blueprint: auth"
                 eventRequests = component "Event Requests and Drafts" "Saves, lists and resumes an organiser's drafts, validates the compulsory fields, and submits a request into the Lead's unassigned queue (CF02, CF03)." "Flask blueprint: events"
                 assignment = component "Coordinator Assignment" "The unassigned queue, assignment and reassignment by a Lead, coordinators' reassignment requests, and the events each Lead supervises (CF05, W705)." "Flask blueprint: events"
                 review = component "Request Review" "The assigned coordinator's review list, clarification questions and answers, resubmission, and the recorded approval or rejection (CF04)." "Flask blueprint: events"

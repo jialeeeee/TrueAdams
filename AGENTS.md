@@ -65,9 +65,10 @@ Stubs (they return **501** or an empty list) that are free to be built by their 
 
 ### Who is calling
 - Login (`POST /api/auth/login`) issues a JWT whose identity is `str(user.id)`. Protected routes use `@jwt_required()`.
-- **Load the `User` row on every request** (`_current_user()` in events, `_require_viewer()` in venues) and check `user.role` from the database, not from token claims, so role changes apply without re-issuing tokens. A missing or unparsable identity is a 401: `"Your session is no longer valid. Please log in again."`
+- **Load the `User` row on every request** (`_current_user()` in events, `_require_viewer()` in venues) and check its roles from the database, not from token claims, so role changes apply without re-issuing tokens. A missing or unparsable identity is a 401: `"Your session is no longer valid. Please log in again."`
+- **A user may hold more than one role** (CF01, G4 clarification #22): `User.role` is the main one (it picks the home page) and `User.additional_roles` lists the others. Check roles only through [backend/app/roles.py](backend/app/roles.py): `has_role(user, ROLE)`, `has_any_role(user, ROLES)`, and `holding(ROLES)` to filter `User` queries. Never compare `user.role` directly: it misses the other roles. Holding a role never grants a relationship to an event.
 - Roles in use: `admin`, `coordinator`, `coordinator_lead` (Event Coordinator Lead, SCRUM-83), `organiser`, `venue_staff`, `tech_staff`, `safety_officer` (SCRUM-90/91/92), `attendee` (default). Define who may do what as a module-level set (`ASSIGNER_ROLES`, `VENUE_VIEWER_ROLES`, …) with a comment, not inline string checks.
-- "The event's coordinator" means `user.role == "coordinator" and event.coordinator_id == user.id` (`_is_current_coordinator`). An organiser owns an event through `event.organiser_id`.
+- "The event's coordinator" means `has_role(user, "coordinator") and event.coordinator_id == user.id` (`_is_current_coordinator`). An organiser owns an event through `event.organiser_id`.
 
 ### Order of checks and status codes
 Check in this order and return the first failure: **401** (no valid user) → **404** (record missing) → **403** (not allowed) → **400/422** (bad input) → **409** (state forbids it, e.g. a non-draft, a cancelled event). Several test-case documents depend on this order (e.g. SCRUM-29 `_own_draft`: 401, 404, 403, 409). A refusal must never leak details of a record the caller may not see; `test_authorization.py` checks this.
@@ -147,7 +148,7 @@ Follow the existing documents: user story and links at the top, **Acceptance cri
 - Commit secrets or real connection strings, or point tests at `DATABASE_URL`.
 - Use `db.create_all()`, drop tables, or run DDL from app or test code. (`ci/build_test_database.py` is the one exception: it builds CI's throwaway database and refuses any host but localhost.)
 - Assume a table is empty in a test, or leave test rows committed outside the rolled-back transaction.
-- Trust the JWT's role claim instead of the stored `User.role`.
+- Trust the JWT's role claim instead of the user's stored roles.
 - Report a database failure as an empty result, "not recorded" or "available".
 - Save a restricted event field through the normal edit flow.
 - Invent an answer to an open customer question and present it as agreed.

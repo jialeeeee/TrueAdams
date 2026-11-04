@@ -12,6 +12,10 @@ class User(db.Model):
     email = db.Column(db.String(255), unique=True, nullable=False)
     password_hash = db.Column(db.String(255), nullable=False)
     role = db.Column(db.String(50), nullable=False, default="attendee")
+    # CF01 (G4 clarification #22): a user may hold more than one role. `role` is the main
+    # one, which picks the home page; these are the others, as a list of role names. NULL
+    # means none. Read them through app/roles.py, never `role` alone.
+    additional_roles = db.Column(JSONB(none_as_null=True))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 

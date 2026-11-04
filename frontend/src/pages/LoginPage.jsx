@@ -11,8 +11,16 @@ const ROLE_HOME_PATHS = {
   venue_staff: "/venues/bookings",
 };
 
-// The signed-in user's role, kept only to choose which nav links to show (App.jsx).
+// The signed-in user's main role, which picks the home page, and every role they hold
+// (CF01: a user may hold more than one), kept only to choose the nav links (App.jsx).
 export const ROLE_KEY = "user_role";
+export const ROLES_KEY = "user_roles";
+
+// Every role the login reply names: its `roles` list, or just the main role.
+function rolesFrom(data) {
+  if (Array.isArray(data.roles)) return data.roles.filter((role) => typeof role === "string");
+  return typeof data.role === "string" ? [data.role] : [];
+}
 
 export default function LoginPage({ loginAttempt }) {
   const [email, setEmail] = useState("");
@@ -46,6 +54,9 @@ export default function LoginPage({ loginAttempt }) {
       } else {
         sessionStorage.removeItem(ROLE_KEY);
       }
+      const roles = rolesFrom(response.data);
+      if (roles.length) sessionStorage.setItem(ROLES_KEY, JSON.stringify(roles));
+      else sessionStorage.removeItem(ROLES_KEY);
       navigate(ROLE_HOME_PATHS[response.data.role] ?? "/", { replace: true });
     } catch (failure) {
       if (attempt !== loginAttempt.current) return;
