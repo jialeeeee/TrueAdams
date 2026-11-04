@@ -25,8 +25,7 @@ grant select, insert, update, delete
      public.venue_blocks,
      public.event_clarifications, public.notifications,
      public.reassignment_requests, public.venue_changes, public.equipment_requirements,
-     public.equipment_unavailability, public.equipment_reservations, public.event_change_requests,
-     public.revoked_tokens
+     public.equipment_unavailability, public.equipment_reservations, public.event_change_requests
   to connectsphere_test;
 grant usage, select on all sequences in schema public to connectsphere_test;
 
@@ -40,14 +39,19 @@ begin
                        'venue_bookings', 'venue_booking_flags', 'venue_replacement_flags', 'venue_blocks',
                        'event_clarifications', 'notifications', 'reassignment_requests',
                        'venue_changes', 'equipment_requirements', 'equipment_unavailability',
-                       'equipment_reservations', 'event_change_requests',
-                       'revoked_tokens'] loop
+                       'equipment_reservations', 'event_change_requests'] loop
     execute format('drop policy if exists connectsphere_test_all on public.%I', t);
     execute format(
       'create policy connectsphere_test_all on public.%I for all to connectsphere_test '
       'using (true) with check (true)', t);
   end loop;
 end $$;
+
+-- SCRUM-75 AC6: revoked_tokens, granted on its own so the lists above stay as they are.
+grant select, insert, update, delete on public.revoked_tokens to connectsphere_test;
+drop policy if exists connectsphere_test_all on public.revoked_tokens;
+create policy connectsphere_test_all on public.revoked_tokens for all to connectsphere_test
+  using (true) with check (true);
 
 -- The old separate test schema is no longer used.
 drop schema if exists test cascade;
