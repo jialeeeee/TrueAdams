@@ -3581,6 +3581,8 @@ RESERVED_NOT_RELOADED = ("The equipment was reserved, but the updated page could
                          "loaded. Reload the page to see it.")
 RESERVATIONS_RELEASED = "Its reserved equipment was released."
 # SCRUM-70 AC11.
+BACK_TO_PLANNING = ("The event is no longer confirmed: it is back in planning until it is "
+                    "confirmed again.")
 SAFETY_CHECK_CLEARED = ("Its safety check was cleared, so it needs a new safety check before "
                         "it can be confirmed.")
 RESERVATION_REQUIREMENT_ID = "Choose the equipment requirement to reserve for."
@@ -3847,10 +3849,13 @@ def reserve_equipment(event_id: int):
                     "notification": notification, **page}), 201
 
 
-# ---------- Request a change to an approved event (SCRUM-46) ----------
+# ---------- Request a change to an approved or confirmed event (SCRUM-46) ----------
 
-# Only approved events can have a change requested (A1, open question Q1).
-CHANGEABLE_STATUS = "approved"
+# AC1 (CF19): from approval until the event starts, including after confirmation (A1).
+CHANGEABLE_STATUSES = {"approved", "confirmed"}
+CONFIRMED_EVENT_STATUS = "confirmed"
+CHANGES_ONLY_BEFORE_START = ("This event has already started, so changes can no longer be "
+                             "requested.")
 CHANGE_REQUEST_NOTIFICATION = "change_requested"
 CHANGE_REQUEST_ORGANISER_ONLY = "You can only request changes to events you organise."
 CHANGE_FORM_NOT_LOADED = "The change request form could not be loaded. Please try again."
@@ -3904,15 +3909,17 @@ def _is_second_pending_request(error):
 
 def _change_request_blocked(event, coordinator, pending):
     """Why no change can be requested for the event now, as (reason, message), or None."""
-    if event.status != CHANGEABLE_STATUS:
+    if event.status not in CHANGEABLE_STATUSES:
         return "not_approved", (
-            "Changes can only be requested for approved events. "
+            "Changes can only be requested for approved or confirmed events. "
             f"This event is {event.status.replace('_', ' ')}.")
     if coordinator is None:
         # AC5: nobody would review it. It waits in the Lead's queue (SCRUM-70 AC5, A9).
         return "no_coordinator", (
             "This event is waiting for a coordinator to be assigned, so there is nobody to "
             "review a change request yet. Please try again once a coordinator is assigned.")
+    if event.start_time is not None and event.start_time <= singapore_now():
+        return "started", CHANGES_ONLY_BEFORE_START  # AC1: until the event starts (A11)
     if pending is not None:
         return "pending", CHANGE_ALREADY_PENDING  # A6, open question Q5
     return None
@@ -4115,9 +4122,9 @@ def _decision_blocked(event, row):
     """Why the request can't be decided now, as (reason, message), or None (A1, A4)."""
     if row.status != change_requests.PENDING_REVIEW:
         return "decided", f"This change request was already {row.status}."
-    if event.status != CHANGEABLE_STATUS:
+    if event.status not in CHANGEABLE_STATUSES:
         return "not_approved", (
-            "A change request can only be decided while its event is approved. "
+            "A change request can only be decided while its event is approved or confirmed. "
             f"This event is {event.status.replace('_', ' ')}.")
     return None
 
@@ -4281,6 +4288,10 @@ def decide_change_request(event_id: int, request_id: int):
         row.decided_by_id = user.id
         row.decision_reason = reason
         safety_cleared = False
+        # SCRUM-70 AC11: accepting a significant change sends a Confirmed event back to
+        # Approved (Planning), so it is confirmed again once its arrangements are ready.
+        unconfirmed = (accepted and event.status == CONFIRMED_EVENT_STATUS
+                       and change_review.is_significant(row.changes))
         if accepted:
             for name, value in change_review.applied_values(row.changes).items():
                 setattr(event, name, value)
@@ -4289,6 +4300,8 @@ def decide_change_request(event_id: int, request_id: int):
                 safety_cleared = safety.clear_safety_decision(event)
         title = event.title
         message = _change_decision_message(title, status, user, row)
+        if unconfirmed:
+            message += f" {BACK_TO_PLANNING}"
         db.session.add(Notification(recipient_id=organiser.id, event_id=event.id,
                                     kind=CHANGE_DECISION_NOTIFICATIONS[status], message=message))
         emails = [(organiser.email, f"Your change request was {status}: {title}",
@@ -4321,6 +4334,8 @@ def decide_change_request(event_id: int, request_id: int):
                         "the new values.")
         if releases:
             confirmation += f" {RESERVATIONS_RELEASED}"
+        if unconfirmed:
+            confirmation += f" {BACK_TO_PLANNING}"
         if safety_cleared:
             confirmation += f" {SAFETY_CHECK_CLEARED}"
     else:

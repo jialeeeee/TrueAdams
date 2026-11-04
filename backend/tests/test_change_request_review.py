@@ -35,6 +35,7 @@ from sqlalchemy import event as sa_event
 from sqlalchemy.exc import OperationalError
 
 from app import tasks
+from app.events import routes as event_routes
 from app.models import (
     EquipmentRequirement,
     EquipmentReservation,
@@ -50,6 +51,7 @@ SESSION_EXPIRED = "Your session is no longer valid. Please log in again."
 NOT_SAVED = ("The decision was not saved, so the change request and the event are unchanged. "
              "Please try again.")
 LIST_URL = "/api/events/change-requests"
+NOW = datetime(2026, 10, 28, 12, 0)
 
 # CV-SEED events. `organiser` and `coordinator` refer to seed_data USERS keys.
 EVENTS = [
@@ -106,6 +108,11 @@ class ReviewTestCase(AppTestCase):
         patcher = mock.patch.object(tasks.send_notification_email, "delay")
         self.email = patcher.start()
         self.addCleanup(patcher.stop)
+        # "Now" is fixed before CV-SEED's events and B2's hold expiry (A3, SCRUM-46 A11),
+        # whatever the date the suite runs.
+        clock = mock.patch.object(event_routes, "singapore_now", return_value=NOW)
+        clock.start()
+        self.addCleanup(clock.stop)
 
     def _seed_arrangements(self):
         v1, v2, alice, hana = (self.events["V1"], self.events["V2"], self.users["alice"],
@@ -829,7 +836,7 @@ SAFETY_FIELDS = ("safety_decision", "safety_decided_by_id", "safety_comment",
                  "safety_decided_at")
 
 
-class SafetyCheckTests(ReviewTestCase):
+class SafetyTestCase(ReviewTestCase):
     def setUp(self):
         super().setUp()
         self.officer = self.make_user(role="safety_officer")
@@ -847,6 +854,9 @@ class SafetyCheckTests(ReviewTestCase):
         row = self.db.session.get(Event, self.events[key].id)
         return tuple(getattr(row, name) for name in SAFETY_FIELDS)
 
+
+
+class SafetyCheckTests(SafetyTestCase):
     # TC-70-33 · AC11, AC2
     def test_tc_70_33_the_review_says_accepting_clears_the_safety_check(self):
         self.seed_request("N1")
@@ -928,3 +938,56 @@ class SafetyCheckTests(ReviewTestCase):
 
         self.assertEqual(response.status_code, 503, response.get_json())
         self.assertEqual(self.safety_of(), before)
+
+
+# ---------- AC1, AC11: a change to a confirmed event ----------
+
+
+class ConfirmedEventTests(SafetyTestCase):
+    def setUp(self):
+        super().setUp()
+        self.decide_safety("approved")
+        self.events["V1"].status = "confirmed"
+        self.events["V1"].confirmed_by_id = self.users["alice"].id
+        self.events["V1"].confirmed_at = datetime(2026, 11, 2, 2, 0)
+        self.db.session.commit()
+
+    # TC-70-37 · AC1, AC11
+    def test_tc_70_37_accepting_returns_a_confirmed_event_to_approved(self):
+        self.seed_request("N1")
+        self.assertIs(self.review("N1")["can_decide"], True)
+
+        body = self.decided("N1", "accept")
+
+        self.db.session.expire_all()
+        event = self.db.session.get(Event, self.events["V1"].id)
+        self.assertEqual((event.status, event.expected_attendance), ("approved", 250))
+        self.assertEqual(self.safety_of(), (None, None, None, None))
+        # The record that it was confirmed once is kept.
+        self.assertEqual(event.confirmed_by_id, self.users["alice"].id)
+        self.assertIn("no longer confirmed", body["message"])
+        self.assertIn(SAFETY_CHECK_CLEARED, body["message"])
+        [note] = self.notifications("dana", "change_request_accepted")
+        self.assertIn("no longer confirmed", note.message)
+
+    # TC-70-37 · AC11
+    def test_tc_70_37_rejecting_keeps_a_confirmed_event_confirmed(self):
+        self.seed_request("N1")
+
+        body = self.decided("N1", "reject", REASON)
+
+        self.assertEqual(self.saved_event()["status"], "confirmed")
+        self.assertEqual(self.safety_of()[0], "approved")
+        self.assertNotIn("no longer confirmed", body["message"])
+        [note] = self.notifications("dana", "change_request_rejected")
+        self.assertNotIn("no longer confirmed", note.message)
+
+    # TC-70-37 · AC11
+    def test_tc_70_37_an_approved_event_is_not_said_to_be_unconfirmed(self):
+        self.events["V1"].status = "approved"
+        self.db.session.commit()
+        self.seed_request("N1")
+
+        body = self.decided("N1", "accept")
+
+        self.assertNotIn("no longer confirmed", body["message"])

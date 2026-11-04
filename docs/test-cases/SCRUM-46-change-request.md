@@ -8,7 +8,7 @@
 
 | ID | Criterion |
 |----|-----------|
-| AC1 | I can request a change only for my own events whose status is Approved. |
+| AC1 | I can request a change only for my own events whose status is Approved or Confirmed, until the event starts. *(Reopened 4 Nov 2026: Confirmed and the start cut-off added, CF19.)* |
 | AC2 | I can propose new values for the permitted fields: date, time, expected attendance, venue requirements and equipment requirements. |
 | AC3 | Each request records the event, the affected fields and the proposed values. |
 | AC4 | If a change is disallowed or invalid (for example, negative attendance or an end time before the start time), submission is blocked and the reason is shown. |
@@ -20,7 +20,7 @@
 
 ## Working assumptions (to confirm)
 
-- **A1 — Who and which events:** the event's organiser (`organiser` role, `event.organiser_id`), for an event whose status is `approved`. Everyone else gets HTTP 403 without the event's details. Other statuses are refused with 409 naming the status. The story's title says "Submitted Event" but AC1 says Approved; AC1 is built. *(Q1)*
+- **A1 — Who and which events:** the event's organiser (`organiser` role, `event.organiser_id`), for an event whose status is `approved` or `confirmed` (`CHANGEABLE_STATUSES`; `confirmed` added when AC1 was reopened). Everyone else gets HTTP 403 without the event's details. Other statuses are refused with 409 naming the status. The story's title says "Submitted Event" but AC1 says Approved; AC1 is built. *(Q1)*
 - **A2 — The permitted fields:** "date" and "time" are the event's start and end (`start_time`, `end_time`, Singapore time, `YYYY-MM-DDTHH:MM`); expected attendance is `expected_attendance`; venue requirements is `venue_requirements`; equipment requirements is the organiser's note `equipment_requirements` (the text they wrote in their request, SCRUM-29), **not** SCRUM-42's structured list, which the coordinator records. Any other field, such as the venue, the title or whether registration is needed, is *disallowed*: 422 saying it can't be changed through a change request. *(Q2, Q3)*
 - **A3 — What a request contains:** only the fields whose proposed value differs from the event's current value; a value equal to the current one is ignored, as in SCRUM-52. A request with no actual change is refused (422). The body is flat, `{"start_time": …, "expected_attendance": …}`, the same shape as SCRUM-52's `requires_review.requested`.
 - **A4 — Valid values:** the same rules as an organiser's request (SCRUM-29): times are valid `YYYY-MM-DDTHH:MM` values and the end must be after the start, checked on the start and end the event would have if the change were accepted (a proposed end is compared with the current start when only the end changes); attendance is a whole number of at least 1; venue requirements can't be blank (they are required for a request); equipment requirements may be blank, meaning none. Text is at most 5,000 characters. Past dates are not refused, as in SCRUM-29. Every problem is named at once (`fields`). *(Q4)*
@@ -29,6 +29,7 @@
 - **A7 — What is recorded:** a new `event_change_requests` row (`db/event_change_requests.sql`): the event, who asked and when, status `pending_review` (shown as "Pending Review"), and `changes` as `{field: {"from": current value, "to": proposed value}}`, so the reviewer sees both. The event row is not changed. *(AC3, AC7)*
 - **A8 — Notification:** the event's coordinator gets an in-app notification (`change_requested`) naming each field with its current and proposed value, saved in the same commit as the request, then an email. If the email can't be queued the request still stands and the reply says `email_queued: false`.
 - **A9 — Order of checks:** 401 (no valid user) → 404 (no such event) → 403 (not the event's organiser) → 400 (body isn't a JSON object) → 409 (not approved → no coordinator → a request already pending) → 422 (disallowed or invalid fields, or no change) → 503 (not saved, `retryable: true`). The event's state is checked before its fields, as for drafts (SCRUM-29) and reservations (SCRUM-44).
+- **A11 — Until the event starts (AC1, added 4 Nov 2026):** once the event's start time has been reached (Singapore time, `start <= now`), the form says so and a request is refused with 409 `started`: "This event has already started, so changes can no longer be requested." One minute before the start is allowed. The checks run in the order `not_approved`, `no_coordinator`, `started`, `pending`. An event with no start recorded is not refused on this ground. *(Q8)*
 - **A10 — Deciding a request:** approving or rejecting a change request, and applying it, are not part of this story. *(Q6)*
 
 ## Seed data (CR-SEED)
@@ -231,7 +232,7 @@ Also: `explains a failed load and offers Retry`; `does not send a request that c
 
 | AC | Test cases |
 |----|------------|
-| AC1 | 01, 02, 03, 21, 24, 27 |
+| AC1 | 01, 02, 03, 21, 24, 27, 31, 32, 33 |
 | AC2 | 01, 04, 05, 06, 11, 21, 22 |
 | AC3 | 04, 05, 07 |
 | AC4 | 06, 08, 09, 10, 11, 23 |
@@ -251,4 +252,23 @@ Also: `explains a failed load and offers Retry`; `does not send a request that c
 | Q4 | Should a proposed date in the past be refused? | A4 |
 | Q5 | May an organiser have more than one change request pending for an event, or withdraw one? Until requests can be decided, an event can only ever take one. | A6, TC-46-14 |
 | Q6 | Who decides a change request (the event's coordinator?), and is the event updated automatically when it is approved? | A10 |
+| Q8 | Is "until the event starts" measured against the event's start time (as built), or should requests close earlier, for example when registration closes? | A11, TC-46-32 |
 | Q7 | SCRUM-52 tells the **coordinator** to submit a change request for restricted fields, but AC1 lets only the **organiser** submit one. Should the coordinator also be able to submit one for the events they coordinate? | A1; SCRUM-52 B7 |
+
+## AC1 reopened — confirmed events, until the event starts (4 Nov 2026)
+
+**TC-46-31 · A confirmed event can take a request**
+- **Traces to:** AC1, AC7 · **Type:** Positive · **Depends on:** A1
+- **Steps:** Set C1 to confirmed; open the form as dana and request an attendance of 250.
+- **Expected result:** The form allows a request; it is saved as `pending_review` with the change; C1 is still confirmed.
+- **Automated:** `test_tc_46_31_a_confirmed_event_can_take_a_request`
+
+**TC-46-32 · No request once the event has started**
+- **Traces to:** AC1 · **Type:** Boundary · **Depends on:** A11
+- **Steps:** With "now" at C1's start (2026-12-05 18:00) and during it (20:00), open the form and submit. Then at 17:59. Then open C2's (submitted) form after it starts.
+- **Expected result:** At and after the start: `can_request` false, `blocked_reason` `started`, 409 `started`, nothing saved or notified. At 17:59 the request is saved. C2 is refused as `not_approved` ("approved or confirmed"), which is checked first.
+- **Automated:** `test_tc_46_32_no_request_once_the_event_has_started`, `test_tc_46_32_a_request_one_minute_before_the_start_is_allowed`, `test_tc_46_32_the_status_is_checked_before_the_start`
+
+**TC-46-33 · Confirmed requests link to the form** — AC1 · `MyEventRequestsPage` "offers a change request for a confirmed event"
+
+**Test baseline change (Definition of Done 5).** The start cut-off makes these tests depend on the date, and CR-SEED's events start in December 2026, so the API tests now fix "now" at 2026-10-27 12:00 (SCRUM-70's at 2026-10-28 12:00) in `setUp`. No existing assertion changed. Before this, SCRUM-70's impact cases also depended on the real date (hold B2 expires 2026-11-30).
