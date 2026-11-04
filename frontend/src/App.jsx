@@ -14,6 +14,7 @@ import EventDetailsPage from "./pages/EventDetailsPage.jsx";
 import EventPlanningPage from "./pages/EventPlanningPage.jsx";
 import EventRegistrationPage from "./pages/EventRegistrationPage.jsx";
 import EventRegistrationsPage from "./pages/EventRegistrationsPage.jsx";
+import EventsCalendarPage from "./pages/EventsCalendarPage.jsx";
 import EventsPage from "./pages/EventsPage.jsx";
 import LeadAssignedEventsPage from "./pages/LeadAssignedEventsPage.jsx";
 import LoginPage from "./pages/LoginPage.jsx";
@@ -67,6 +68,8 @@ const NAV_LINKS = [
   ["/events/safety-checks", "Safety checks", ["safety_officer"]],
   ["/venues", "Venues", ["coordinator", "venue_staff"]],
   ["/venues/availability", "Venue availability", ["coordinator", "venue_staff"]],
+  // CF09: one calendar of all events, for planning.
+  ["/events/calendar", "Events calendar", ["coordinator", "venue_staff", "tech_staff"]],
   ["/venues/search", "Venue search", ["coordinator"]],
   ["/venues/bookings", "Venue booking requests", ["venue_staff"]],
   ["/venues/holds", "Tentative holds", ["venue_staff"]],
@@ -142,6 +145,7 @@ export default function App() {
           <Route path="/events/review-requests" element={<ReviewRequestsPage />} />
           <Route path="/events/change-requests" element={<ChangeRequestsToReviewPage />} />
           <Route path="/events/safety-checks" element={<SafetyCheckQueuePage />} />
+          <Route path="/events/calendar" element={<EventsCalendarPage />} />
           <Route path="/events/:eventId" element={<EventDetailsPage />} />
           <Route path="/events/:eventId/planning" element={<EventPlanningPage />} />
           <Route path="/events/:eventId/review" element={<ReviewRequestPage />} />

@@ -757,6 +757,82 @@ def _availability(venue, first, last):
     }
 
 
+# ---------- One calendar of all events, for planning (CF09) ----------
+
+# CF09: "Coordinators and Venue and Technical Support Staff also need one calendar showing
+# all events, for planning." (A1)
+CALENDAR_ROLES = {"coordinator", "venue_staff", "tech_staff"}
+# Events with a plan to show: from submission until cancellation or rejection (A2).
+CALENDAR_EVENT_STATUSES = {"submitted", "under_review", "approved", "confirmed"}
+# The bookings that hold, or may yet hold, a venue for the event (A3).
+CALENDAR_BOOKING_STATUSES = {"pending", scheduling.TENTATIVE_STATUS,
+                             scheduling.BLOCKING_BOOKING_STATUS}
+
+
+def _calendar_entry(event, bookings, venues, coordinators, user, now):
+    listed = [booking for booking in bookings
+              if scheduling.current_status(booking, now) in CALENDAR_BOOKING_STATUSES]
+    coordinator = coordinators.get(event.coordinator_id)
+    return {
+        "id": event.id,
+        "title": event.title,
+        "status": event.status,
+        "start_time": event.start_time.isoformat(),
+        "end_time": event.end_time.isoformat(),
+        "venues": [{"id": booking.venue_id, "name": venues[booking.venue_id].name,
+                    "booking_status": booking.status,
+                    "start_time": booking.start_time.isoformat(),
+                    "end_time": booking.end_time.isoformat()} for booking in listed],
+        "coordinator": ({"id": coordinator.id, "email": coordinator.email}
+                        if coordinator else None),
+        # Only the event's coordinator can open its planning view (SCRUM-34).
+        "managed": is_current_coordinator(user, event),
+    }
+
+
+@venues_bp.get("/calendar")
+@jwt_required()
+def events_calendar():
+    """CF09: every event with a plan whose time overlaps the chosen days (Singapore time),
+    soonest first, with the venues booked or requested for it (A1-A4). The same range rules
+    as a venue's calendar: `from`, optional `to`, at most MAX_RANGE_DAYS days."""
+    try:
+        user = _require_viewer(CALENDAR_ROLES,
+                               "Only coordinators, Venue Staff and Technical Support Staff "
+                               "can view the events calendar.")
+        first, last = _date_range(request.args)
+        start = datetime.combine(first, time.min)
+        end = datetime.combine(last + timedelta(days=1), time.min)
+        events = (Event.query
+                  .filter(Event.status.in_(CALENDAR_EVENT_STATUSES),
+                          Event.start_time < end, Event.end_time > start)
+                  .order_by(Event.start_time, Event.id).all())
+        ids = [event.id for event in events]
+        bookings = (VenueBooking.query
+                    .filter(VenueBooking.event_id.in_(ids),
+                            VenueBooking.status.in_(CALENDAR_BOOKING_STATUSES))
+                    .order_by(VenueBooking.start_time, VenueBooking.id).all() if ids else [])
+        venue_ids = {booking.venue_id for booking in bookings}
+        venues = ({venue.id: venue for venue in Venue.query.filter(Venue.id.in_(venue_ids))}
+                  if venue_ids else {})
+        coordinator_ids = {event.coordinator_id for event in events if event.coordinator_id}
+        coordinators = ({row.id: row for row in User.query.filter(User.id.in_(coordinator_ids))}
+                        if coordinator_ids else {})
+        by_event = {}
+        for booking in bookings:
+            by_event.setdefault(booking.event_id, []).append(booking)
+        now = singapore_now()
+        items = [_calendar_entry(event, by_event.get(event.id, []), venues, coordinators,
+                                 user, now) for event in events]
+    except _Rejected as rejected:
+        return _error(rejected.message, rejected.status_code)
+    except SQLAlchemyError:
+        # A partial list could hide a clash, so any failure fails the lot.
+        return _load_failed("The events calendar could not be loaded. Please try again.")
+    return jsonify({"from": first.isoformat(), "to": last.isoformat(), "events": items,
+                    "message": None if items else "No events are planned for these dates."})
+
+
 @venues_bp.get("/<int:venue_id>/availability")
 @jwt_required()
 def check_availability(venue_id: int):
