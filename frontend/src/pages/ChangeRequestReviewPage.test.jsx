@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import apiClient from "../api/client.js";
 import ChangeRequestReviewPage from "./ChangeRequestReviewPage.jsx";
 
-// Frontend cases TC-70-26 to TC-70-30 in docs/test-cases/SCRUM-70-review-change-request.md.
+// Frontend cases TC-70-26 to TC-70-30 and TC-70-33 in docs/test-cases/SCRUM-70-review-change-request.md.
 // The API is covered by backend/tests/test_change_request_review.py; responses mirror its
 // contract:
 //   GET  /events/<id>/change-requests/<rid> -> { event: { id, title, status, organiser },
@@ -16,7 +16,9 @@ import ChangeRequestReviewPage from "./ChangeRequestReviewPage.jsx";
 //     requested_by, requested_at, decided_at, decided_by, decision_reason }
 //   IMPACT = { venue_bookings: [{ id, venue, start_time, end_time, status, reasons }],
 //     equipment: [{ id, equipment_type, quantity, reserved, reasons }],
-//     registrations: { registered, capacity, reasons }, affected, message }
+//     registrations: { registered, capacity, reasons },
+//     safety_check?: { decision, reasons } (only when accepting would clear it, AC11),
+//     affected, message }
 
 vi.mock("../api/client.js", () => ({ default: { get: vi.fn(), post: vi.fn() } }));
 
@@ -103,6 +105,26 @@ describe("SCRUM-70 the coordinator reviews a change request", () => {
     expect(within(registrations).getByText(IMPACT.registrations.reasons[0])).toBeTruthy();
     expect(button("Accept")).toBeTruthy();
     expect(button("Reject")).toBeTruthy();
+  });
+
+  // TC-70-33 · AC11
+  it("says when accepting would clear the safety check", async () => {
+    const reason = "The Safety Officer approved the event's current arrangements. Accepting clears that approval, so the event needs a new safety check before it can be confirmed.";
+    apiClient.get.mockResolvedValue({ data: { ...REVIEW,
+      impact: { ...IMPACT, safety_check: { decision: "approved", reasons: [reason] } } } });
+    renderPage();
+
+    const safety = await screen.findByRole("region", { name: "Safety check affected" });
+    expect(within(safety).getByText(reason)).toBeTruthy();
+  });
+
+  // TC-70-33 · AC11
+  it("shows no safety check when there is no decision to clear", async () => {
+    apiClient.get.mockResolvedValue({ data: REVIEW });
+    renderPage();
+
+    await screen.findByRole("region", { name: "Venue bookings affected" });
+    expect(screen.queryByRole("region", { name: "Safety check affected" })).toBeNull();
   });
 
   // TC-70-26 · AC2

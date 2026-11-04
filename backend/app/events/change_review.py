@@ -21,6 +21,15 @@ LIVE_BOOKING_STATUSES = {"pending", "confirmed"}
 TENTATIVE = "tentative"
 NOTHING_AFFECTED = ("Nothing recorded for this event is affected by these changes: no venue "
                     "bookings, equipment or registrations.")
+# AC2, A2: every field a change request can change is significant, so accepting any of
+# them clears the event's safety decision (AC11).
+SIGNIFICANT_FIELDS = frozenset(PERMITTED_FIELDS)
+SAFETY_APPROVAL_CLEARED = ("The Safety Officer approved the event's current arrangements. "
+                           "Accepting clears that approval, so the event needs a new safety "
+                           "check before it can be confirmed.")
+SAFETY_DECISION_CLEARED = ("The Safety Officer's decision was made on the event's current "
+                           "arrangements. Accepting clears it, so the event goes back on the "
+                           "safety check list once its arrangements are ready.")
 
 
 class Refused(Exception):
@@ -57,6 +66,11 @@ def parse_decision(body):
                       f"{REASON_MAX_LENGTH} characters, so remove "
                       f"{len(reason) - REASON_MAX_LENGTH:,} and try again.", "reason")
     return REJECTED, reason
+
+
+def is_significant(changes):
+    """Whether accepting the request clears the event's safety decision (AC11)."""
+    return any(name in SIGNIFICANT_FIELDS for name in changes)
 
 
 def changes_times(changes):
@@ -133,13 +147,21 @@ def _registration_reasons(registration, changes):
     return reasons
 
 
-def impact(changes, bookings, equipment, registration, now):
+def _safety_reasons(safety_decision, changes):
+    if safety_decision is None or not is_significant(changes):
+        return []
+    return [SAFETY_APPROVAL_CLEARED if safety_decision == "approved"
+            else SAFETY_DECISION_CLEARED]
+
+
+def impact(changes, bookings, equipment, registration, now, safety_decision=None):
     """Which of the event's live arrangements the changes affect, each with why (A3).
 
     `changes` is the request as stored; `bookings` the event's venue bookings, each with
     its venue's id, name and capacity; `equipment` its equipment requirements with the
     quantity reserved for each; `registration` the number registered, the places set and
-    when registration closes; `now` the current Singapore time, for holds.
+    when registration closes; `now` the current Singapore time, for holds;
+    `safety_decision` the event's recorded safety decision, if any (AC11).
     """
     venue_bookings = []
     for booking in bookings:
@@ -161,11 +183,17 @@ def impact(changes, bookings, equipment, registration, now):
     registrations = {"registered": registration["registered"],
                      "capacity": registration["capacity"],
                      "reasons": _registration_reasons(registration, changes)}
-    affected = bool(venue_bookings or affected_equipment or registrations["reasons"])
+    safety_reasons = _safety_reasons(safety_decision, changes)
+    safety_check = ({"decision": safety_decision, "reasons": safety_reasons}
+                    if safety_reasons else None)
+    affected = bool(venue_bookings or affected_equipment or registrations["reasons"]
+                    or safety_check)
     return {
         "venue_bookings": venue_bookings,
         "equipment": affected_equipment,
         "registrations": registrations,
+        # Only when there is a safety decision to clear, so other reviews keep their payload.
+        **({"safety_check": safety_check} if safety_check else {}),
         "affected": affected,
         "message": None if affected else NOTHING_AFFECTED,
     }

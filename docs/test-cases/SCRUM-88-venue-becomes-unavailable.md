@@ -26,6 +26,7 @@
 - **A7 — The event (AC4):** an affected event whose status is `confirmed` goes back to `approved`, which is the Planning stage (SCRUM-92 A2). Nothing else about it changes, including the confirmation audit fields. An event in any other status keeps it. The event's planning view shows `flag` on the booking and `change_review: {needed: true, reason}` on the event while a booking is flagged; both keys are left out otherwise, as `safety_check` is.
 - **A8 — New bookings (AC5):** a request inside the period is refused up front with `409 reason: "conflict"`, naming the unavailable period and its reason in the message; a request that starts exactly when the period ends is allowed; other venues are unaffected. A pending request that is already waiting cannot be approved inside the period (SCRUM-41 conflict check).
 - **A10 — Pending requests and holds (added 3 Nov 2026):** they are not flagged (A3), but they can no longer be approved or confirmed inside the period, so each affected event's coordinator is told now rather than when that fails: one in-app notification per event (kind `venue_unavailable_request`) naming the venue, the period, the reason and each request's times and whether it is pending or on hold, saved in the same commit, with the email queued afterwards. Expired holds, rejected and cancelled requests are not mentioned. The response lists them as `requests_warned`. Nothing about the requests changes. *(Q1)*
+- **A11 — The safety check starts again (team assumption, added 4 Nov 2026):** the event's safety decision was made on a venue it can no longer use, so recording the period clears the safety decision of every affected event, whether Confirmed or not (`app/events/safety.py`, as SCRUM-70 AC11 does for an accepted change), and the coordinator's notification adds "Its safety check was cleared, so it needs a new safety check once a replacement venue is confirmed." A flagged booking also stops counting towards covering the event: the event leaves the Safety Officer's list (SCRUM-90 AC1) and can't be confirmed (SCRUM-93 AC2, missing "Replacement for an unavailable venue") until other confirmed bookings cover its whole period, for example an approved replacement (SCRUM-89). Without this, an event could be re-confirmed on the unavailable venue with its old safety approval. *(Q2)*
 - **A9 — All or nothing:** the period, the flags, the notifications and the event status changes are saved in one transaction. If any part fails, nothing is saved and the reply is 503 (retryable).
 
 ## Test cases
@@ -61,6 +62,16 @@
 | TC27 | `test_tc27_an_event_coordinator_cannot_record_a_period`; frontend | 403, nothing changes, no action shown |
 | TC28 | `test_tc28_an_attendee_cannot_record_a_period` | 403 |
 | TC29 | `test_tc29_a_second_venue_staff_user_can_record_a_period` | The role, not one user |
+| TC-88-A11-01 | `test_tc_88_a11_01_a_confirmed_event_loses_its_safety_approval` | Approved, safety decision empty, confirmation record kept, coordinator told |
+| TC-88-A11-02 | `test_tc_88_a11_02_an_approved_event_loses_a_negative_decision_too` | Changes requested is cleared too |
+| TC-88-A11-03 | `test_tc_88_a11_03_an_event_with_no_safety_decision_is_not_told_about_one` | No safety sentence |
+| TC-88-A11-04 | `test_tc_88_a11_04_an_event_at_another_venue_keeps_its_safety_approval` | Unaffected event unchanged |
+| TC-88-A11-05 | `test_tc_88_a11_05_a_flagged_booking_takes_the_event_off_the_safety_list` | Off the SCRUM-90 list |
+| TC-88-A11-06 | `test_tc_88_a11_06_another_confirmed_booking_puts_it_back_on_the_list` | Back once covered |
+| TC-88-A11-07 | `test_tc_88_a11_07_confirming_asks_for_a_replacement_venue` | 409, missing "Replacement for an unavailable venue" |
+| TC-88-A11-08 | `test_tc_88_a11_08_with_a_replacement_and_a_new_safety_check_it_can_be_confirmed` | Confirmed again |
+| TC-88-A11-09 | `test_tc_88_a11_09_a_gap_not_caused_by_a_flag_still_asks_for_a_booking` | "Confirmed venue booking" as before |
+| TC-88-A11-10 | `test_tc_88_a11_10_an_event_without_times_still_asks_for_a_booking` | As before |
 
 Extra cases: bad formats and non-text values; every problem named at once; unknown field; reason over 500 characters; periods listed per venue in time order; 404 before 403; 401 without a session or for a deleted user; a booking that has already ended is not flagged; a booking overlapped by two periods is listed once; a cancelled booking leaves the list; the empty list says so; only Venue Staff can list; the list reports 503; a coordinator with two affected events is told about each; the period is saved even when the email cannot be queued; other event statuses are left alone; the planning view of an unaffected event has no flag; a pending request cannot be approved inside a new period; venue search does not offer the venue inside the period; a failed save of the flags or the notifications saves nothing, and a retry works.
 
@@ -69,6 +80,7 @@ Extra cases: bad formats and non-text values; every problem named at once; unkno
 | ID | Question | Affects |
 |---|---|---|
 | Q1 | Should a coordinator with a pending venue request or a tentative hold inside a new unavailable period be told when the period is recorded? **Assumed yes (A10)**: they are warned, but the request is neither flagged nor changed. | A10; `RequestWarningTests` |
+| Q2 | When a venue becomes unavailable, must the event pass a new safety check on its replacement venue? **Assumed yes (A11, team assumption)**: its safety decision is cleared and the flagged booking no longer counts towards confirmation. | A11; `test_venue_unavailable_safety.py` |
 
 ## Before merging
 

@@ -17,6 +17,8 @@
 | AC7 | The organiser is notified of the decision. |
 | AC8 | Accepting a request applies the proposed values to the event, and the event shows the new values. |
 | AC9 | When an accepted change alters the date, time or venue, every attendee registered for the event is notified of the new details. Unregistered attendees are not notified. |
+| AC10 | Accepting a change keeps the event's venue bookings but flags those affected for me to decide on, and releases reserved equipment when the date or time changes. Nothing is cancelled automatically. *(Flagging: not built yet.)* |
+| AC11 | Accepting a significant change to a Confirmed event clears its safety approval and returns it to Approved, so it needs a new safety check and confirmation. |
 
 ## Working assumptions (to confirm)
 
@@ -38,6 +40,7 @@
   - Notifications are saved in the same commit as the decision. Emails are queued afterwards; if one can't be queued the decision stands, no further emails are tried, and the reply says `email_queued: false`.
 - **A8 — Order of checks:** 401 (no valid user) → 404 (no such event, or no such request for it) → 403 (not the event's current coordinator) → 400 (body not a JSON object, decision missing or unknown, reason missing, blank or too long) → 409 (`decided`, then `not_approved`) → 503 (not saved, `retryable: true`). The event, then the request, are read `FOR UPDATE`, as submitting a request locks the event, so a decision and a new request, or two decisions, happen one at a time.
 - **A9 — Waiting for a coordinator (AC5):** SCRUM-46 already blocks submission when the event has no current coordinator (409 `no_coordinator`). Its message now says the event is waiting for a coordinator: "This event is waiting for a coordinator to be assigned, so there is nobody to review a change request yet. Please try again once a coordinator is assigned."
+- **A11 — Clearing the safety decision (AC11, added 4 Nov 2026):** every field a change request can change is significant (A2), so accepting any request clears the event's safety decision in the same commit as the decision (`app/events/safety.py`): `safety_decision`, who made it, the comment and when all become empty, and a Confirmed event goes back to `approved`. Who confirmed it and when are kept. The event then reappears on the Safety Officer's list once its arrangements are ready (SCRUM-90), and confirmation asks for a new "Approved safety check" (SCRUM-93). A rejection or a request for changes is cleared too, since it was also made on the old arrangements *(Q8)*. Before deciding, the review lists the safety check as affected (`impact.safety_check`, only when there is a decision to clear) and the reply to an accepted request says the safety check was cleared. A rejected request keeps the decision. Change requests can only be decided on approved events today, so the Confirmed case is reached once SCRUM-46 accepts requests on confirmed events.
 - **A10 — Finding requests:** the coordinator's "Change requests to review" page lists the pending requests of the events they currently coordinate, oldest first, each linking to its review page.
 
 ## Seed data (CV-SEED)
@@ -245,6 +248,34 @@ V1 has at most one pending request at a time (SCRUM-46 A6), so each test seeds T
 - **Expected result:** No `event_details_changed` notification and no email to farah, gail or hugo either time.
 - **Automated:** `test_tc_70_25_no_attendee_is_told_when_the_times_do_not_change`
 
+## AC11 — Accepting a significant change clears the safety decision
+
+**TC-70-33 · The review says accepting would clear the safety check**
+- **Traces to:** AC11, AC2 · **Type:** Positive · **Depends on:** A11
+- **Steps:** Open N1's review as alice with V1 having no safety decision, then with an approved one, then with changes requested.
+- **Expected result:** With no decision, `impact` has no `safety_check`. With an approval, `impact.safety_check` is `{decision: "approved", reasons: [...]}` saying accepting clears the approval and the event needs a new safety check before it can be confirmed, and `affected` is true. With changes requested, the reason says it goes back on the safety check list.
+- **Automated:** `test_tc_70_33_the_review_says_accepting_clears_the_safety_check`; frontend `says when accepting would clear the safety check`, `shows no safety check when there is no decision to clear`
+
+**TC-70-34 · Accepting clears an approved safety check**
+- **Traces to:** AC11 · **Type:** Positive · **Depends on:** A11
+- **Steps:** With V1's safety check approved, accept N1, then try to confirm V1 as alice.
+- **Expected result:** V1's safety decision, officer, comment and time are empty and it is approved; the reply says "Its safety check was cleared, so it needs a new safety check before it can be confirmed."; confirming is refused (409) with "Approved safety check" missing.
+- **Automated:** `test_tc_70_34_accepting_clears_an_approved_safety_check`
+
+**TC-70-35 · Accepting clears a negative safety decision too**
+- **Traces to:** AC11 · **Type:** Business rule · **Depends on:** A11
+- **Steps:** With changes requested on V1's safety check, accept S1.
+- **Expected result:** The decision is cleared and the reply says so.
+- **Automated:** `test_tc_70_35_accepting_clears_a_negative_safety_decision_too`
+
+**TC-70-36 · Rejecting, no decision, or a failed save leave the safety decision alone**
+- **Traces to:** AC11, AC6 · **Type:** Negative · **Depends on:** A11
+- **Steps:** Reject T1 while V1's safety check is approved. Separately, accept N1 with no safety decision. Separately, accept N1 while saving the event fails.
+- **Expected result:** Rejecting keeps the approval and says nothing about it; accepting with no decision says nothing about a safety check; the failed save (503) keeps the approval.
+- **Automated:** `test_tc_70_36_rejecting_keeps_the_safety_decision`, `test_tc_70_36_accepting_with_no_safety_decision_says_nothing_about_it`, `test_tc_70_36_a_failed_save_keeps_the_safety_decision`
+
+The clearing rule itself, on plain values: `test_safety_unit.py` (`ClearSafetyDecisionTests`), and which changes are significant and what the review says: `SafetyRuleTests` in `test_change_request_review_unit.py`.
+
 ## The rules without a database (`test_change_request_review_unit.py`)
 
 The impact rules on plain values (A3): which bookings each kind of change affects and why, venue capacity against the new attendance, registrations above it, registration closing after the new start, reserved equipment on a time change, and the "nothing affected" case; the decision and reason rules (A4, A5); and the values an accepted request applies (A6). **Automated:** `ImpactRuleTests`, `DecisionRuleTests`, `AppliedValueTests`.
@@ -284,6 +315,8 @@ Also: failed loads explain themselves and offer Retry on both pages.
 | AC7 | 19, 20 |
 | AC8 | 21, 22, 23, 27 |
 | AC9 | 24, 25 |
+| AC10 | 23 (bookings kept, equipment released; flagging not built yet) |
+| AC11 | 33, 34, 35, 36 |
 
 ## Open questions for the customer
 
@@ -296,3 +329,4 @@ Also: failed loads explain themselves and offer Retry on both pages.
 | Q5 | May a coordinator still reject a pending request after the event is cancelled (as built: no; it stays pending)? | A1, TC-70-03 |
 | Q6 | May a coordinator accept part of a request? | A4 |
 | Q7 | Should registered attendees also be told of other accepted changes, such as the venue requirements? | A7, TC-70-25 |
+| Q8 | AC11 names the safety *approval*. Should accepting a change also clear a rejection or a request for changes, so the event goes back on the safety check list (as built), or should those stay until the coordinator's correction is otherwise recorded? | A11, TC-70-35 |

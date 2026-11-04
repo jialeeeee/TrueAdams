@@ -297,3 +297,7 @@ npm.cmd test -- src/pages/SafetyCheckQueuePage.test.jsx --reporter=dot
 **Actual:** 1 file, 4 tests passed, 0 failed; test time 378 ms, total duration 1.76 seconds; exit 0. Frontend production/test files were unchanged in this correction.
 
 All four Jira ACs remain verbatim. No additional eligibility/status rule, booking workflow change, shared test infrastructure change, schema/migration, dependency or feature was introduced. No Supabase/remote/shared database access occurred. PostgreSQL fixture rows were rolled back. The full suite and CI were not run; the CI workflow's standard `TEST_DATABASE_URL` now supplies the test without the old opt-in skip. No commit, push or PR was created. **No known remaining SCRUM-90 AC issue.**
+
+## Flagged bookings (added 4 Nov 2026)
+
+A confirmed booking flagged because its venue became unavailable (SCRUM-88) does not count towards covering the event, so the event leaves the list until other confirmed bookings cover it (SCRUM-88 A11). **Automated:** `test_tc_88_a11_05_a_flagged_booking_takes_the_event_off_the_safety_list`, `test_tc_88_a11_06_another_confirmed_booking_puts_it_back_on_the_list`.

@@ -202,3 +202,48 @@ class AppliedValueTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SafetyRuleTests(unittest.TestCase):
+    """AC11, A11: accepting a significant change clears the event's safety decision, and
+    the review says so before deciding."""
+
+    def impact(self, changes, safety_decision):
+        return _review().impact(changes, [], [], registration(), NOW,
+                                safety_decision=safety_decision)
+
+    def test_every_field_a_request_can_change_is_significant(self):
+        review = _review()
+        for name in ("start_time", "end_time", "expected_attendance", "venue_requirements",
+                     "equipment_requirements"):
+            with self.subTest(field=name):
+                self.assertIs(review.is_significant({name: {"from": None, "to": None}}), True)
+        self.assertIs(review.is_significant({}), False)
+        self.assertIs(review.is_significant({"title": {"from": "a", "to": "b"}}), False)
+
+    def test_an_approved_safety_check_is_listed_as_affected(self):
+        impact = self.impact({"expected_attendance": {"from": 200, "to": 250}}, "approved")
+
+        self.assertEqual(impact["safety_check"],
+                         {"decision": "approved",
+                          "reasons": [_review().SAFETY_APPROVAL_CLEARED]})
+        self.assertIs(impact["affected"], True)
+        self.assertIsNone(impact["message"])
+
+    def test_a_negative_safety_decision_is_listed_as_affected(self):
+        for decision in ("rejected", "changes_requested"):
+            with self.subTest(decision=decision):
+                impact = self.impact(TIMES, decision)
+                self.assertEqual(impact["safety_check"]["decision"], decision)
+                self.assertEqual(impact["safety_check"]["reasons"],
+                                 [_review().SAFETY_DECISION_CLEARED])
+
+    def test_no_safety_decision_adds_nothing(self):
+        impact = self.impact({"expected_attendance": {"from": 200, "to": 250}}, None)
+
+        self.assertNotIn("safety_check", impact)
+        self.assertIs(impact["affected"], False)
+        self.assertEqual(impact["message"], _review().NOTHING_AFFECTED)
+
+    def test_a_change_with_nothing_significant_keeps_the_decision(self):
+        self.assertNotIn("safety_check", self.impact({}, "approved"))

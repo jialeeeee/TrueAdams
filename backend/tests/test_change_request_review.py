@@ -819,3 +819,112 @@ class AttendeeNotificationTests(ReviewTestCase):
             self.assertEqual(self.notifications(user), [])
             self.assertNotIn(self.users[user].email, self.emailed())
         self.assertEqual(accepted["notification"]["attendees_notified"], 0)
+
+
+# ---------- AC11: accepting a significant change clears the safety decision ----------
+
+SAFETY_CHECK_CLEARED = ("Its safety check was cleared, so it needs a new safety check before "
+                        "it can be confirmed.")
+SAFETY_FIELDS = ("safety_decision", "safety_decided_by_id", "safety_comment",
+                 "safety_decided_at")
+
+
+class SafetyCheckTests(ReviewTestCase):
+    def setUp(self):
+        super().setUp()
+        self.officer = self.make_user(role="safety_officer")
+
+    def decide_safety(self, decision="approved", key="V1"):
+        event = self.events[key]
+        event.safety_decision = decision
+        event.safety_decided_by_id = self.officer.id
+        event.safety_comment = "Exits and crowd flow checked."
+        event.safety_decided_at = datetime(2026, 11, 1, 2, 0)
+        self.db.session.commit()
+
+    def safety_of(self, key="V1"):
+        self.db.session.expire_all()
+        row = self.db.session.get(Event, self.events[key].id)
+        return tuple(getattr(row, name) for name in SAFETY_FIELDS)
+
+    # TC-70-33 · AC11, AC2
+    def test_tc_70_33_the_review_says_accepting_clears_the_safety_check(self):
+        self.seed_request("N1")
+        self.assertNotIn("safety_check", self.review("N1")["impact"])
+
+        self.decide_safety("approved")
+        approved = self.review("N1")["impact"]
+        self.assertEqual(approved["safety_check"]["decision"], "approved")
+        [reason] = approved["safety_check"]["reasons"]
+        self.assertIn("new safety check before it can be confirmed", reason)
+        self.assertIs(approved["affected"], True)
+
+        self.decide_safety("changes_requested")
+        requested = self.review("N1")["impact"]
+        self.assertEqual(requested["safety_check"]["decision"], "changes_requested")
+        self.assertIn("back on the safety check list", requested["safety_check"]["reasons"][0])
+
+    # TC-70-34 · AC11
+    def test_tc_70_34_accepting_clears_an_approved_safety_check(self):
+        self.decide_safety("approved")
+        self.seed_request("N1")
+
+        body = self.decided("N1", "accept")
+
+        self.assertEqual(self.safety_of(), (None, None, None, None))
+        self.assertEqual(self.saved_event()["status"], "approved")
+        self.assertIn(SAFETY_CHECK_CLEARED, body["message"])
+        confirm = self.client.post(f"/api/events/{self.events['V1'].id}/confirm",
+                                   headers=self.headers("alice"))
+        self.assertEqual(confirm.status_code, 409, confirm.get_json())
+        self.assertIn("Approved safety check", confirm.get_json()["missing"])
+
+    # TC-70-35 · AC11, A11
+    def test_tc_70_35_accepting_clears_a_negative_safety_decision_too(self):
+        self.decide_safety("changes_requested")
+        self.seed_request("S1")
+
+        body = self.decided("S1", "accept")
+
+        self.assertEqual(self.safety_of(), (None, None, None, None))
+        self.assertIn(SAFETY_CHECK_CLEARED, body["message"])
+
+    # TC-70-36 · AC11
+    def test_tc_70_36_rejecting_keeps_the_safety_decision(self):
+        self.decide_safety("approved")
+        before = self.safety_of()
+        self.seed_request("T1")
+
+        body = self.decided("T1", "reject", REASON)
+
+        self.assertEqual(self.safety_of(), before)
+        self.assertNotIn(SAFETY_CHECK_CLEARED, body["message"])
+
+    # TC-70-36 · AC11
+    def test_tc_70_36_accepting_with_no_safety_decision_says_nothing_about_it(self):
+        self.seed_request("N1")
+
+        body = self.decided("N1", "accept")
+
+        self.assertEqual(self.safety_of(), (None, None, None, None))
+        self.assertNotIn("safety check", body["message"])
+
+    # TC-70-36 · AC11
+    def test_tc_70_36_a_failed_save_keeps_the_safety_decision(self):
+        self.decide_safety("approved")
+        before = self.safety_of()
+        self.seed_request("N1")
+
+        def fail(conn, cursor, statement, parameters, context, executemany):
+            if statement.startswith("UPDATE events"):
+                raise OperationalError(statement, parameters, Exception("simulated outage"))
+
+        self.db.session.expire_all()
+        sa_event.listen(self.db.engine, "before_cursor_execute", fail)
+        try:
+            response = self.decide("N1", "accept")
+        finally:
+            sa_event.remove(self.db.engine, "before_cursor_execute", fail)
+
+        self.assertEqual(response.status_code, 503, response.get_json())
+        self.assertEqual(self.safety_of(), before)

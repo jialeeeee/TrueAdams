@@ -38,7 +38,8 @@ function Reasons({ reasons }) {
   );
 }
 
-// AC2: the venue bookings, equipment and registrations the change affects, and why.
+// AC2: the venue bookings, equipment, registrations and safety check the change
+// affects, and why.
 function Impact({ impact }) {
   const { venue_bookings: bookings, equipment, registrations } = impact;
   return (
@@ -75,6 +76,13 @@ function Impact({ impact }) {
         <section aria-label="Registrations affected">
           <h3>Registrations</h3>
           <Reasons reasons={registrations.reasons} />
+        </section>
+      )}
+      {/* AC11: sent only when accepting would clear a recorded safety decision. */}
+      {impact.safety_check && (
+        <section aria-label="Safety check affected">
+          <h3>Safety check</h3>
+          <Reasons reasons={impact.safety_check.reasons} />
         </section>
       )}
     </section>
