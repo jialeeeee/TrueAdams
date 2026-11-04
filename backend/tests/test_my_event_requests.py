@@ -35,6 +35,9 @@ COMPLETE = {
     "end_time": datetime(2026, 12, 12, 22, 0),
     "expected_attendance": 250,
     "venue_requirements": "Open-air waterfront space",
+    "accessibility_needs": "None",
+    "equipment_requirements": "None",
+    "required_layouts": ["banquet"],
     "registration_required": True,
 }
 

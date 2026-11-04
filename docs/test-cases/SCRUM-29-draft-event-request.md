@@ -2,6 +2,8 @@
 
 **User story:** As an Event Organiser, I want to save an unfinished event request and resume it later so that I can prepare the request without losing my progress.
 
+**Changed 4 Nov 2026 (CF02):** accessibility needs, equipment requirements and room layout are now needed to submit, following the customer's answer, G4 clarification #25 (Week 4 answers): "compulsory fields include name, description, purpose, dates/times, attendance, venue, accessibility, equipment, layout, registration etc." (recorded as CF02 and in SCRUM-28's AC2 in the final product backlog). The organiser chooses room layouts from the list venues use, and writes "None" when there are no accessibility or equipment needs. A1, A4 and A7 and TC-29-04, 11 and 26 are updated; TC-29-02a and 26a are new; Q3 is answered.
+
 **Created:** 28 Sep 2026 · **Status of all cases:** Automated cases pass (28 Sep 2026, local PostgreSQL with db/event_drafts.sql applied + Vitest); frontend cases 10, 15, 19, 23, 29 also to be checked manually in the browser · **Automated tests:** `backend/tests/test_event_drafts.py`, `frontend/src/pages/DraftEventPage.test.jsx`, `frontend/src/pages/MyDraftsPage.test.jsx`
 
 ## Acceptance criteria
@@ -19,13 +21,15 @@
 
 These are the team's current reading of the story. Each one is tied to an open question below. If the customer answers differently, update the affected test cases before implementation.
 
-- **A1 — Fields:** an event request has the fields in the customer brief: event name (`title`), purpose, description, proposed start and end date and time, expected attendance, venue requirements, accessibility needs, equipment requirements, and whether attendee registration is needed. *(Q1)*
+- **A1 — Fields:** an event request has the fields in the customer brief: event name (`title`), purpose, description, proposed start and end date and time, expected attendance, venue requirements, accessibility needs, equipment requirements, room layout (`required_layouts`, added for CF02) and whether attendee registration is needed. *(Q1)*
 - **A2 — Minimum to save:** a draft needs only an event name. Every other field may be left empty.
 - **A3 — Who:** only users with the `organiser` role can create drafts, and only a draft's own organiser can open, save or submit it. This is checked against the database on every request. *(Q2)*
-- **A4 — Values accepted when saving:** each field that is filled in must be of the right kind: text for text fields, a whole number of at least 1 for expected attendance, a date and time (`YYYY-MM-DDTHH:MM`) for start and end, and yes/no for registration. Wrong kinds are refused. Checks that compare fields (end after start) happen only on submission, so an unfinished draft can always be saved.
+- **A4 — Values accepted when saving:** each field that is filled in must be of the right kind: text for text fields, a whole number of at least 1 for expected attendance, a date and time (`YYYY-MM-DDTHH:MM`) for start and end, yes/no for registration, and for room layout a list chosen from the venue layouts (`LAYOUT_OPTIONS` in `venues/routes.py`: theatre, classroom, boardroom, banquet), tidied to the list's spelling without repeats; choosing none saves it as not filled in. Wrong kinds are refused. Checks that compare fields (end after start) happen only on submission, so an unfinished draft can always be saved.
 - **A5 — Blank text:** text that is empty or only whitespace is saved as *not filled in*. Other text is trimmed.
 - **A6 — Saving:** a save sends the fields being changed. Fields not sent keep their saved values; a field sent as empty is cleared. Each successful save sets the last-saved time.
-- **A7 — Required to submit:** event name, purpose, description, start, end, expected attendance, venue requirements, and the registration yes/no. Accessibility needs and equipment requirements are optional ("where relevant" in the brief). The end must be after the start. *(Q3, Q4)*
+- **A7 — Required to submit (changed 4 Nov 2026 for CF02):** every field: event name, purpose, description, start, end, expected attendance, venue requirements, accessibility needs, equipment requirements, room layout (at least one) and the registration yes/no. An organiser with no accessibility or equipment needs writes "None" rather than leaving the field blank; the page says so under both fields. The end must be after the start. Until then accessibility needs and equipment requirements were optional ("where relevant" in the brief). *(Q3 answered, Q4)*
+  - A note of "None" (any case, spaces or closing full stop ignored) is read as **no equipment** by the safety queue and event confirmation (`NO_EQUIPMENT_NOTES`, SCRUM-90 A1, SCRUM-93), so such an event isn't held back as an unprocessed equipment note.
+  - Resubmitting after a clarification (SCRUM-95) may change these answers but not clear them.
 - **A8 — After submission:** a submitted request is no longer a draft. It cannot be saved or submitted again through the draft endpoints, and it leaves the organiser's drafts list. Changes after submission belong to the Event Change Requests story.
 - **A9 — Time zones:** proposed start and end are Singapore time without a time zone, like venue bookings. Last-saved and submitted times are stored as naive UTC and shown in the user's local time.
 - **A10 — Order of checks:** not logged in (401), unknown request (404), not allowed (403), not a draft (409), invalid values (400).
@@ -67,6 +71,12 @@ Reset the database to this data before **every** test case. Users come from `bac
 - **Test data:** Event name = "Spring Garden Party"; purpose = "Annual staff social"; expected attendance = 120; start = 2027-03-20T15:00. Nothing else.
 - **Expected result:** HTTP 201 with status Draft. The four entered values are saved exactly; the rest are empty.
 
+**TC-29-02a · Room layouts are chosen from the venue layouts** *(CF02)*
+- **Traces to:** AC1 · **Type:** Happy path / negative
+- **Test data:** D1 saved with layouts `[" Theatre ", "classroom", "THEATRE"]`; then `[]`; then `["theatre", "stage"]`. In the page, D1 reopened with banquet chosen; Theatre ticked; then both unticked.
+- **Expected result:** Saved as `["theatre", "classroom"]`; `[]` saves it as not filled in; "stage" is refused with HTTP 400 naming `required_layouts` and "stage is not an option". The page shows the four layouts as checkboxes, sends the chosen ones in the list's order, and sends none chosen as `null`.
+- **Automated:** `SaveIncompleteTests.test_room_layouts_are_chosen_from_the_venue_layouts`; frontend "chooses room layouts from the venue layouts, and sends none chosen as not filled in".
+
 **TC-29-03 · An event name is required**
 - **Traces to:** AC1, AC5 · **Type:** Negative
 - **Test data:** Name missing; `""`; `"   "`; `null`. Also, saving D1 with its name changed to `""`.
@@ -74,7 +84,7 @@ Reset the database to this data before **every** test case. Users come from `bac
 
 **TC-29-04 · Values of the wrong kind are refused**
 - **Traces to:** AC1, AC5 · **Type:** Negative / boundary
-- **Test data:** expected attendance = 0, -5, 12.5, "many", `true`; start = "tomorrow", "2027-02-30T10:00"; registration = "yes"; purpose = 42; a field that does not exist (`"budget"`); a body that is not JSON.
+- **Test data:** expected attendance = 0, -5, 12.5, "many", `true`; start = "tomorrow", "2027-02-30T10:00"; registration = "yes"; purpose = 42; room layout = "theatre" (not a list), `[1]`, `["stage"]`; a field that does not exist (`"budget"`); a body that is not JSON.
 - **Expected result:** HTTP 400, naming the field where there is one. Nothing is created or changed. Attendance = 1 is accepted.
 
 **TC-29-05 · Only organisers can create drafts**
@@ -188,9 +198,16 @@ Reset the database to this data before **every** test case. Users come from `bac
 - **Expected result:** HTTP 200 with status "submitted" and a submitted time. D2 leaves dana's drafts list, and its saved values are unchanged.
 
 **TC-29-26 · An incomplete draft cannot be submitted**
-- **Traces to:** AC6 · **Type:** Negative · **Depends on:** Q3
-- **Steps:** As `dana`, submit D1.
-- **Expected result:** HTTP 400 listing exactly the missing fields (description, end, venue requirements, registration). D1 stays a draft, unchanged.
+- **Traces to:** AC6 · **Type:** Negative · **Depends on:** Q3 (answered by CF02)
+- **Steps:** As `dana`, submit D1. Then, one at a time, clear D2's accessibility needs (`null`, spaces), equipment requirements (`null`, `""`) and room layout (`null`, `[]`) and submit it.
+- **Expected result:** D1: HTTP 400 listing exactly the missing fields (description, end, venue requirements, accessibility needs, equipment requirements, room layout, registration), named in the message. D2: HTTP 400 listing only the cleared field. Each stays a draft, unchanged. The page lists the same labels.
+- **Automated:** `SubmissionTests.test_an_incomplete_draft_cannot_be_submitted`, `SubmissionTests.test_accessibility_equipment_and_layout_are_needed_to_submit`; frontend "lists the missing fields when submission is refused, and stays a Draft with the edits kept".
+
+**TC-29-26a · "None" answers accessibility needs and equipment requirements** *(CF02)*
+- **Traces to:** AC6 · **Type:** Happy path
+- **Steps:** As `dana`, save D2 with accessibility needs and equipment requirements "None", and submit it.
+- **Expected result:** HTTP 200, submitted, with "None" saved for both. The page shows "If there are none, write None." under both fields. A "None" equipment note counts as no equipment for the safety queue and confirmation.
+- **Automated:** `SubmissionTests.test_none_answers_accessibility_and_equipment`; `test_safety_check_queue_unit.NoEquipmentAnswerTests`; `test_event_confirmation` scenario `none_note`; frontend "asks for None when there are no accessibility or equipment needs".
 
 **TC-29-27 · End must be after start to submit**
 - **Traces to:** AC6 · **Type:** Boundary
@@ -212,20 +229,20 @@ Reset the database to this data before **every** test case. Users come from `bac
 
 | AC | Test cases |
 |----|-----------|
-| AC1 | 01, 02, 03, 04, 05, 06 |
+| AC1 | 01, 02, 02a, 03, 04, 05, 06 |
 | AC2 | 01, 07, 08, 09, 10 |
 | AC3 | 09, 11, 12, 13, 14, 15 |
 | AC4 | 08, 16, 17, 18, 19 |
 | AC5 | 03, 04, 20, 21, 22, 23, 28 |
-| AC6 | 14, 24, 25, 26, 27, 28, 29 |
+| AC6 | 14, 24, 25, 26, 26a, 27, 28, 29 |
 
 | Type | Test cases |
 |------|-----------|
-| Happy path | 01, 02, 07, 09, 11, 16, 22, 25 |
-| Negative | 03, 04, 05, 06, 09, 12, 13, 14, 20, 21, 24, 26, 28 |
+| Happy path | 01, 02, 02a, 07, 09, 11, 16, 22, 25, 26a |
+| Negative | 02a, 03, 04, 05, 06, 09, 12, 13, 14, 20, 21, 24, 26, 28 |
 | Boundary | 04, 08, 17, 18, 27 |
 | Cross-cutting (authorisation) | 05, 06, 09, 12 |
-| Frontend | 10, 15, 19, 23, 29 |
+| Frontend | 02a, 10, 15, 19, 23, 26, 26a, 29 |
 
 ## Open questions for the customer
 
@@ -233,7 +250,7 @@ Reset the database to this data before **every** test case. Users come from `bac
 |---|----------|---------|
 | Q1 | Are these the right fields for an event request? Should venue requirements, accessibility needs and equipment be free text (assumed) or chosen from lists? | A1 |
 | Q2 | Can anyone other than the organiser (e.g. a colleague or an admin) create or edit a draft on their behalf? | A3, TC-29-05, 12 |
-| Q3 | Which fields must be completed before submission? Are accessibility needs and equipment requirements optional (assumed)? | A7, TC-29-26 |
+| Q3 | Which fields must be completed before submission? Are accessibility needs and equipment requirements optional (assumed)? **Answered** by G4 clarification #25 (Week 4 answers): "compulsory fields include name, description, purpose, dates/times, attendance, venue, accessibility, equipment, layout, registration etc." Writing "None" where there are none is the team's reading (SCRUM-28 AC2). | A7, TC-29-26, 26a |
 | Q4 | Must the proposed date be in the future, or at least some days ahead, to submit? | A7, TC-29-27 |
 | Q5 | Can an organiser delete a draft they no longer need? | New story if yes |
 | Q6 | Should an organiser be warned when leaving the page with unsaved changes? | Frontend |

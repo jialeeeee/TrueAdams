@@ -145,6 +145,8 @@ def seed(password):
             expected_attendance=fields.pop("expected_attendance", 80),
             venue_requirements=fields.pop("venue_requirements", "Theatre layout with a projector"),
             accessibility_needs="Wheelchair access", registration_required=True,
+            # CF02: every request answers its room layout.
+            required_layouts=fields.pop("required_layouts", ["theatre"]),
             last_saved_at=now, submitted_at=None if status == "draft" else now,
             coordinator_id=coordinator.id if coordinated else None,
             coordinator_assigned_at=now if coordinated else None,
@@ -185,7 +187,8 @@ def seed(password):
         for key in attendees:
             db.session.add(Registration(event_id=row.id, attendee_id=users[key].id))
 
-    event("[Demo] Draft Workshop", "draft", 40, 10, 3, coordinated=False)
+    event("[Demo] Draft Workshop", "draft", 40, 10, 3, coordinated=False,
+          equipment_requirements="None")  # CF02: complete, so the organiser can submit it.
     event("[Demo] Unassigned Talk", "submitted", 42, 14, 2, coordinated=False)
     event("[Demo] Review Panel", "submitted", 44, 9, 4)
 

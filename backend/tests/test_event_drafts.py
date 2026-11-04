@@ -12,6 +12,7 @@ Model (db/event_drafts.sql)
         expected_attendance                 Integer (>= 1)
         registration_required               Boolean
         last_saved_at, submitted_at         DateTime (naive UTC)
+    Event.required_layouts (SCRUM-38)       the room layouts the organiser chose (CF02)
 
 Endpoints (JWT required, else 401; unknown request -> 404; not the caller's -> 403;
 already submitted -> 409)
@@ -43,11 +44,13 @@ DRAFTS_URL = "/api/events/drafts"
 DRAFT_FIELDS = [
     "title", "purpose", "description", "start_time", "end_time", "expected_attendance",
     "venue_requirements", "accessibility_needs", "equipment_requirements",
-    "registration_required",
+    "required_layouts", "registration_required",
 ]
+# CF02: accessibility needs, equipment requirements and room layout are compulsory too.
 REQUIRED_FOR_SUBMISSION = [
     "title", "purpose", "description", "start_time", "end_time", "expected_attendance",
-    "venue_requirements", "registration_required",
+    "venue_requirements", "accessibility_needs", "equipment_requirements",
+    "required_layouts", "registration_required",
 ]
 
 COMPLETE = {
@@ -60,6 +63,7 @@ COMPLETE = {
     "venue_requirements": "Theatre layout for 80 with a small stage",
     "accessibility_needs": "Wheelchair access to the stage",
     "equipment_requirements": "Projector and two wireless microphones",
+    "required_layouts": ["theatre"],
     "registration_required": True,
 }
 
@@ -189,9 +193,26 @@ class SaveIncompleteTests(DraftTestCase):
         self.assertEqual(stored["start_time"], datetime(2027, 3, 20, 15, 0))
         for field in ("description", "end_time", "venue_requirements",
                       "accessibility_needs", "equipment_requirements",
-                      "registration_required"):
+                      "required_layouts", "registration_required"):
             with self.subTest(field=field):
                 self.assertIsNone(stored[field])
+
+    # TC-29-02a · AC1 (CF02) — room layouts are chosen from the list the venues use, so
+    # the suitability check (SCRUM-38) can compare them; an empty choice is not an answer.
+    def test_room_layouts_are_chosen_from_the_venue_layouts(self):
+        response = self.save("D1", {"required_layouts": [" Theatre ", "classroom", "THEATRE"]})
+
+        self.assertEqual(response.status_code, 200, response.get_json())
+        self.assertEqual(response.get_json()["required_layouts"], ["theatre", "classroom"])
+        self.assertEqual(self.stored("D1")["required_layouts"], ["theatre", "classroom"])
+
+        self.assertEqual(self.save("D1", {"required_layouts": []}).status_code, 200)
+        self.assertIsNone(self.stored("D1")["required_layouts"])
+
+        body = self.assert_error(self.save("D1", {"required_layouts": ["theatre", "stage"]}),
+                                 400, field="required_layouts")
+        self.assertEqual(body["error"], "Room layout must be chosen from the list: "
+                                        "stage is not an option.")
 
     # TC-29-03 · AC1, AC5 — an event name is required.
     def test_an_event_name_is_required(self):
@@ -214,6 +235,9 @@ class SaveIncompleteTests(DraftTestCase):
             ("expected_attendance", True),
             ("start_time", "tomorrow"), ("start_time", "2027-02-30T10:00"),
             ("registration_required", "yes"), ("purpose", 42),
+            # CF02: layouts are a list chosen from the venues' layouts.
+            ("required_layouts", "theatre"), ("required_layouts", [1]),
+            ("required_layouts", ["stage"]),
         ]
         saved = self.stored("D1")
         for field, value in cases:
@@ -357,7 +381,8 @@ class ReopenTests(DraftTestCase):
 
         self.assertEqual(
             self.open("D1").get_json()["missing_for_submission"],
-            ["description", "end_time", "venue_requirements", "registration_required"],
+            ["description", "end_time", "venue_requirements", "accessibility_needs",
+             "equipment_requirements", "required_layouts", "registration_required"],
         )
 
     # TC-29-12 · AC3 — another user's draft cannot be opened, saved or submitted.
@@ -601,14 +626,38 @@ class SubmissionTests(DraftTestCase):
 
         self.assertEqual(body["missing"],
                          ["description", "end_time", "venue_requirements",
-                          "registration_required"])
+                          "accessibility_needs", "equipment_requirements",
+                          "required_layouts", "registration_required"])
+        self.assertIn("Accessibility needs, Equipment requirements, Room layout",
+                      body["error"])
         self.assertEqual(self.stored("D1"), saved)
 
-    # TC-29-26 · AC6 (A7) — optional fields are not needed to submit.
-    def test_optional_fields_are_not_needed_to_submit(self):
-        self.save("D2", {"accessibility_needs": None, "equipment_requirements": None})
+    # TC-29-26 · AC6 (A7, changed for CF02) — accessibility needs, equipment requirements
+    # and room layout are needed to submit; a blank answer is not an answer.
+    def test_accessibility_equipment_and_layout_are_needed_to_submit(self):
+        for field, blank in (("accessibility_needs", None), ("accessibility_needs", "   "),
+                             ("equipment_requirements", None),
+                             ("equipment_requirements", ""),
+                             ("required_layouts", None), ("required_layouts", [])):
+            with self.subTest(field=field, blank=blank):
+                self.assertEqual(self.save("D2", {field: blank}).status_code, 200)
 
-        self.assertEqual(self.submit("D2").status_code, 200)
+                body = self.assert_error(self.submit("D2"), 400)
+
+                self.assertEqual(body["missing"], [field])
+                self.assertEqual(self.stored("D2")["status"], "draft")
+                self.save("D2", {field: api(COMPLETE[field])})
+
+    # TC-29-26a · AC6 (A7, CF02) — "None" is how an organiser says there are none.
+    def test_none_answers_accessibility_and_equipment(self):
+        self.save("D2", {"accessibility_needs": "None", "equipment_requirements": "None"})
+
+        response = self.submit("D2")
+
+        self.assertEqual(response.status_code, 200, response.get_json())
+        stored = self.stored("D2")
+        self.assertEqual((stored["accessibility_needs"], stored["equipment_requirements"]),
+                         ("None", "None"))
 
     # TC-29-27 · AC6 (boundary) — the end must be after the start to submit.
     def test_end_must_be_after_start_to_submit(self):
