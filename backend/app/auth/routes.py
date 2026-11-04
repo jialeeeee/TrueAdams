@@ -1,10 +1,12 @@
+from datetime import datetime, timezone
+
 from flask import Blueprint, jsonify, request
-from flask_jwt_extended import create_access_token
+from flask_jwt_extended import create_access_token, get_jwt, get_jwt_identity, jwt_required
 from sqlalchemy.exc import SQLAlchemyError
 from werkzeug.security import check_password_hash
 
 from ..extensions import db
-from ..models import User
+from ..models import RevokedToken, User
 from ..roles import roles_of
 
 auth_bp = Blueprint("auth", __name__)
@@ -43,6 +45,31 @@ def login():
         "role": user.role,
         "roles": [user.role, *sorted(roles_of(user) - {user.role})],
     }), 200
+
+
+@auth_bp.post("/logout")
+@jwt_required()
+def logout():
+    """SCRUM-75 AC6: sign out of this token, so the API refuses it from now on (A9).
+
+    Only this token is signed out: the user's other sessions carry on. The browser forgets
+    the token whatever this answers, so a failure here never keeps anyone signed in there.
+    """
+    claims = get_jwt()
+    expires = claims.get("exp")
+    try:
+        db.session.add(RevokedToken(
+            jti=claims["jti"], user_id=int(get_jwt_identity()),
+            expires_at=(datetime.fromtimestamp(expires, timezone.utc).replace(tzinfo=None)
+                        if expires else None)))
+        db.session.commit()
+    except SQLAlchemyError:
+        db.session.rollback()
+        return jsonify({
+            "error": "Signing out on the server failed. Please try again.",
+            "retryable": True,
+        }), 503
+    return jsonify({"message": "You have signed out."}), 200
 
 
 @auth_bp.post("/register")

@@ -5,7 +5,9 @@ const apiClient = axios.create({
 });
 
 apiClient.interceptors.request.use((config) => {
-  const token = sessionStorage.getItem("access_token");
+  // SCRUM-75 AC6: signing out sends the token it signs out of, which the browser has
+  // already forgotten by the time the request goes.
+  const token = config.signingOutToken ?? sessionStorage.getItem("access_token");
   if (token) {
     config.headers.set("Authorization", `Bearer ${token}`);
   } else {

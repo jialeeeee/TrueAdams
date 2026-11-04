@@ -27,7 +27,8 @@
 ## Working assumptions and open questions
 
 - **A1 / Q1:** Reuse organiser `/events/mine`, coordinator `/events/managed`, Lead `/events/supervised`, Venue Staff `/venues/bookings`. Attendee, admin, Technical Support Staff and Safety Officer have no dedicated home dashboard; use existing `/` Events catalogue. Confirm these preferred landing pages with the customer. `ROLE_HOME_PATHS` in LoginPage.jsx keeps this easy to change. This chooses navigation only, never permissions or new roles.
-- **A2 / Q2:** AC6 is implemented for the active browser session: clear its token, guard all application pages except Login, and let existing API JWT guards reject requests without it. A previously copied JWT remains valid until expiry. Confirm whether server-side invalidation is required; revocation/blacklist/refresh infrastructure is outside this increment and requires approval.
+- **A2 / Q2 (answered by the team 4 Nov 2026, see A9):** AC6 is implemented for the active browser session: clear its token, guard all application pages except Login, and let existing API JWT guards reject requests without it. A previously copied JWT remains valid until expiry. Confirm whether server-side invalidation is required; revocation/blacklist/refresh infrastructure is outside this increment and requires approval. **Superseded by A9 (4 Nov 2026).**
+- **A9 — Server-side sign-out (AC6, added 4 Nov 2026; the team chose a database table):** signing out also calls `POST /api/auth/logout` with the token, which records its JWT ID in `revoked_tokens` (`db/revoked_tokens.sql`). From then on every `@jwt_required()` route refuses it with 401 "You have signed out. Please sign in again.", so a copied token stops working too. Only that token is signed out; the user's other sessions carry on. The browser forgets the token first, so a failed server call (503 `retryable`) never keeps anyone signed in there. If the revoked-token check itself can't read the database, the request goes on to the route, which reports its own failure, and the failure is logged: a signed-out token could then be used only while the database is unreachable for that check, and only until it expires.
 
 ## Seed data (SI-SEED)
 
@@ -113,6 +114,25 @@ Automated references below use `AUTH` = `backend/tests/test_auth.py::AuthTests`,
 - **Automated:** APP `ignores a superseded login response arriving %s the latest response` (`before`, `after`). Existing TC-75-06 retains normal sign-out/Back/re-login coverage.
 - **Execution:** Pass, both response orders (20 Oct 2026 focused frontend run).
 
+**TC-75-09 — A signed-out token is refused everywhere**
+- **Traces to:** AC6. **Type:** API, local PostgreSQL. **Depends on:** A9.
+- **Steps:** Sign in; call a protected route; sign out; call the registrations, notifications and events routes and sign out again with the same token.
+- **Expected:** Sign-out 200 "You have signed out."; every later call 401 "You have signed out. Please sign in again."; the token's JWT ID is recorded with when and its expiry.
+- **Automated:** `test_tc_75_09_after_signing_out_the_token_is_refused_everywhere`, `test_tc_75_09_the_signed_out_token_is_recorded_with_its_expiry`
+
+**TC-75-10 — Signing in again works; other sessions carry on**
+- **Traces to:** AC6. **Type:** API. **Steps:** Sign in twice (two sessions); sign out of one; use the other; sign in again.
+- **Expected:** The other session and the new one work; the signed-out one stays refused.
+- **Automated:** `test_tc_75_10_signing_in_again_works_and_other_sessions_carry_on`
+
+**TC-75-11 — Signing out needs a token** — AC6 · 401 and nothing recorded · `test_tc_75_11_signing_out_needs_a_token`
+
+**TC-75-12 — Failures** — AC6, AC5 · Recording fails: 503 `retryable`, nothing recorded, the token still works, retrying succeeds. The check can't read the database: the route answers as usual and the failure is logged (A9) · `test_tc_75_12_a_failed_sign_out_says_so_and_the_token_still_works`, `test_tc_75_12_an_unreadable_check_leaves_the_route_to_report_its_own_failure`
+
+**TC-75-13 — The browser tells the server, and is signed out whatever it answers** — AC6 · App: sign-out posts `/auth/logout` with `signingOutToken`, and still clears the session and shows Login when the call fails; client: `signingOutToken` is sent as the bearer token after the session token is gone · APP `sends the token it signs out of`, `is signed out in the browser even when the server call fails`; CLIENT `sends the token being signed out of when it is given`
+
+**Test baseline change (Definition of Done 5, 4 Nov 2026):** TC-75-07 asserted `apiClient.post` was called exactly three times, counting its three login submissions. Signing out now also posts `/auth/logout`, so the assertion counts the login calls (`loginCalls()`) and also checks the logout call. What it checks is unchanged.
+
 | AC | Cases |
 |---|---|
 | AC1 | TC-75-01 |
@@ -120,7 +140,7 @@ Automated references below use `AUTH` = `backend/tests/test_auth.py::AuthTests`,
 | AC3 | TC-75-03 |
 | AC4 | TC-75-02,03,04,05 |
 | AC5 | TC-75-05 |
-| AC6 | TC-75-06,07,08 |
+| AC6 | TC-75-06,07,08,09,10,11,12,13 |
 
 ## Execution record
 
@@ -202,8 +222,12 @@ SCRUM-27 `test_auth.py` adds response-role, exact-message, missing-field and no-
 | AC3 | Pass | TC-75-03; named missing fields in API/form. |
 | AC4 | Pass | TC-75-02/03/04/05; no issuer calls/cookies or new browser token on failure. |
 | AC5 | Pass | TC-75-05; existing 503/rollback/retry reused. |
-| AC6 | Partial pending interpretation Q2 | TC-75-06/07/08 pass for the active browser session, including the corrected delayed-response race; copied-token server invalidation is not implemented. |
+| AC6 | Pass | TC-75-06/07/08 for the browser session; TC-75-09..13 for server-side sign-out (4 Nov 2026, A9). |
 
 ### Cross-story test adjustment
 
 `frontend/src/pages/ReviewRequestsPage.test.jsx` (SCRUM-55 TC-55-06/07/08/15) now supplies a session token in `renderPage` before mounting App. Affected tests: `displays the summary fields and opens the selected request for review`, `shows the empty review-list message`, `shows a %s refusal without exposing request data` (401/403), and `explains a %s failure and recovers after Retry` (server/network). All six retain their original assertions. The 401 case now represents a stored stale token rejected by the API; signed-out direct navigation is separately covered by TC-75-06. Underlying review and authorization behavior is unchanged. This fixture update is necessary because SCRUM-75 adds the shared frontend sign-in prerequisite.
+
+## Before merging (A9)
+
+Run `backend/db/revoked_tokens.sql` in the Supabase SQL editor as the project owner, then `backend/db/test_role.sql` again (new table). Both are safe to re-run. The CI `supabase-schema` job fails until they have been run.

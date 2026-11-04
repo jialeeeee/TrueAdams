@@ -19,6 +19,25 @@ class User(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 
+class RevokedToken(db.Model):
+    """SCRUM-75 AC6: an access token its user signed out of. The API refuses it from then
+    on, even though it hasn't expired (app/auth/sessions.py).
+
+    One row per token, by its unique JWT ID. Rows whose token has expired can be deleted
+    at any time: an expired token is refused anyway.
+    """
+
+    __tablename__ = "revoked_tokens"
+
+    id = db.Column(db.Integer, primary_key=True)
+    jti = db.Column(db.String(64), nullable=False, unique=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"),
+                        nullable=False)
+    # Naive UTC: when the user signed out, and when the token would have expired.
+    revoked_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    expires_at = db.Column(db.DateTime)
+
+
 class Venue(db.Model):
     __tablename__ = "venues"
     __table_args__ = (

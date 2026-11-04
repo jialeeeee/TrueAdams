@@ -64,7 +64,7 @@ Stubs (they return **501** or an empty list) that are free to be built by their 
 ## Backend conventions — follow the existing pattern
 
 ### Who is calling
-- Login (`POST /api/auth/login`) issues a JWT whose identity is `str(user.id)`. Protected routes use `@jwt_required()`.
+- Login (`POST /api/auth/login`) issues a JWT whose identity is `str(user.id)`. Protected routes use `@jwt_required()`. Signing out (`POST /api/auth/logout`, SCRUM-75 AC6) records the token's JWT ID in `revoked_tokens`, and `app/auth/sessions.py` makes every `@jwt_required()` route refuse it with 401.
 - **Load the `User` row on every request** (`_current_user()` in events, `_require_viewer()` in venues) and check its roles from the database, not from token claims, so role changes apply without re-issuing tokens. A missing or unparsable identity is a 401: `"Your session is no longer valid. Please log in again."`
 - **A user may hold more than one role** (CF01, G4 clarification #22): `User.role` is the main one (it picks the home page) and `User.additional_roles` lists the others. Check roles only through [backend/app/roles.py](backend/app/roles.py): `has_role(user, ROLE)`, `has_any_role(user, ROLES)`, and `holding(ROLES)` to filter `User` queries. Never compare `user.role` directly: it misses the other roles. Holding a role never grants a relationship to an event.
 - Roles in use: `admin`, `coordinator`, `coordinator_lead` (Event Coordinator Lead, SCRUM-83), `organiser`, `venue_staff`, `tech_staff`, `safety_officer` (SCRUM-90/91/92), `attendee` (default). Define who may do what as a module-level set (`ASSIGNER_ROLES`, `VENUE_VIEWER_ROLES`, …) with a comment, not inline string checks.

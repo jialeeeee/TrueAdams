@@ -3,7 +3,7 @@
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useNavigate } from "react-router-dom";
-import { beforeEach, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App.jsx";
 import apiClient from "./api/client.js";
 
@@ -79,6 +79,8 @@ it("signs out, refuses navigation and browser back, then allows sign-in again", 
   expect(screen.getByRole("button", { name: "Sign out" })).toBeTruthy();
 });
 
+const loginCalls = () => apiClient.post.mock.calls.filter(([url]) => url === "/auth/login").length;
+
 // TC-75-07: logging out on /login must invalidate even the latest pending request.
 it("ignores overlapping login responses after sign-out and allows deliberate sign-in again", async () => {
   sessionStorage.setItem("access_token", "existing-token");
@@ -101,7 +103,9 @@ it("ignores overlapping login responses after sign-out and allows deliberate sig
   await user.click(screen.getByRole("button", { name: "Login" }));
   expect(await screen.findByRole("heading", { name: "My managed events" })).toBeTruthy();
   expect(sessionStorage.getItem("access_token")).toBe("new-token");
-  expect(apiClient.post).toHaveBeenCalledTimes(3);
+  // Three login submissions; signing out also told the server (SCRUM-75 AC6, TC-75-13).
+  expect(loginCalls()).toBe(3);
+  expect(apiClient.post).toHaveBeenCalledWith("/auth/logout", {}, { signingOutToken: "existing-token" });
 });
 
 // TC-75-08: latest submission wins regardless of response order.
@@ -205,4 +209,32 @@ it("shows an administrator, or a session without a role, every link", async () =
   expect(within(nav).getByRole("link", { name: "My registrations" })).toBeTruthy();
   expect(within(nav).queryByRole("link", { name: "Resources" })).toBeNull();
   sessionStorage.clear();
+});
+
+// TC-75-13 · SCRUM-75 AC6: signing out tells the server, which refuses the token from then
+// on. The browser forgets it first, so a failed call never keeps anyone signed in.
+describe("SCRUM-75 signing out on the server", () => {
+  it("sends the token it signs out of", async () => {
+    sessionStorage.setItem("access_token", "existing-token");
+    const user = renderApp("/events/managed");
+    await screen.findByRole("heading", { name: "My managed events" });
+
+    await user.click(screen.getByRole("button", { name: "Sign out" }));
+
+    expect(apiClient.post).toHaveBeenCalledWith("/auth/logout", {}, { signingOutToken: "existing-token" });
+    expect(sessionStorage.getItem("access_token")).toBeNull();
+    expect(screen.getByRole("heading", { name: "Login" })).toBeTruthy();
+  });
+
+  it("is signed out in the browser even when the server call fails", async () => {
+    sessionStorage.setItem("access_token", "existing-token");
+    apiClient.post.mockRejectedValueOnce(new Error("Network Error"));
+    const user = renderApp("/events/managed");
+    await screen.findByRole("heading", { name: "My managed events" });
+
+    await user.click(screen.getByRole("button", { name: "Sign out" }));
+
+    expect(sessionStorage.getItem("access_token")).toBeNull();
+    expect(await screen.findByRole("heading", { name: "Login" })).toBeTruthy();
+  });
 });

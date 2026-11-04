@@ -1,5 +1,6 @@
 import { useRef } from "react";
 import { Link, Navigate, Outlet, Route, Routes, useLocation, useNavigate } from "react-router-dom";
+import apiClient from "./api/client.js";
 import AssignCoordinatorPage from "./pages/AssignCoordinatorPage.jsx";
 import ChangeRequestPage from "./pages/ChangeRequestPage.jsx";
 import ChangeRequestReviewPage from "./pages/ChangeRequestReviewPage.jsx";
@@ -111,10 +112,16 @@ export default function App() {
 
   const signOut = () => {
     loginAttempt.current += 1;
+    const token = sessionStorage.getItem("access_token");
     sessionStorage.removeItem("access_token");
     sessionStorage.removeItem(ROLE_KEY);
     sessionStorage.removeItem(ROLES_KEY);
     navigate("/login", { replace: true });
+    // SCRUM-75 AC6: the server refuses this token from now on. The browser has forgotten
+    // it either way, so a failure here never keeps anyone signed in.
+    if (token) {
+      apiClient.post("/auth/logout", {}, { signingOutToken: token }).catch(() => {});
+    }
   };
 
   return (
