@@ -1,7 +1,7 @@
 """SCRUM-44 A10: release equipment reservations when what they were for changes (AC9).
 
-A rule applied whenever such a change is saved, by any screen or code path: there is no
-"cancel event" feature yet, and accepted change requests (SCRUM-46) will come later.
+A rule applied whenever such a change is saved, by any screen or code path, including
+cancelling an event (SCRUM-98) and accepting a change request (SCRUM-70).
 Before every flush, an event's reservations are released when it becomes cancelled or
 rejected or its start or end time changes, and a requirement's when its type, quantity
 or technical requirements change or it is removed. A released reservation keeps its row,
