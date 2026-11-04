@@ -102,6 +102,11 @@ class Event(db.Model):
     # neither field is editable through normal planning PATCH.
     confirmed_by_id = db.Column(db.Integer, db.ForeignKey("users.id"))
     confirmed_at = db.Column(db.DateTime)  # Naive UTC.
+    # SCRUM-98 AC4: who cancelled the event, when (naive UTC) and why. Records only, never
+    # edited; a cancelled event can't be reinstated (AC8).
+    cancelled_by_id = db.Column(db.Integer, db.ForeignKey("users.id"))
+    cancelled_at = db.Column(db.DateTime)
+    cancellation_reason = db.Column(db.Text)
     # When (naive UTC) and by which coordinator the review was started, moving the
     # request to under_review (SCRUM-31, reopened). Records, not editable fields.
     review_started_at = db.Column(db.DateTime)

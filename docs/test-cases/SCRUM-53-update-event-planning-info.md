@@ -303,3 +303,5 @@ For every case in this section: the response is HTTP 422 with a `fields` entry n
 | Q3 | Can a coordinator still edit an event that is cancelled, rejected or completed? | R5, TC-53-31 |
 | Q4 | Is 5,000 characters enough? Purpose and description are required when an organiser submits a request (SCRUM-29), so should a coordinator be allowed to clear them afterwards? | R7, TC-53-06, 14 |
 | Q5 | Are purpose and accessibility needs normal fields a coordinator can change directly? | R1, TC-53-32 |
+
+**Fields added later (4 Nov 2026):** SCRUM-98's `cancelled_by_id`, `cancelled_at` and `cancellation_reason` are records set only by cancelling the event. They are in neither list, so `PATCH /api/events/<id>` refuses them like any other unknown field, and a cancelled event can't be edited at all (R5).

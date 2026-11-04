@@ -179,6 +179,75 @@ function EventRequirements({ eventId, status, requirements, onSaved }) {
   );
 }
 
+// SCRUM-98: only these can be cancelled (AC2). Must match CANCELLABLE_EVENT_STATUSES in
+// backend/app/events/routes.py; the server also refuses once the event has started (AC1).
+const CANCELLABLE_STATUSES = ["submitted", "under_review", "approved", "confirmed"];
+// Must match CANCELLATION_REASON_MAX in backend/app/events/routes.py (AC3).
+const MAX_REASON_LENGTH = 500;
+// Must match CANCELLATION_REASON_REQUIRED in backend/app/events/routes.py.
+const REASON_REQUIRED = "Give a reason for cancelling the event.";
+// A reason needs a visible character. Must match _has_visible_text in
+// backend/app/events/routes.py (SCRUM-60 A3).
+const VISIBLE = /[^\s\p{C}\p{Z}]/u;
+const NOT_CANCELLED = "The event was not cancelled. Check your connection and try again.";
+
+// SCRUM-98 AC3: a confirmation step with the reason; backing out changes nothing.
+function CancelEvent({ eventId, onCancelled }) {
+  const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  if (!open) {
+    return <button type="button" onClick={() => setOpen(true)}>Cancel event</button>;
+  }
+
+  const back = () => {
+    setOpen(false);
+    setReason("");
+    setError("");
+  };
+
+  const submit = async (submitted) => {
+    submitted.preventDefault();
+    if (!VISIBLE.test(reason)) {
+      setError(REASON_REQUIRED);
+      return;
+    }
+    if (reason.trim().length > MAX_REASON_LENGTH) {
+      setError(`The reason can be at most ${MAX_REASON_LENGTH} characters.`);
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      const response = await apiClient.post(`/events/${eventId}/cancel`, { reason });
+      onCancelled(response.data);
+    } catch (failure) {
+      const message = failure.response?.data?.error;
+      // The reason is kept so the coordinator can try again (AC9).
+      setError(typeof message === "string" && message.trim() ? message : NOT_CANCELLED);
+      setBusy(false);
+    }
+  };
+
+  return (
+    <form aria-label="Cancel this event" onSubmit={submit}>
+      <p>
+        Cancelling releases the event&apos;s venue bookings, equipment reservations and
+        registrations, and tells everyone affected. A cancelled event can&apos;t be reinstated.
+      </p>
+      <label htmlFor="cancellation-reason">Reason for cancelling</label>
+      <textarea id="cancellation-reason" value={reason}
+        onChange={(changed) => setReason(changed.target.value)} />
+      <p>{`${reason.trim().length} / ${MAX_REASON_LENGTH} characters`}</p>
+      {error && <p role="alert">{error}</p>}
+      <button type="submit" disabled={busy}>{busy ? "Cancelling…" : "Confirm cancellation"}</button>
+      <button type="button" onClick={back} disabled={busy}>Back</button>
+    </form>
+  );
+}
+
 // SCRUM-85: every venue booking of the event, with the status of each (AC4).
 function VenueBookings({ bookings }) {
   return (
@@ -257,6 +326,13 @@ export default function EventPlanningPage() {
     }
   };
 
+  // SCRUM-98: the page shows the cancelled event; its bookings are reloaded with it.
+  const cancelled = (data) => {
+    setEvent((current) => ({ ...current, status: data.event.status,
+      cancellation: data.event.cancellation }));
+    setConfirmation({ message: data.message });
+  };
+
   const back = <Link to="/events/managed">Back to my managed events</Link>;
 
   if (loadError) {
@@ -283,8 +359,18 @@ export default function EventPlanningPage() {
           {confirming ? "Confirming…" : "Mark event Confirmed"}
         </button>
       )}
+      {CANCELLABLE_STATUSES.includes(event.status) && (
+        <CancelEvent eventId={event.id} onCancelled={cancelled} />
+      )}
       {confirmation && (
         <p role={confirmation.error ? "alert" : "status"}>{confirmation.message}</p>
+      )}
+      {event.cancellation && (
+        <section aria-label="Cancellation">
+          <h2>Cancelled</h2>
+          <p>{`Cancelled by ${event.cancellation.cancelled_by?.email || NOT_RECORDED} · ${formatSavedAt(event.cancellation.cancelled_at)}`}</p>
+          <p>{`Reason: ${event.cancellation.reason}`}</p>
+        </section>
       )}
       {/* SCRUM-39: only approved events proceed to venue booking (A2). */}
       {event.status === "approved" && (
