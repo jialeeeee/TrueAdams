@@ -7,6 +7,8 @@ import statusLabel from "../utils/statusLabel.js";
 
 // The organiser's drafts and submitted requests, in separate sections (SCRUM-59).
 const NOT_LOADED = "Your event requests could not be loaded. Check your connection and try again.";
+// Must match CHANGEABLE_STATUSES in backend/app/events/routes.py (SCRUM-46 AC1).
+const CHANGEABLE_STATUSES = ["approved", "confirmed"];
 
 function draftName(title) {
   return typeof title === "string" && title.trim() ? title : "Untitled draft";
@@ -57,8 +59,9 @@ function SubmittedSection({ requests }) {
               {request.decision_note && (
                 <p>{`${request.status === "rejected" ? "Reason" : "Note"}: ${request.decision_note}`}</p>
               )}
-              {/* SCRUM-46: only approved events can take a change request (AC1). */}
-              {request.status === "approved" && (
+              {/* SCRUM-46 AC1: approved and confirmed events can take a change request.
+                  The server also refuses one once the event has started. */}
+              {CHANGEABLE_STATUSES.includes(request.status) && (
                 <Link to={`/events/${request.id}/change-request`}>Request a change</Link>
               )}
             </li>

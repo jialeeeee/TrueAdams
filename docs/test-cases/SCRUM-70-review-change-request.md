@@ -8,7 +8,7 @@
 
 | ID | Criterion |
 |----|-----------|
-| AC1 | I can request a change only for my own events, and only when the event status is Approved. Events that are draft, submitted, under review, rejected or cancelled cannot have a change request. |
+| AC1 | I can review change requests only for events assigned to me. Change requests exist only for events that are Approved or Confirmed; events that are draft, submitted, under review, rejected or cancelled cannot have one. |
 | AC2 | For a significant change (date, time, attendance, venue or equipment requirements), I can see which venue bookings, equipment arrangements and registrations it affects before deciding. |
 | AC3 | I can accept or reject a pending request. The decision and the decision time are saved, and the organiser can see the outcome. |
 | AC4 | Rejecting a request requires a reason (not blank, at most 500 characters) that the organiser can see. |
@@ -22,7 +22,7 @@
 
 ## Working assumptions (to confirm)
 
-- **A1 — Who reviews:** the event's current coordinator (`is_current_coordinator`: the `coordinator` role and `event.coordinator_id`). Everyone else gets 403 without the request's details. AC1 repeats SCRUM-46's rule for *submitting* (the event's organiser, approved events only), which is unchanged. A request can be decided only while its event is approved: if the event is no longer approved (for example it was cancelled), the request stays pending and deciding is refused with 409 `not_approved`. *(Q1, Q5)*
+- **A1 — Who reviews:** the event's current coordinator (`is_current_coordinator`: the `coordinator` role and `event.coordinator_id`). Everyone else gets 403 without the request's details. AC1 repeats SCRUM-46's rule for *submitting* (the event's organiser, approved events only), which is unchanged. A request can be decided only while its event is approved or confirmed (SCRUM-46 A1): if it is neither (for example it was cancelled), the request stays pending and deciding is refused with 409 `not_approved`. *(Q1, Q5)*
 - **A2 — Every requested field is significant:** SCRUM-46 lets an organiser change the start, end, expected attendance, venue requirements and equipment requirements, and AC2 calls all of these significant. The venue itself can't be changed through a change request (SCRUM-46 A2, Q3), so no request changes it. *(Q2)*
 - **A3 — What a change affects (AC2):** worked out from what is recorded now, before deciding. Only *live* arrangements are listed: pending, confirmed and unexpired tentative venue bookings; equipment requirements; reserved (not released) equipment; registered (not withdrawn or cancelled) attendees.
   - **New date or time:** every live venue booking, since each was booked for the current times and is not moved automatically *(Q3)*; every equipment requirement holding reserved equipment, which accepting releases (SCRUM-44 A10); the registered attendees, who will be told the new details (AC9); and registration closing after the new start, if it does *(Q4)*.
@@ -40,7 +40,7 @@
   - Notifications are saved in the same commit as the decision. Emails are queued afterwards; if one can't be queued the decision stands, no further emails are tried, and the reply says `email_queued: false`.
 - **A8 — Order of checks:** 401 (no valid user) → 404 (no such event, or no such request for it) → 403 (not the event's current coordinator) → 400 (body not a JSON object, decision missing or unknown, reason missing, blank or too long) → 409 (`decided`, then `not_approved`) → 503 (not saved, `retryable: true`). The event, then the request, are read `FOR UPDATE`, as submitting a request locks the event, so a decision and a new request, or two decisions, happen one at a time.
 - **A9 — Waiting for a coordinator (AC5):** SCRUM-46 already blocks submission when the event has no current coordinator (409 `no_coordinator`). Its message now says the event is waiting for a coordinator: "This event is waiting for a coordinator to be assigned, so there is nobody to review a change request yet. Please try again once a coordinator is assigned."
-- **A11 — Clearing the safety decision (AC11, added 4 Nov 2026):** every field a change request can change is significant (A2), so accepting any request clears the event's safety decision in the same commit as the decision (`app/events/safety.py`): `safety_decision`, who made it, the comment and when all become empty, and a Confirmed event goes back to `approved`. Who confirmed it and when are kept. The event then reappears on the Safety Officer's list once its arrangements are ready (SCRUM-90), and confirmation asks for a new "Approved safety check" (SCRUM-93). A rejection or a request for changes is cleared too, since it was also made on the old arrangements *(Q8)*. Before deciding, the review lists the safety check as affected (`impact.safety_check`, only when there is a decision to clear) and the reply to an accepted request says the safety check was cleared. A rejected request keeps the decision. Change requests can only be decided on approved events today, so the Confirmed case is reached once SCRUM-46 accepts requests on confirmed events.
+- **A11 — Clearing the safety decision (AC11, added 4 Nov 2026):** every field a change request can change is significant (A2), so accepting any request clears the event's safety decision in the same commit as the decision (`app/events/safety.py`): `safety_decision`, who made it, the comment and when all become empty, and a Confirmed event goes back to `approved`. Who confirmed it and when are kept. The event then reappears on the Safety Officer's list once its arrangements are ready (SCRUM-90), and confirmation asks for a new "Approved safety check" (SCRUM-93). A rejection or a request for changes is cleared too, since it was also made on the old arrangements *(Q8)*. Before deciding, the review lists the safety check as affected (`impact.safety_check`, only when there is a decision to clear) and the reply to an accepted request says the safety check was cleared. A rejected request keeps the decision. Confirmed events take change requests too (SCRUM-46 AC1, TC-70-37); when one is accepted, the reply and the organiser's notification say the event is back in planning.
 - **A10 — Finding requests:** the coordinator's "Change requests to review" page lists the pending requests of the events they currently coordinate, oldest first, each linking to its review page.
 
 ## Seed data (CV-SEED)
@@ -316,7 +316,7 @@ Also: failed loads explain themselves and offer Retry on both pages.
 | AC8 | 21, 22, 23, 27 |
 | AC9 | 24, 25 |
 | AC10 | 23 (bookings kept, equipment released; flagging not built yet) |
-| AC11 | 33, 34, 35, 36 |
+| AC11 | 33, 34, 35, 36, 37 |
 
 ## Open questions for the customer
 
@@ -330,3 +330,11 @@ Also: failed loads explain themselves and offer Retry on both pages.
 | Q6 | May a coordinator accept part of a request? | A4 |
 | Q7 | Should registered attendees also be told of other accepted changes, such as the venue requirements? | A7, TC-70-25 |
 | Q8 | AC11 names the safety *approval*. Should accepting a change also clear a rejection or a request for changes, so the event goes back on the safety check list (as built), or should those stay until the coordinator's correction is otherwise recorded? | A11, TC-70-35 |
+
+## AC1, AC11 — a change to a confirmed event (added 4 Nov 2026)
+
+**TC-70-37 · Accepting returns a confirmed event to Approved**
+- **Traces to:** AC1, AC11 · **Type:** Positive · **Depends on:** A11
+- **Steps:** With V1 confirmed and its safety check approved, accept N1. Separately, reject N1. Separately, accept N1 on an approved V1.
+- **Expected result:** Accepting: V1 is approved with attendance 250, its safety decision is empty, who confirmed it is kept, and both the reply and the organiser's notification say "The event is no longer confirmed: it is back in planning until it is confirmed again." plus that the safety check was cleared. Rejecting leaves it confirmed with its approval and says nothing about it. An approved event is never said to be unconfirmed.
+- **Automated:** `test_tc_70_37_accepting_returns_a_confirmed_event_to_approved`, `test_tc_70_37_rejecting_keeps_a_confirmed_event_confirmed`, `test_tc_70_37_an_approved_event_is_not_said_to_be_unconfirmed`
