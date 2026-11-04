@@ -5,6 +5,7 @@ from werkzeug.security import check_password_hash
 
 from ..extensions import db
 from ..models import User
+from ..roles import roles_of
 
 auth_bp = Blueprint("auth", __name__)
 
@@ -35,8 +36,13 @@ def login():
         return jsonify({"error": "Email or password is incorrect"}), 401
 
     # SCRUM-75: the stored role selects an existing home page; API guards still
-    # reload the user for authorization rather than trusting browser state.
-    return jsonify({"access_token": create_access_token(identity=str(user.id)), "role": user.role}), 200
+    # reload the user for authorization rather than trusting browser state. CF01: `roles`
+    # lists every role the user holds, main role first, so the menu can show all their pages.
+    return jsonify({
+        "access_token": create_access_token(identity=str(user.id)),
+        "role": user.role,
+        "roles": [user.role, *sorted(roles_of(user) - {user.role})],
+    }), 200
 
 
 @auth_bp.post("/register")

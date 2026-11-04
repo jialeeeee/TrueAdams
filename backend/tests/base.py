@@ -76,11 +76,14 @@ class AppTestCase(unittest.TestCase):
         db.session.remove()
         db.session = self._app_session
 
-    def make_user(self, email=None, role="attendee", password_hash="not-a-real-hash"):
-        """Create a User for this test only. Emails are unique per call unless given."""
+    def make_user(self, email=None, role="attendee", password_hash="not-a-real-hash",
+                  additional_roles=None):
+        """Create a User for this test only. Emails are unique per call unless given.
+        `additional_roles` are the roles held besides `role` (CF01)."""
         email = email or run_email(f"user{self._user_count}@test.invalid")
         self._user_count += 1
-        user = User(email=email, password_hash=password_hash, role=role)
+        user = User(email=email, password_hash=password_hash, role=role,
+                    additional_roles=additional_roles)
         db.session.add(user)
         db.session.commit()
         return user

@@ -26,6 +26,7 @@ from ..models import (
 )
 from ..registrations.routes import REGISTERED, REGISTRABLE_STATUSES, WITHDRAWN, singapore_now
 from ..resources import availability, reservations as reserving
+from ..roles import has_any_role, has_role, holding
 from ..venues.scheduling import (
     BLOCKING_BOOKING_STATUS, FLAGGED, REPLACEMENT_FLAG, TENTATIVE_STATUS, overlapping)
 from . import change_requests, change_review, equipment, suitability
@@ -290,7 +291,7 @@ def list_safety_checks():
         user = _current_user()
         if user is None:
             return _error("Your session is no longer valid. Please log in again.", 401)
-        if user.role not in SAFETY_CHECK_VIEWER_ROLES:
+        if not has_any_role(user, SAFETY_CHECK_VIEWER_ROLES):
             return _error("Only Safety Officers can view events awaiting a safety check.", 403)
 
         # PR #58: closed events and events ending now or earlier need no safety check.
@@ -333,7 +334,7 @@ def approve_safety_check(event_id):
         event = db.session.get(Event, event_id, with_for_update=True)
         if event is None:
             return _error("Event not found.", 404)
-        if user.role not in SAFETY_CHECK_APPROVER_ROLES:
+        if not has_any_role(user, SAFETY_CHECK_APPROVER_ROLES):
             return _error("Only Safety Officers can approve a safety check.", 403)
         body = request.get_json(silent=True)
         if not isinstance(body, dict):
@@ -392,7 +393,7 @@ def record_negative_safety_decision(event_id, decision):
         event = db.session.get(Event, event_id, with_for_update=True)
         if event is None:
             return _error("Event not found.", 404)
-        if user.role not in SAFETY_CHECK_APPROVER_ROLES:
+        if not has_any_role(user, SAFETY_CHECK_APPROVER_ROLES):
             return _error("Only Safety Officers can reject or request safety changes.", 403)
         body = request.get_json(silent=True)
         if not isinstance(body, dict):
@@ -516,7 +517,7 @@ def _user_summary(user):
 
 
 def _eligible_coordinators(event):
-    query = User.query.filter_by(role=COORDINATOR_ROLE)
+    query = User.query.filter(holding([COORDINATOR_ROLE]))
     if event.coordinator_id is not None:
         query = query.filter(User.id != event.coordinator_id)
     return query.order_by(User.email).all()
@@ -1029,7 +1030,7 @@ def _can_resubmit(event, latest, coordinator):
     """
     return (event.status in CLARIFIABLE_STATUSES and latest is not None
             and latest.sender_id != event.organiser_id and coordinator is not None
-            and coordinator.role == COORDINATOR_ROLE)
+            and has_role(coordinator, COORDINATOR_ROLE))
 
 
 @events_bp.get("/<int:event_id>/clarifications")
@@ -1255,7 +1256,7 @@ def _require_organiser(denied):
     user = _current_user()
     if user is None:
         raise _Rejected("Your session is no longer valid. Please log in again.", 401)
-    if user.role != ORGANISER_ROLE:
+    if not has_role(user, ORGANISER_ROLE):
         raise _Rejected(denied, 403)
     return user
 
@@ -1647,7 +1648,7 @@ def list_review_requests():
         user = _current_user()
         if user is None:
             return _error("Your session is no longer valid. Please log in again.", 401)
-        if user.role != COORDINATOR_ROLE:
+        if not has_role(user, COORDINATOR_ROLE):
             return _error("Only event coordinators can view requests for review.", 403)
 
         events = (
@@ -1892,7 +1893,7 @@ def list_managed():
         user = _current_user()
         if user is None:
             return _error("Your session is no longer valid. Please log in again.", 401)
-        if user.role != COORDINATOR_ROLE:
+        if not has_role(user, COORDINATOR_ROLE):
             return _error("Only event coordinators have managed events.", 403)
         # Soonest proposed date first, undated last (A4, open question Q3).
         events = (
@@ -1986,7 +1987,7 @@ def list_organised():
         user = _current_user()
         if user is None:
             return _error("Your session is no longer valid. Please log in again.", 401)
-        if user.role != ORGANISER_ROLE:
+        if not has_role(user, ORGANISER_ROLE):
             return _error(ORGANISERS_ONLY, 403)
         events = (
             Event.query.filter(Event.organiser_id == user.id, Event.status != DRAFT_STATUS)
@@ -2106,7 +2107,7 @@ def list_managed_registrations():
         user = _current_user()
         if user is None:
             return _error("Your session is no longer valid. Please log in again.", 401)
-        if user.role != COORDINATOR_ROLE:
+        if not has_role(user, COORDINATOR_ROLE):
             return _error(COORDINATORS_ONLY, 403)
         events = (
             Event.query.filter_by(coordinator_id=user.id)
@@ -2686,7 +2687,7 @@ def _can_view_event(user, event):
     if event.status in PUBLISHED_STATUSES:
         return True
     return (
-        user.role == "admin"
+        has_role(user, "admin")
         or event.organiser_id == user.id
         or _is_current_coordinator(user, event)
     )
@@ -2694,7 +2695,7 @@ def _can_view_event(user, event):
 
 def _register_decision(user, event, state, my_registration):
     """(can_register, reason): why an attendee can or cannot register (SCRUM-74 A7)."""
-    if user.role != "attendee":
+    if not has_role(user, "attendee"):
         return False, "not_attendee"
     if my_registration is not None:
         return False, "already_registered"
@@ -4066,7 +4067,7 @@ def list_change_requests_to_review():
         user = _current_user()
         if user is None:
             raise _Rejected("Your session is no longer valid. Please log in again.", 401)
-        if user.role != COORDINATOR_ROLE:
+        if not has_role(user, COORDINATOR_ROLE):
             raise _Rejected(CHANGE_REVIEWERS_ONLY, 403)
         rows = (EventChangeRequest.query
                 .join(Event, Event.id == EventChangeRequest.event_id)
