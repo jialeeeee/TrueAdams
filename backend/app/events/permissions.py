@@ -13,22 +13,35 @@ TECH_STAFF_ROLE = "tech_staff"
 COORDINATOR_VIEWER_ROLES = {"admin", COORDINATOR_ROLE, "venue_staff", "tech_staff"}
 
 
+# CF01 (G4 clarification #22): a user may hold more than one role: `role` is the main one
+# and `additional_roles` lists the others. Every permission check asks through these, so a
+# role held either way counts. Test doubles without `additional_roles` hold one role.
+def roles_of(user):
+    return frozenset([user.role, *(getattr(user, "additional_roles", None) or [])])
+
+
+def has_role(user, role):
+    return user is not None and role in roles_of(user)
+
+
+def has_any_role(user, roles):
+    return user is not None and not roles_of(user).isdisjoint(roles)
+
+
 def is_current_coordinator(user, event):
-    return user is not None and user.role == COORDINATOR_ROLE and event.coordinator_id == user.id
+    return has_role(user, COORDINATOR_ROLE) and event.coordinator_id == user.id
 
 
 def is_coordinator_lead(user):
-    return user is not None and user.role == COORDINATOR_LEAD_ROLE
+    return has_role(user, COORDINATOR_LEAD_ROLE)
 
 
 def is_current_organiser(user, event):
-    return user is not None and user.role == ORGANISER_ROLE and event.organiser_id == user.id
+    return has_role(user, ORGANISER_ROLE) and event.organiser_id == user.id
 
 
 def can_view_coordinator(user, event):
-    return user is not None and (
-        user.role in COORDINATOR_VIEWER_ROLES or is_current_organiser(user, event)
-    )
+    return has_any_role(user, COORDINATOR_VIEWER_ROLES) or is_current_organiser(user, event)
 
 
 def can_view_clarifications(user, event):
@@ -36,7 +49,7 @@ def can_view_clarifications(user, event):
 
 
 def is_tech_staff(user, event=None):
-    return user is not None and user.role == TECH_STAFF_ROLE
+    return has_role(user, TECH_STAFF_ROLE)
 
 
 def can_view_equipment(user, event):

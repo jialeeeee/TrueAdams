@@ -93,14 +93,29 @@ describe("SCRUM-27 sign-in", () => {
     await waitFor(() => expect(screen.getByTestId("location").textContent).toBe(path));
     expect(sessionStorage.getItem("access_token")).toBe("issued-token");
     expect(sessionStorage.getItem("user_role")).toBe(role);
+    // A reply without a `roles` list still names the one role (CF01).
+    expect(JSON.parse(sessionStorage.getItem("user_roles"))).toEqual([role]);
   });
 
   it("keeps no role from an earlier sign-in when the response names none", async () => {
     sessionStorage.setItem("user_role", "venue_staff");
+    sessionStorage.setItem("user_roles", JSON.stringify(["venue_staff", "attendee"]));
     apiClient.post.mockResolvedValue({ data: { access_token: "issued-token" } });
     await submit(renderLogin());
     await waitFor(() => expect(sessionStorage.getItem("access_token")).toBe("issued-token"));
     expect(sessionStorage.getItem("user_role")).toBeNull();
+    expect(sessionStorage.getItem("user_roles")).toBeNull();
+  });
+
+  // TC-76-09 (CF01): every role the user holds is kept for the menu; the main role still
+  // picks the home page.
+  it("keeps every role the user holds and goes to the main role's home page", async () => {
+    apiClient.post.mockResolvedValue({
+      data: { access_token: "issued-token", role: "organiser", roles: ["organiser", "attendee", 7] },
+    });
+    await submit(renderLogin());
+    await waitFor(() => expect(screen.getByTestId("location").textContent).toBe("/events/mine"));
+    expect(JSON.parse(sessionStorage.getItem("user_roles"))).toEqual(["organiser", "attendee"]);
   });
 
   it("displays the backend 401 explanation without authenticating or navigating", async () => {

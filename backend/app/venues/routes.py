@@ -13,6 +13,7 @@ from ..local_time import singapore_now
 from ..models import (
     Event, Notification, User, Venue, VenueBlock, VenueBooking, VenueBookingFlag, VenueChange,
     VenueReplacementFlag)
+from ..roles import has_any_role, holding
 
 venues_bp = Blueprint("venues", __name__)
 
@@ -76,7 +77,7 @@ def _require_viewer(roles=VENUE_VIEWER_ROLES, denied="You are not allowed to vie
         user = None
     if user is None:
         raise _Rejected("Your session is no longer valid. Please log in again.", 401)
-    if roles is not None and user.role not in roles:
+    if roles is not None and not has_any_role(user, roles):
         raise _Rejected(denied, 403)
     return user
 
@@ -494,7 +495,7 @@ def record_unavailable_period(venue_id: int):
         venue = db.session.get(Venue, venue_id, with_for_update=True)
         if venue is None:
             raise _Rejected("Venue not found.", 404)
-        if user.role not in UNAVAILABLE_ROLES:
+        if not has_any_role(user, UNAVAILABLE_ROLES):
             raise _Rejected(UNAVAILABLE_DENIED, 403)
         body = request.get_json(silent=True)
         if not isinstance(body, dict):
@@ -607,7 +608,7 @@ def list_unavailable_periods(venue_id: int):
         user = _require_viewer(roles=None)
         if db.session.get(Venue, venue_id) is None:
             raise _Rejected("Venue not found.", 404)
-        if user.role not in UNAVAILABLE_ROLES:
+        if not has_any_role(user, UNAVAILABLE_ROLES):
             raise _Rejected(UNAVAILABLE_DENIED, 403)
         periods = [_unavailable_payload(b) for b in VenueBlock.query.filter_by(
             venue_id=venue_id).order_by(VenueBlock.start_time, VenueBlock.id).all()]
@@ -1585,7 +1586,7 @@ def reject_booking(booking_id: int):
                                  populate_existing=True)
         if booking is None:
             raise _Rejected("Booking request not found.", 404)
-        if user.role not in BOOKING_REVIEWER_ROLES:
+        if not has_any_role(user, BOOKING_REVIEWER_ROLES):
             raise _Rejected("Only Venue Staff can reject venue requests.", 403)
         reason = _rejection_reason(request.get_json(silent=True))
         if booking.status != PENDING:
@@ -1956,7 +1957,7 @@ def _notify_venue_staff(message, event_id, kind=CANCELLATION_NOTIFICATION):
 
     Venue Staff aren't linked to venues, so all of them are told (A4, open question Q4).
     """
-    staff = User.query.filter(User.role.in_(BOOKING_REVIEWER_ROLES)).all()
+    staff = User.query.filter(holding(BOOKING_REVIEWER_ROLES)).all()
     for member in staff:
         db.session.add(Notification(recipient_id=member.id, kind=kind,
                                     message=message, event_id=event_id))
