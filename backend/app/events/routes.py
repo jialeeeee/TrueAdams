@@ -26,9 +26,9 @@ from ..models import (
 )
 from ..registrations.routes import REGISTERED, REGISTRABLE_STATUSES, WITHDRAWN, singapore_now
 from ..resources import availability, reservations as reserving
-from ..venues.routes import LAYOUT_OPTIONS
 from ..venues.scheduling import (
     BLOCKING_BOOKING_STATUS, FLAGGED, REPLACEMENT_FLAG, TENTATIVE_STATUS, overlapping)
+from ..venues.routes import LAYOUT_OPTIONS
 from . import change_requests, change_review, equipment, suitability
 from .permissions import (
     COORDINATOR_ROLE,
