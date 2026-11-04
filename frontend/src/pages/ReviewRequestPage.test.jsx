@@ -86,10 +86,14 @@ beforeEach(() => {
 describe("SCRUM-55 read submitted details and history (UNEXECUTED)", () => {
   // TC-55-09: AC4. NULL and false must remain visibly different answers.
   it.each([
-    ["recorded", "Step-free access", true, "Step-free access", "Yes"],
-    ["unrecorded accessibility and no registration", null, false, "Not provided", "No"],
-  ])("shows all submitted fields with %s values", async (_case, accessibility, registration, shownAccess, shownRegistration) => {
-    await renderPage(request({ accessibility_needs: accessibility, registration_required: registration }));
+    ["recorded", "Step-free access", true, ["theatre", "banquet"], "Step-free access", "Yes", "Theatre, Banquet"],
+    ["unrecorded accessibility and no registration", null, false, null, "Not provided", "No", "Not provided"],
+    // CF02: a coordinator may record that no particular layout is needed (SCRUM-38).
+    ["no layout needed", "None", true, [], "None", "Yes", "Not required"],
+  ])("shows all submitted fields with %s values", async (_case, accessibility, registration, layouts, shownAccess, shownRegistration, shownLayouts) => {
+    await renderPage(request({
+      accessibility_needs: accessibility, registration_required: registration, required_layouts: layouts,
+    }));
     expect(screen.getByRole("heading", { name: "Review: Harbour Lights Festival" })).toBeTruthy();
     const expected = {
       Purpose: "Celebrate the harbour's reopening",
@@ -97,7 +101,7 @@ describe("SCRUM-55 read submitted details and history (UNEXECUTED)", () => {
       Start: "2026-12-12 17:00", End: "2026-12-12 22:00",
       "Expected attendance": "250", "Venue requirements": "Open-air waterfront space",
       "Accessibility needs": shownAccess, "Equipment requirements": "PA system",
-      "Attendee registration needed": shownRegistration,
+      "Room layout": shownLayouts, "Attendee registration needed": shownRegistration,
     };
     for (const [label, value] of Object.entries(expected)) {
       const term = screen.getAllByRole("term").find((node) => node.textContent === label);

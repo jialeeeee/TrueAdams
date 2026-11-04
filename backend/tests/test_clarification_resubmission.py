@@ -236,6 +236,33 @@ class ClarificationResubmissionTests(unittest.TestCase):
         self.session.commit.assert_not_called()
         self.email.assert_not_called()
 
+    # CF02 (SCRUM-28 A1): a resubmitted request still answers every compulsory field, so
+    # an edit may change accessibility needs or the room layout but not clear them.
+    def test_resubmission_cannot_clear_a_compulsory_answer(self):
+        self.event.accessibility_needs = "Step-free entrance"
+        self.event.required_layouts = ["theatre"]
+        accessibility = "Accessibility needs can't be left blank. If there are none, write None."
+        layout = "Room layout can't be left blank. Choose at least one layout."
+        for changes, message in (({"accessibility_needs": "  "}, accessibility),
+                                 ({"required_layouts": []}, layout),
+                                 ({"required_layouts": None}, layout)):
+            with self.subTest(changes=changes):
+                response = self.resubmit(changes={"description": DESCRIPTION, **changes})
+
+                self.assertEqual(response.status_code, 422, response.get_json())
+                self.assertEqual(response.get_json()["fields"], {next(iter(changes)): message})
+        self.assertEqual((self.event.accessibility_needs, self.event.required_layouts,
+                          self.event.description, self.event.status),
+                         ("Step-free entrance", ["theatre"], "Original description",
+                          "under_review"))
+        self.session.add.assert_not_called()
+        self.session.commit.assert_not_called()
+
+        # Changing an answer is still allowed.
+        response = self.resubmit(changes={"accessibility_needs": "None"})
+        self.assertEqual(response.status_code, 200, response.get_json())
+        self.assertEqual(self.event.accessibility_needs, "None")
+
 
 class ClarificationResubmissionLocalTests(AppTestCase):
     @classmethod

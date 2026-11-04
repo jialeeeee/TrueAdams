@@ -27,6 +27,7 @@ const DETAILS = [
   ["venue_requirements", "Venue requirements"],
   ["accessibility_needs", "Accessibility needs"],
   ["equipment_requirements", "Equipment requirements"],
+  ["required_layouts", "Room layout"],
   ["registration_required", "Attendee registration needed"],
 ];
 
@@ -38,6 +39,11 @@ function countWords(text) {
 function display(field, value) {
   if (value === null || value === undefined || value === "") return "Not provided";
   if (field === "registration_required") return value ? "Yes" : "No";
+  // CF02: the layouts chosen; a coordinator may record that none is needed (SCRUM-38).
+  if (Array.isArray(value)) {
+    return value.length ? value.map((name) => name[0].toUpperCase() + name.slice(1)).join(", ")
+      : "Not required";
+  }
   // Proposed times are Singapore time without a time zone: show them as recorded.
   if (field.endsWith("_time")) return value.slice(0, 16).replace("T", " ");
   return String(value);

@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import apiClient from "../api/client.js";
 import DraftEventPage from "./DraftEventPage.jsx";
 
-// Frontend cases TC-29-10, 15, 19, 23 and 29 in
+// Frontend cases TC-29-02a, 10, 15, 19, 23, 26 and 29 in
 // docs/test-cases/SCRUM-29-draft-event-request.md.
 // SCRUM-28 TC-28-02/13/14 in SCRUM-28-Test-Coverage-Plan.xlsx;
 // backend cases are in tests/test_event_submission.py. HTTP is mocked throughout.
@@ -15,7 +15,7 @@ vi.mock("../api/client.js", () => ({ default: { get: vi.fn(), post: vi.fn(), put
 const EMPTY = {
   purpose: null, description: null, start_time: null, end_time: null,
   expected_attendance: null, venue_requirements: null, accessibility_needs: null,
-  equipment_requirements: null, registration_required: null,
+  equipment_requirements: null, required_layouts: null, registration_required: null,
 };
 
 function draft(overrides = {}) {
@@ -24,7 +24,8 @@ function draft(overrides = {}) {
     purpose: "Celebrate the harbour's reopening", start_time: "2026-12-12T17:00:00",
     expected_attendance: 250, created_at: "2026-09-20T02:00:00",
     last_saved_at: "2026-09-20T02:00:00", submitted_at: null,
-    missing_for_submission: ["description", "end_time", "venue_requirements", "registration_required"],
+    missing_for_submission: ["description", "end_time", "venue_requirements", "accessibility_needs",
+      "equipment_requirements", "required_layouts", "registration_required"],
     ...overrides,
   };
 }
@@ -56,13 +57,14 @@ async function renderAt(path) {
 }
 
 const field = (label) => screen.getByLabelText(label);
+const layout = (name) => screen.getByRole("checkbox", { name });
 const saveButton = () => screen.getByRole("button", { name: "Save draft" });
 const submitButton = () => screen.getByRole("button", { name: "Submit for review" });
 
 const COMPLETE_REQUEST = draft({
   description: "Lanterns", end_time: "2026-12-12T22:00:00", venue_requirements: "Waterfront",
   accessibility_needs: "Step-free access", equipment_requirements: "Projector",
-  registration_required: true, missing_for_submission: [],
+  required_layouts: ["theatre"], registration_required: true, missing_for_submission: [],
 });
 const FORM_LABELS = {
   title: "Event name", purpose: "Purpose", description: "Description", start_time: "Start",
@@ -110,6 +112,7 @@ describe("SCRUM-29 draft event request", () => {
 
     expect(apiClient.post).toHaveBeenCalledWith("/events/drafts", expect.objectContaining({
       title: "Spring Garden Party", purpose: null, expected_attendance: null, registration_required: null,
+      required_layouts: null,
     }));
     expect(await screen.findByText(`Last saved: ${localTime("2026-09-28T03:00:00")}`)).toBeTruthy();
     expect(screen.getByText("Status: Draft")).toBeTruthy();
@@ -173,6 +176,7 @@ describe("SCRUM-29 draft event request", () => {
     // SCRUM-28 TC-28-02: additive all-field/receipt and in-flight preservation checks.
     Object.assign(complete, {
       accessibility_needs: "Step-free access", equipment_requirements: "Projector",
+      required_layouts: ["theatre"],
     });
     apiClient.get.mockResolvedValue({ data: draft() });
     let finishSave;
@@ -185,11 +189,13 @@ describe("SCRUM-29 draft event request", () => {
     await user.type(field("Venue requirements"), "Waterfront");
     await user.type(field("Accessibility needs"), "Step-free access");
     await user.type(field("Equipment requirements"), "Projector");
+    await user.click(layout("Theatre"));
     await user.selectOptions(field("Attendee registration needed"), "yes");
     await user.click(submitButton());
 
     // Soft assertion lets all original success assertions still run during RED.
     expect.soft(Object.values(FORM_LABELS).every((label) => field(label).disabled)).toBe(true);
+    expect(layout("Theatre").disabled).toBe(true);
     finishSave({ data: complete });
 
     await screen.findByText("Status: Submitted");
@@ -203,9 +209,11 @@ describe("SCRUM-29 draft event request", () => {
       start_time: "2026-12-12T17:00", end_time: "2026-12-12T22:00",
       expected_attendance: 250, venue_requirements: "Waterfront",
       accessibility_needs: "Step-free access", equipment_requirements: "Projector",
-      registration_required: true,
+      required_layouts: ["theatre"], registration_required: true,
     });
     expectRequestValues(complete);
+    expect(layout("Theatre").checked).toBe(true);
+    expect(layout("Classroom").checked).toBe(false);
     expect(confirmation().textContent).toMatch(/submitted.*review/i);
     expect(screen.getByText(/(?:request|reference).*#?7\b/i)).toBeTruthy();
   });
@@ -216,7 +224,8 @@ describe("SCRUM-29 draft event request", () => {
     apiClient.put.mockResolvedValue({ data: draft({ purpose: "Harbour party" }) });
     apiClient.post.mockRejectedValue(httpFailure(400, {
       error: "Complete these fields before submitting.",
-      missing: ["description", "end_time", "venue_requirements", "registration_required"],
+      missing: ["description", "end_time", "venue_requirements", "accessibility_needs",
+        "equipment_requirements", "required_layouts", "registration_required"],
     }));
     const user = await renderAt("/events/drafts/7");
 
@@ -225,7 +234,8 @@ describe("SCRUM-29 draft event request", () => {
     await user.click(submitButton());
 
     const alert = await screen.findByRole("alert");
-    for (const label of ["Description", "End", "Venue requirements", "Attendee registration needed"]) {
+    for (const label of ["Description", "End", "Venue requirements", "Accessibility needs",
+      "Equipment requirements", "Room layout", "Attendee registration needed"]) {
       expect(alert.textContent).toContain(label);
     }
     expect(screen.getByText("Status: Draft")).toBeTruthy();
@@ -376,6 +386,42 @@ describe("SCRUM-28 submission failure and known-ID recovery", () => {
       expect(apiClient.post.mock.calls.every(([url]) => url === "/events/drafts/7/submit")).toBe(true);
     },
   );
+});
+
+describe("CF02 compulsory accessibility, equipment and room layout", () => {
+  // TC-29-26a · AC6: an organiser with no needs answers "None" rather than leaving it blank.
+  it("asks for None when there are no accessibility or equipment needs", async () => {
+    apiClient.get.mockResolvedValue({ data: draft() });
+    await renderAt("/events/drafts/7");
+
+    for (const label of ["Accessibility needs", "Equipment requirements"]) {
+      const hint = document.getElementById(field(label).getAttribute("aria-describedby"));
+      expect(hint.textContent).toBe("If there are none, write None.");
+    }
+  });
+
+  // TC-29-02a · AC1: layouts come from the list venues use, kept in that list's order.
+  it("chooses room layouts from the venue layouts, and sends none chosen as not filled in", async () => {
+    apiClient.get.mockResolvedValue({ data: draft({ required_layouts: ["banquet"] }) });
+    apiClient.put.mockImplementation((_url, body) => Promise.resolve({ data: draft(body) }));
+    const user = await renderAt("/events/drafts/7");
+
+    expect(screen.getByRole("group", { name: "Room layout" })).toBeTruthy();
+    expect(["Theatre", "Classroom", "Boardroom", "Banquet"].map((name) => layout(name).checked))
+      .toEqual([false, false, false, true]);
+
+    await user.click(layout("Theatre"));
+    await user.click(saveButton());
+    await waitFor(() => expect(apiClient.put).toHaveBeenCalledTimes(1));
+    expect(apiClient.put.mock.calls[0][1].required_layouts).toEqual(["theatre", "banquet"]);
+
+    await user.click(layout("Theatre"));
+    await user.click(layout("Banquet"));
+    await user.click(saveButton());
+    await waitFor(() => expect(apiClient.put).toHaveBeenCalledTimes(2));
+    expect(apiClient.put.mock.calls[1][1].required_layouts).toBeNull();
+    expect(layout("Banquet").checked).toBe(false);
+  });
 });
 
 describe("SCRUM-29 form edge cases", () => {

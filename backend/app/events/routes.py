@@ -29,6 +29,7 @@ from ..resources import availability, reservations as reserving
 from ..roles import has_any_role, has_role, holding
 from ..venues.scheduling import (
     BLOCKING_BOOKING_STATUS, FLAGGED, REPLACEMENT_FLAG, TENTATIVE_STATUS, overlapping)
+from ..venues.routes import LAYOUT_OPTIONS
 from . import change_requests, change_review, equipment, suitability
 from .permissions import (
     COORDINATOR_ROLE,
@@ -104,15 +105,21 @@ DRAFT_FIELDS = {
     "venue_requirements": "Venue requirements",
     "accessibility_needs": "Accessibility needs",
     "equipment_requirements": "Equipment requirements",
+    # CF02: the layouts the event needs, saved where the suitability check reads them
+    # (SCRUM-38), and chosen from the layouts venues record (LAYOUT_OPTIONS).
+    "required_layouts": "Room layout",
     "registration_required": "Attendee registration needed",
 }
 DRAFT_TEXT_FIELDS = {"title", "purpose", "description", "venue_requirements",
                      "accessibility_needs", "equipment_requirements"}
 DRAFT_TIME_FIELDS = {"start_time", "end_time"}
-# Accessibility needs and equipment requirements are optional (SCRUM-29 A7).
+# CF02 (SCRUM-28 A1): every field is compulsory except that a draft only needs its name.
+# An organiser with no accessibility or equipment needs writes "None" (NO_EQUIPMENT_NOTES);
+# a room layout means at least one layout chosen.
 REQUIRED_FOR_SUBMISSION = [
     "title", "purpose", "description", "start_time", "end_time",
-    "expected_attendance", "venue_requirements", "registration_required",
+    "expected_attendance", "venue_requirements", "accessibility_needs",
+    "equipment_requirements", "required_layouts", "registration_required",
 ]
 TITLE_MAX_LENGTH = 255
 _LOCAL_DATETIME = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$")
@@ -219,10 +226,19 @@ def _safety_check_payload(event, venues, equipment_lines):
     }
 
 
+# CF02 (SCRUM-28 A1): what an organiser writes when the event needs no equipment, compared
+# without case, surrounding spaces or a closing full stop.
+NO_EQUIPMENT_NOTES = {"", "none"}
+
+
+def _no_equipment_note(note):
+    return (note or "").strip().rstrip(".").strip().casefold() in NO_EQUIPMENT_NOTES
+
+
 def _equipment_fully_reserved(event, requirements, reserved):
     """SCRUM-90/93: active quantities must cover every recorded requirement."""
-    # SCRUM-90 A1/Q1: an unprocessed organiser note is not "no equipment".
-    return (bool(requirements) or not (event.equipment_requirements or "").strip()) and all(
+    # SCRUM-90 A1/Q1: an unprocessed organiser note is not "no equipment"; "None" is.
+    return (bool(requirements) or _no_equipment_note(event.equipment_requirements)) and all(
         reserved.get((event.id, requirement.id), 0) >= requirement.quantity
         for requirement in requirements)
 
@@ -1120,6 +1136,10 @@ def resubmit_request(event_id: int):
             return _error("This request is not awaiting a clarification reply. Reload its questions.", 409)
 
         changes, corrections, restricted = _validate_planning_edits(event, edits)
+        # CF02: the resubmitted request must still answer every compulsory field.
+        for name, value in changes.items():
+            if name in REQUIRED_FOR_SUBMISSION and _unanswered(value):
+                corrections[name] = _blank_answer_message(name)
         if corrections:
             return _error("Some changes could not be saved. Please correct them and try again.",
                           422, fields=corrections)
@@ -1303,6 +1323,8 @@ def _parse_draft_value(field, value):
             except ValueError:
                 pass
         raise _field_error(field, f"{label} must be a valid date and time (YYYY-MM-DDTHH:MM).")
+    if field == "required_layouts":
+        return _parse_layouts(value, label)
     if field == "expected_attendance":
         if value is None:
             return None
@@ -1313,6 +1335,38 @@ def _parse_draft_value(field, value):
     if value is None or isinstance(value, bool):
         return value
     raise _field_error(field, f"{label} must be yes or no.")
+
+
+def _parse_layouts(value, label):
+    """CF02: layouts chosen from the venues' list, as the list spells them, without repeats.
+    Choosing none is not an answer yet, so it is saved as not filled in."""
+    if value is None:
+        return None
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        raise _field_error("required_layouts", f"{label} must be a list of layouts.")
+    by_name = {option.lower(): option for option in LAYOUT_OPTIONS}
+    unknown = [item for item in value if item.strip().lower() not in by_name]
+    if unknown:
+        raise _field_error("required_layouts", f"{label} must be chosen from the list: "
+                                               f"{', '.join(unknown)} is not an option.")
+    return list(dict.fromkeys(by_name[item.strip().lower()] for item in value)) or None
+
+
+def _unanswered(value):
+    """A compulsory field with nothing in it (CF02): not filled in, or no layout chosen."""
+    return value is None or value == []
+
+
+# CF02: how to answer a compulsory field when the honest answer is "nothing".
+BLANK_ANSWER_HINTS = {
+    "accessibility_needs": " If there are none, write None.",
+    "equipment_requirements": " If there are none, write None.",
+    "required_layouts": " Choose at least one layout.",
+}
+
+
+def _blank_answer_message(name):
+    return f"{DRAFT_FIELDS[name]} can't be left blank.{BLANK_ANSWER_HINTS.get(name, '')}"
 
 
 def _parse_draft(body, creating):
@@ -1354,7 +1408,7 @@ def _draft_payload(event):
         "last_saved_at": _isoformat(event.last_saved_at),
         "submitted_at": _isoformat(event.submitted_at),
         "missing_for_submission": [
-            field for field in REQUIRED_FOR_SUBMISSION if getattr(event, field) is None
+            field for field in REQUIRED_FOR_SUBMISSION if _unanswered(getattr(event, field))
         ],
     }
 
@@ -1473,7 +1527,7 @@ def save_draft(event_id: int):
 def submit_draft(event_id: int):
     try:
         event = _own_draft(event_id, lock=True)
-        missing = [f for f in REQUIRED_FOR_SUBMISSION if getattr(event, f) is None]
+        missing = [f for f in REQUIRED_FOR_SUBMISSION if _unanswered(getattr(event, f))]
         if missing:
             labels = ", ".join(DRAFT_FIELDS[f] for f in missing)
             raise _Rejected(

@@ -204,3 +204,27 @@ class SafetyCheckQueueUnitTests(unittest.TestCase):
         self.assertNotIn("Private retrieval detail", response.get_data(as_text=True))
         self.queries[EquipmentReservation].assert_called()
         self.session.rollback.assert_called_once()
+
+
+class NoEquipmentAnswerTests(unittest.TestCase):
+    """CF02 (SCRUM-28 A1): an organiser with no equipment needs records "None" rather than
+    leaving the field blank. That is an answer of no equipment, not an unprocessed note
+    (SCRUM-90 A1), so it does not hold the event out of the safety queue or confirmation."""
+
+    def ready(self, note, requirements=()):
+        return routes._equipment_fully_reserved(SimpleNamespace(id=1, equipment_requirements=note),
+                                                list(requirements), {})
+
+    def test_none_answers_no_equipment(self):
+        for note in (None, "", "   ", "None", "none", " NONE. "):
+            with self.subTest(note=note):
+                self.assertTrue(self.ready(note))
+
+    def test_any_other_note_still_needs_its_requirements_recorded(self):
+        for note in ("Speakers needed", "None yet, we will confirm", "No"):
+            with self.subTest(note=note):
+                self.assertFalse(self.ready(note))
+
+    def test_recorded_requirements_must_still_be_reserved(self):
+        requirement = SimpleNamespace(id=5, quantity=1)
+        self.assertFalse(self.ready("None", [requirement]))

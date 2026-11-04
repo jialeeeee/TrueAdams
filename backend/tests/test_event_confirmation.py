@@ -160,7 +160,7 @@ class EventConfirmationUnitTests(unittest.TestCase):
     def test_prerequisites_use_current_bookings_active_quantities_and_persisted_safety(self):
         original = copy.deepcopy(self.rows)
         scenarios = ("ready_phases", "no_equipment", "venue_gap", "equipment_partial",
-                     "safety_missing", "all_missing", "unprocessed_note")
+                     "safety_missing", "all_missing", "unprocessed_note", "none_note")
         for scenario in scenarios:
             with self.subTest(scenario=scenario):
                 self.rows = copy.deepcopy(original)
@@ -184,6 +184,11 @@ class EventConfirmationUnitTests(unittest.TestCase):
                     self.rows[VenueBooking][0].status = "tentative"
                     self.rows[EquipmentReservation] = []
                     missing.extend([VENUE_MISSING, EQUIPMENT_MISSING])
+                if scenario == "none_note":
+                    # CF02: "None" is the organiser's answer of no equipment.
+                    self.rows[EquipmentRequirement] = []
+                    self.rows[EquipmentReservation] = []
+                    self.event.equipment_requirements = " none "
                 if scenario == "unprocessed_note":
                     self.rows[EquipmentRequirement] = []
                     self.rows[EquipmentReservation] = []

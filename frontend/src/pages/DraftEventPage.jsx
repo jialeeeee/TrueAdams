@@ -4,6 +4,13 @@ import apiClient from "../api/client.js";
 import formatSavedAt from "../utils/formatSavedAt.js";
 import statusLabel from "../utils/statusLabel.js";
 
+// CF02: what to write when the honest answer is "nothing", so no compulsory field is blank.
+const NONE_HINT = "If there are none, write None.";
+// The layouts an event can need: the ones venues record, so the suitability check can
+// compare them (SCRUM-38). Must match LAYOUT_OPTIONS in backend/app/venues/routes.py.
+const LAYOUT_OPTIONS = ["theatre", "classroom", "boardroom", "banquet"];
+const layoutLabel = (option) => option[0].toUpperCase() + option.slice(1);
+
 // Fields of an event request, in display order. Names match the API (SCRUM-29).
 const FIELDS = [
   { name: "title", label: "Event name", type: "text" },
@@ -13,32 +20,36 @@ const FIELDS = [
   { name: "end_time", label: "End", type: "datetime-local" },
   { name: "expected_attendance", label: "Expected attendance", type: "number" },
   { name: "venue_requirements", label: "Venue requirements", type: "textarea" },
-  { name: "accessibility_needs", label: "Accessibility needs", type: "textarea" },
-  { name: "equipment_requirements", label: "Equipment requirements", type: "textarea" },
+  { name: "accessibility_needs", label: "Accessibility needs", type: "textarea", hint: NONE_HINT },
+  { name: "equipment_requirements", label: "Equipment requirements", type: "textarea", hint: NONE_HINT },
+  { name: "required_layouts", label: "Room layout", type: "layouts" },
   { name: "registration_required", label: "Attendee registration needed", type: "yes-no" },
 ];
 const LABELS = Object.fromEntries(FIELDS.map((f) => [f.name, f.label]));
-const EMPTY_FORM = Object.fromEntries(FIELDS.map((f) => [f.name, ""]));
+const EMPTY_FORM = Object.fromEntries(FIELDS.map((f) => [f.name, f.type === "layouts" ? [] : ""]));
 
-// Draft from the API -> form input values (all strings).
+// Draft from the API -> form input values (strings, and a list of layouts).
 function toForm(draft) {
   const form = { ...EMPTY_FORM };
   for (const { name, type } of FIELDS) {
     const value = draft[name];
     if (value === null || value === undefined) continue;
-    if (type === "datetime-local") form[name] = value.slice(0, 16);
+    if (type === "layouts") form[name] = value;
+    else if (type === "datetime-local") form[name] = value.slice(0, 16);
     else if (type === "yes-no") form[name] = value ? "yes" : "no";
     else form[name] = String(value);
   }
   return form;
 }
 
-// Form input values -> request body. Empty inputs are sent as null (not filled in).
+// Form input values -> request body. Empty inputs, and no layout chosen, are sent as null
+// (not filled in).
 function toBody(form) {
   const body = {};
   for (const { name, type } of FIELDS) {
     const value = form[name];
-    if (value === "") body[name] = null;
+    if (type === "layouts") body[name] = value.length ? value : null;
+    else if (value === "") body[name] = null;
     else if (type === "yes-no") body[name] = value === "yes";
     // Anything but digits is sent as typed, so the server can explain what is wrong.
     else if (type === "number") body[name] = /^\d+$/.test(value) ? Number(value) : value;
@@ -217,6 +228,12 @@ export default function DraftEventPage() {
 
   const submitted = draft !== null && draft.status !== "draft";
   const set = (name) => (e) => setForm((current) => ({ ...current, [name]: e.target.value }));
+  // Keeps the chosen layouts in the list's order, whatever order they were ticked in.
+  const toggleLayout = (option) => (e) => setForm((current) => ({
+    ...current,
+    required_layouts: LAYOUT_OPTIONS.filter((o) => (o === option ? e.target.checked
+      : current.required_layouts.includes(o))),
+  }));
 
   return (
     <section>
@@ -225,12 +242,30 @@ export default function DraftEventPage() {
       <p>{draft?.last_saved_at ? `Last saved: ${formatSavedAt(draft.last_saved_at)}` : "Not saved yet"}</p>
 
       <form onSubmit={(e) => e.preventDefault()}>
-        {FIELDS.map(({ name, label, type }) => {
+        {FIELDS.map(({ name, label, type, hint }) => {
           const id = `draft-${name}`;
-          const common = { id, value: form[name], onChange: set(name), disabled: submitted || busy };
+          if (type === "layouts") {
+            return (
+              <fieldset key={name}>
+                <legend>{label}</legend>
+                {LAYOUT_OPTIONS.map((option) => (
+                  <label key={option}>
+                    <input type="checkbox" checked={form[name].includes(option)}
+                      onChange={toggleLayout(option)} disabled={submitted || busy} />
+                    {layoutLabel(option)}
+                  </label>
+                ))}
+              </fieldset>
+            );
+          }
+          const common = {
+            id, value: form[name], onChange: set(name), disabled: submitted || busy,
+            "aria-describedby": hint ? `${id}-hint` : undefined,
+          };
           return (
             <div key={name}>
               <label htmlFor={id}>{label}</label>
+              {hint && <small id={`${id}-hint`}>{hint}</small>}
               {type === "textarea" && <textarea rows={3} {...common} />}
               {type === "yes-no" && (
                 <select {...common}>
