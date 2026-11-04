@@ -2,6 +2,8 @@
 
 **Phase:** focused GREEN verification complete, 21 Oct 2026 (Singapore), branch `feature/SCRUM-76-authorised-access`, baseline `536a537`. **Result: READY FOR PR** for the confirmed compatibility scope: 25 GREEN methods passed, 0 failures/errors/skips. Earlier RED: 9 methods passed without a demonstrated defect. Production code is unchanged. This document uses the user's confirmed sprint boundary.
 
+**Changed 4 Nov 2026 (CF01):** the customer answered G4 clarification #22, "Can one person hold two roles?", with "Yes, multiple roles possible." A user now has a main role (`users.role`) and may hold others (`users.additional_roles`, `db/multiple_roles.sql`). Every role check goes through `app/roles.py`. New cases TC-76-08 to 14 are in [Several roles for one user](#several-roles-for-one-user-cf01) below; the original cases and results are unchanged.
+
 ## Original Jira requirements (verbatim)
 
 **Title:** Access Only Authorised Information and Functions
@@ -136,12 +138,70 @@ Automation keys: **AUTH** = `tests.test_auth_unit.AuthHttpUnitTests`; **HTTP** =
 
 **TC-76-07 - Operational Safety Check:** **outside this sprint's SCRUM-76 testing scope**, assigned to SCRUM-90/91/92 by the user. No speculative executable case, endpoint, lifecycle expectation or failing test is added. This replaces the initial audit's deferred workflow proposal, not an additional AC.
 
+## Several roles for one user (CF01)
+
+**Source:** G4 clarification #22 (Week 4 answers): "Can one person hold two roles? Yes, multiple roles possible." It refines AC1 ("access follows the agreed permissions for …") for a user who holds more than one of those roles.
+
+**Working assumptions** (the customer did not say how several roles work, so these are the team's):
+- **A5 - All roles at once:** a user acts in every role they hold at the same time; there is no switching between roles. *(Q5)*
+- **A6 - Main role:** `users.role` stays the main role. It picks the home page after login (SCRUM-75) and is never empty. The others are listed in `users.additional_roles`; NULL means none, so every existing account keeps exactly the access it had.
+- **A7 - A role is not a relationship:** holding the coordinator or organiser role grants no access to someone else's event. The event's coordinator and organiser checks (AC2) are unchanged.
+- **A8 - No separation of duties yet:** nothing stops one person from being both the organiser and the assigned coordinator of the same event. *(Q6)*
+- **A9 - No screen to manage roles:** accounts are pre-loaded (CF01), so roles are set in the database, like the accounts themselves.
+
+**Automated:** `backend/tests/test_multiple_roles.py`; frontend `App.test.jsx` and `pages/LoginPage.test.jsx`.
+
+**TC-76-08 - The role rules**
+- **Traces to:** AC1. **Type:** unit.
+- **Expected:** a user holds their main role and every other listed role; no other roles (NULL, an empty list, or a test double without the column) means only the main role; nobody (no user) holds any role.
+- **Automated:** `RoleRulesTests` (3 tests).
+
+**TC-76-09 - Login names every role; the menu shows each role's links**
+- **Traces to:** AC1. **Type:** integration + frontend.
+- **Steps:** Log in as an organiser who is also an attendee and Venue Staff, and as a coordinator with no other role.
+- **Expected:** HTTP 200 with `role` the main role and `roles` = main role first, then the others in name order (`["organiser", "attendee", "venue_staff"]`; `["coordinator"]`). The page goes to the main role's home page and keeps the list; the menu shows the links of every role held, in the menu's order; signing out forgets the list. A stored list that isn't a JSON list falls back to the main role.
+- **Automated:** `MultipleRolesTests.test_login_lists_every_role_the_user_holds`; frontend "keeps every role the user holds and goes to the main role's home page", "shows a user with several roles the links of each", "uses the main role when the stored role list is …".
+
+**TC-76-10 - Each role held gives that role's functions, and only those**
+- **Traces to:** AC1, AC3. **Type:** integration.
+- **Steps:** An organiser who is also an attendee saves a draft and registers for an open event; a coordinator who is also Venue Staff opens their managed events and the venue booking requests. An organiser who is also an attendee opens the managed events, the booking requests and the safety checks.
+- **Expected:** 201, 201 (one registration), 200, 200; then 403 for each role not held.
+- **Automated:** `test_each_role_held_gives_that_roles_functions`, `test_a_role_not_held_is_still_refused`.
+
+**TC-76-11 - An extra role grants no relationship to an event**
+- **Traces to:** AC2, AC4, AC5. **Type:** integration (negative).
+- **Steps:** An organiser who also holds the coordinator role starts the review of, and confirms, an event assigned to another coordinator, and opens another organiser's draft.
+- **Expected:** 403 each time; the event is still Submitted.
+- **Automated:** `test_an_extra_role_grants_no_access_to_other_peoples_events`.
+
+**TC-76-12 - Lists of people with a role include other-role holders**
+- **Traces to:** AC1. **Type:** integration.
+- **Steps:** A Lead opens a waiting event's assignment, with one main-role coordinator, one Venue Staff member who is also a coordinator, and one who is not. Venue Staff are looked up as the cancellation notice (SCRUM-94) does.
+- **Expected:** both coordinators are offered and the other staff member is not; both Venue Staff members are found.
+- **Automated:** `test_people_with_a_role_include_those_holding_it_as_another_role`.
+
+**TC-76-13 - A changed role applies to an existing token**
+- **Traces to:** AC1, AC5. **Type:** integration.
+- **Steps:** With one token, open the venue booking requests as an organiser; add Venue Staff as another role; remove it again.
+- **Expected:** 403, then 200, then 403.
+- **Automated:** `test_a_changed_role_applies_to_an_existing_token`.
+
+**TC-76-14 - Every role check accepts a role held as another role**
+- **Traces to:** AC1, AC2. **Type:** integration.
+- **Steps:** For each of the 22 places that check a role, a user who doesn't hold that role calls it; the role is then added to their other roles and they call it again. Also: an organiser resubmits to a coordinator who holds that role as another role (SCRUM-95), and a booking is cancelled while a Venue Staff member holds that role as another role (SCRUM-94).
+- **Expected:** refused (403, or not offered the attendee's Register) before; allowed after. The resubmission is refused (409) until the coordinator holds the role, then saved (200); the Venue Staff member gets the cancellation notification.
+- **Automated:** `EveryRoleCheckTests` (3 tests).
+
+**Evidence (4 Nov 2026, local PostgreSQL built from the models):** backend 1,376 tests pass with 100% coverage, frontend 659 tests pass with 100% statements, branches, functions and lines. Reverting each converted check, one at a time, to the single-role form is caught by a test in 27 of 27 cases; breaking each frontend rule (menu, stored list, sign-out, login) is caught in 7 of 7.
+
+**Schema:** `db/multiple_roles.sql` adds `users.additional_roles jsonb` (idempotent). It must be run in the Supabase SQL editor before merging; until then `test_database_tables_match_the_models` fails. `test_role.sql` needs no change.
+
 ## Traceability matrix
 
 | Original AC | Targeted cases | Existing evidence reused | Execution qualification |
 |---|---|---|---|
-| AC1 | TC-76-01/02/03/04 | R1/R2/R3; R4 role landing | Selected isolated and local database tests PASS; R4 not rerun. |
-| AC2 | TC-76-02/03/04; conditional 05 | R1 privilege transfer, R2 supervision | Selected isolated and persisted relationship tests PASS; 05 not run pending policy. |
+| AC1 | TC-76-01/02/03/04; CF01 08/09/10/12/13/14 | R1/R2/R3; R4 role landing | Selected isolated and local database tests PASS; R4 not rerun. |
+| AC2 | TC-76-02/03/04, CF01 11/14; conditional 05 | R1 privilege transfer, R2 supervision | Selected isolated and persisted relationship tests PASS; 05 not run pending policy. |
 | AC3 | TC-76-02/03/04; reused 06 | R1/R2/R3 guards, R4 rendering | Selected isolated and persisted refusals PASS; R4 not rerun. |
 | AC4 | TC-76-02/03/04 | R1/R3 snapshots and persisted denials | New-role mock snapshots **and** new-role/all-original-role persisted event refusal checks PASS. |
 | AC5 | TC-76-02/03/04; reused 06 | R1/R2/R3 direct HTTP; R4 navigation | Selected isolated/database HTTP tests PASS; browser/end-to-end not rerun. |
@@ -292,6 +352,8 @@ with mock.patch.object(Engine, 'connect', local_connect), mock.patch.object(Engi
 | Q2 | Global assignment-list interpretation remains unconfirmed. Preserve explicit SCRUM-81/82/83 behaviour; do not expand it under GREEN without agreement. |
 | Q3 | Safety-review event scope belongs to SCRUM-90/91/92, not this increment. |
 | Q4 | General-detail creator access after a role change remains ambiguous. Any changed expectation/helper requires clarification with SCRUM-74 owner/customer first. |
+| Q5 | CF01: does a user with several roles act in all of them at once (assumed, A5), or choose one role per session? |
+| Q6 | CF01: may one person be both the organiser and the assigned coordinator of the same event, and so approve their own request? Not prevented (A8). |
 
 **Branch files changed:** `backend/tests/test_auth_unit.py` and `backend/tests/test_authorization_http_unit.py` from RED; `backend/tests/test_authorization.py` adds the single GREEN persisted-state case; this test-case document. No other SCRUM documentation, production/frontend code, schema, dependencies, `.env` or CI configuration changed. No Supabase access, reset/migration, full-suite run, commit, push or PR occurred. Local restricted-role database access during GREEN is recorded below.
 

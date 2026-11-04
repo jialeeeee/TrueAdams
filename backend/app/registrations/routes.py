@@ -8,6 +8,7 @@ from ..extensions import db
 # Imported by name so tests can patch registrations.routes.singapore_now.
 from ..local_time import singapore_now
 from ..models import Event, Registration, User
+from ..roles import has_role
 
 registrations_bp = Blueprint("registrations", __name__)
 
@@ -59,7 +60,7 @@ def _require_attendee():
         user = None
     if user is None:
         raise _Rejected("Your session is no longer valid. Please log in again.", 401)
-    if user.role != ATTENDEE_ROLE:
+    if not has_role(user, ATTENDEE_ROLE):
         raise _Rejected("Only attendees can register for events.", 403)
     return user
 

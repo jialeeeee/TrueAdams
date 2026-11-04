@@ -156,6 +156,43 @@ it.each([
   expect(sessionStorage.getItem("user_role")).toBeNull();
 });
 
+// TC-76-09 (CF01): a user with several roles sees the links of each, in the menu's order,
+// and signing out forgets them all.
+it("shows a user with several roles the links of each", async () => {
+  apiClient.post.mockResolvedValue({
+    data: { access_token: "roles-token", role: "organiser", roles: ["organiser", "attendee"] },
+  });
+  apiClient.get.mockResolvedValue({ data: { drafts: [], submitted: [], message: "Nothing." } });
+  const user = renderApp("/login");
+  await enterCredentials(user);
+  await user.click(screen.getByRole("button", { name: "Login" }));
+
+  const shown = () => within(screen.getByRole("navigation")).getAllByRole("link").map((link) => link.textContent);
+  await waitFor(() => expect(shown()).toEqual(["Events", "Notifications", "My event requests", "My drafts",
+    "My requests", "Registrations for my events", "My registrations"]));
+
+  await user.click(screen.getByRole("button", { name: "Sign out" }));
+  expect(sessionStorage.getItem("user_roles")).toBeNull();
+});
+
+// A session whose role list can't be read falls back to its main role.
+it.each([
+  ["not JSON", "{not json"],
+  ["not a list", JSON.stringify({ role: "attendee" })],
+])("uses the main role when the stored role list is %s", async (_case, stored) => {
+  sessionStorage.setItem("access_token", "old-session");
+  sessionStorage.setItem("user_role", "safety_officer");
+  sessionStorage.setItem("user_roles", stored);
+  apiClient.get.mockResolvedValue({ data: { notifications: [], message: "You have no notifications." } });
+  renderApp("/notifications");
+  expect(await screen.findByText("You have no notifications.")).toBeTruthy();
+
+  const nav = screen.getByRole("navigation");
+  expect(within(nav).getAllByRole("link").map((link) => link.textContent))
+    .toEqual(["Events", "Notifications", "Safety checks"]);
+  sessionStorage.clear();
+});
+
 it("shows an administrator, or a session without a role, every link", async () => {
   sessionStorage.setItem("access_token", "admin-token");
   sessionStorage.setItem("user_role", "admin");

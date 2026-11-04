@@ -10,7 +10,8 @@ is left as it is. Every row it adds is named "[Demo] ..." so it is easy to tell 
 
 The password is read from DEMO_PASSWORD so that it is never committed with the code.
 
-What it adds (one account per role, email demo.<role>@connectsphere.demo):
+What it adds (one account per role, email demo.<role>@connectsphere.demo, and
+demo.multi, an organiser who is also an attendee, CF01):
   - three venues with hours, facilities and setup/turnaround, and two equipment types;
   - an event at each step of the demo path, from a draft to a confirmed event:
       Draft Workshop         draft, for the organiser to submit
@@ -55,7 +56,10 @@ ACCOUNTS = {
     "attendee1": ("demo.attendee1", "attendee"),
     "attendee2": ("demo.attendee2", "attendee"),
     "attendee3": ("demo.attendee3", "attendee"),
+    "multi": ("demo.multi", "organiser"),
 }
+# CF01: roles an account holds besides its main one.
+ADDITIONAL_ROLES = {"multi": ["attendee"]}
 VENUES = {
     "ballroom": dict(
         name="[Demo] Aurora Ballroom", capacity=300, location="Level 3, Marina Tower",
@@ -116,7 +120,8 @@ def seed(password):
     users = {}
     for key, (local, role) in ACCOUNTS.items():
         users[key], new = _get_or_add(User, {"email": f"{local}@{EMAIL_DOMAIN}"},
-                                      role=role, password_hash=hashed)
+                                      role=role, password_hash=hashed,
+                                      additional_roles=ADDITIONAL_ROLES.get(key))
         if new:
             added["accounts"].append(users[key].email)
     venues = {}

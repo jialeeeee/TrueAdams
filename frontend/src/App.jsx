@@ -25,7 +25,7 @@ import MyRegistrationsPage from "./pages/MyRegistrationsPage.jsx";
 import MyRequestsPage from "./pages/MyRequestsPage.jsx";
 import NotificationsPage from "./pages/NotificationsPage.jsx";
 import OrganisedEventsPage from "./pages/OrganisedEventsPage.jsx";
-import { ROLE_KEY } from "./pages/LoginPage.jsx";
+import { ROLE_KEY, ROLES_KEY } from "./pages/LoginPage.jsx";
 import ReassignCoordinatorPage from "./pages/ReassignCoordinatorPage.jsx";
 import ReassignmentRequestPage from "./pages/ReassignmentRequestPage.jsx";
 import RegistrationOverviewPage from "./pages/RegistrationOverviewPage.jsx";
@@ -50,6 +50,7 @@ import VenuesPage from "./pages/VenuesPage.jsx";
 // Each nav link and the roles whose pages it opens, from the role checks of the endpoint
 // each page loads; null means every role. This only tidies the menu: the backend still
 // refuses anyone else, so a role it doesn't know (or none) sees every link, as before.
+// A user with several roles (CF01) sees the links of each of them.
 const NAV_LINKS = [
   ["/", "Events", null],
   ["/notifications", "Notifications", null],
@@ -76,9 +77,23 @@ const NAV_LINKS = [
 ];
 const KNOWN_ROLES = new Set(NAV_LINKS.flatMap(([, , roles]) => roles ?? []));
 
-function visibleLinks(role) {
-  if (!KNOWN_ROLES.has(role)) return NAV_LINKS;
-  return NAV_LINKS.filter(([, , roles]) => roles === null || roles.includes(role));
+function visibleLinks(userRoles) {
+  const known = userRoles.filter((role) => KNOWN_ROLES.has(role));
+  if (!known.length) return NAV_LINKS;
+  return NAV_LINKS.filter(([, , roles]) => roles === null || roles.some((role) => known.includes(role)));
+}
+
+// The signed-in user's roles from the login reply. A session from before CF01, or one
+// whose list can't be read, falls back to its main role.
+function storedRoles() {
+  try {
+    const roles = JSON.parse(sessionStorage.getItem(ROLES_KEY));
+    if (Array.isArray(roles)) return roles;
+  } catch {
+    // Not JSON: use the main role below.
+  }
+  const role = sessionStorage.getItem(ROLE_KEY);
+  return role ? [role] : [];
 }
 
 function RequireSignIn() {
@@ -90,7 +105,7 @@ export default function App() {
   useLocation();
   const navigate = useNavigate();
   const signedIn = Boolean(sessionStorage.getItem("access_token"));
-  const role = signedIn ? sessionStorage.getItem(ROLE_KEY) : null;
+  const roles = signedIn ? storedRoles() : [];
   // SCRUM-75 AC6: login submissions and logout supersede pending login responses.
   const loginAttempt = useRef(0);
 
@@ -98,13 +113,14 @@ export default function App() {
     loginAttempt.current += 1;
     sessionStorage.removeItem("access_token");
     sessionStorage.removeItem(ROLE_KEY);
+    sessionStorage.removeItem(ROLES_KEY);
     navigate("/login", { replace: true });
   };
 
   return (
     <div>
       <nav>
-        {visibleLinks(role).map(([path, label]) => (
+        {visibleLinks(roles).map(([path, label]) => (
           <Link key={path} to={path}>{label}</Link>
         ))}
         {signedIn ? <button type="button" onClick={signOut}>Sign out</button> : <Link to="/login">Login</Link>}
