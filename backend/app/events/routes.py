@@ -26,11 +26,12 @@ from ..models import (
 )
 from ..registrations.routes import REGISTERED, REGISTRABLE_STATUSES, WITHDRAWN, singapore_now
 from ..resources import availability, reservations as reserving
+# SCRUM-98 reuses SCRUM-94's notice to Venue Staff, who aren't linked to venues.
+from ..venues.routes import _notify_venue_staff
 from ..roles import has_any_role, has_role, holding
 from ..venues.scheduling import (
     BLOCKING_BOOKING_STATUS, FLAGGED, REPLACEMENT_FLAG, TENTATIVE_STATUS, overlapping)
-# SCRUM-98 reuses SCRUM-94's notice to Venue Staff, who aren't linked to venues.
-from ..venues.routes import LAYOUT_OPTIONS, _notify_venue_staff
+from ..venues.routes import LAYOUT_OPTIONS
 from . import change_requests, change_review, equipment, suitability
 from .permissions import (
     COORDINATOR_ROLE,
