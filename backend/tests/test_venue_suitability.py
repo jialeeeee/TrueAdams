@@ -309,5 +309,52 @@ class SavingRequirementsTests(SuitabilityTestCase):
             self.assertIn("required_facilities", response.get_json()["fields"])
 
 
+
+class PlanningRequirementsTests(SuitabilityTestCase):
+    """CF11 (G4 clarification #8): the coordinator records what the event needs on its
+    planning page, so the check can show an accessibility or layout mismatch.
+
+    GET /api/events/<id>/planning and the PATCH reply carry
+        "requirements": {"facilities", "accessibility_features", "layouts"}
+    each a list as saved, [] when the event needs none, or null when not recorded.
+    """
+
+    def planning(self, event):
+        response = self.client.get(f"/api/events/{event.id}/planning",
+                                   headers=self.auth_headers(self.alice))
+        self.assertEqual(response.status_code, 200, response.get_json())
+        return response.get_json()
+
+    # TC15: the planning view shows each list, telling "not recorded" from "none needed".
+    def test_the_planning_view_shows_what_the_event_needs(self):
+        event = self.event(facilities=None, accessibility=(), layouts=("theatre",))
+
+        self.assertEqual(self.planning(event)["requirements"], {
+            "facilities": None, "accessibility_features": [], "layouts": ["theatre"]})
+
+    # TC16: requirements the coordinator records are used by the next check, so an
+    # accessibility or layout mismatch is shown (clarification #8).
+    def test_recorded_requirements_show_mismatches_on_the_next_check(self):
+        # Within Marina Room's capacity of 50, so only the recorded needs can fail it.
+        event = self.event(attendance=40, facilities=None, accessibility=None, layouts=None)
+        self.assertEqual(self.result(event, self.v102)["overall"], "unable_to_assess")
+
+        response = self.client.patch(
+            f"/api/events/{event.id}", headers=self.auth_headers(self.alice),
+            json={"required_facilities": ["Microphone"],
+                  "required_accessibility_features": ["Wheelchair ramp"],
+                  "required_layouts": ["theatre"]})
+
+        self.assertEqual(response.status_code, 200, response.get_json())
+        self.assertEqual(response.get_json()["requirements"], {
+            "facilities": ["Microphone"], "accessibility_features": ["Wheelchair ramp"],
+            "layouts": ["theatre"]})
+        result = self.result(event, self.v102)
+        self.assertEqual(self.lines(result), {
+            ("attendance", None): "match", ("facility", "Microphone"): "match",
+            ("accessibility", "Wheelchair ramp"): "mismatch", ("layout", "theatre"): "mismatch"})
+        self.assertEqual(result["overall"], "does_not_meet")
+
+
 if __name__ == "__main__":
     unittest.main()

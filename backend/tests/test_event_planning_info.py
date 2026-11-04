@@ -247,6 +247,9 @@ class ViewPlanningInformationTests(PlanningTestCase):
                 "coordinator_assigned_at": "2026-09-10T09:30:00",
                 "created_at": "2026-09-05T14:00:00",
                 "not_recorded": [],
+                # CF11: what the event needs of a venue; this one has none recorded.
+                "requirements": {"facilities": None, "accessibility_features": None,
+                                 "layouts": None},
                 # SCRUM-85 A7: the event's venue bookings; this one has none.
                 "venue_bookings": [],
             },

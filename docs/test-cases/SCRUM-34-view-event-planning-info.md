@@ -4,6 +4,8 @@
 
 **Created:** 27 Sep 2026 · **Status of all cases:** Not run (feature not yet built) · **Automated tests:** `backend/tests/test_event_planning_info.py` (30 tests; all fail until the endpoint exists)
 
+**Changed 4 Nov 2026 (CF11):** the planning view also returns `requirements` (the event's required facilities, accessibility features and layouts, SCRUM-38), shown and edited in the page's Event requirements section. `test_assigned_coordinator_sees_the_events_planning_information` now expects it; its other expectations are unchanged.
+
 ## Acceptance criteria
 
 | ID | Criterion |
