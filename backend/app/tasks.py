@@ -27,3 +27,13 @@ def check_hold_expiries() -> None:
     from .venues import hold_expiry
 
     hold_expiry.run()
+
+
+@celery.task(name="tasks.remind_incomplete_arrangements")
+def remind_incomplete_arrangements() -> None:
+    """SCRUM-99: remind each coordinator about their approved events that still can't be
+    confirmed. Celery beat runs it every REMINDER_INTERVAL_HOURS (app/events/reminders.py)."""
+    # Imported here because the events module imports this one.
+    from .events import reminders
+
+    reminders.run()
