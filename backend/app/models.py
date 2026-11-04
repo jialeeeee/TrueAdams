@@ -437,6 +437,41 @@ class EventChangeRequest(db.Model):
     decision_reason = db.Column(db.Text)
 
 
+class VenueBookingChangeFlag(db.Model):
+    """SCRUM-70 AC10: a venue booking flagged for the coordinator to decide on because an
+    accepted change request affects it. The booking itself is never changed.
+
+    `status` is "flagged" until the coordinator keeps the booking ("kept"); cancelling the
+    booking instead (SCRUM-94) ends the flag with it. A booking has at most one open flag:
+    a later accepted change updates it.
+    """
+
+    __tablename__ = "venue_booking_change_flags"
+    __table_args__ = (
+        db.Index(
+            "venue_booking_change_flags_one_open_per_booking",
+            "booking_id",
+            unique=True,
+            postgresql_where=db.text("status = 'flagged'"),
+        ),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    booking_id = db.Column(db.Integer, db.ForeignKey("venue_bookings.id", ondelete="CASCADE"),
+                           nullable=False)
+    # The accepted change request that last flagged it.
+    change_request_id = db.Column(db.Integer, db.ForeignKey("event_change_requests.id"),
+                                  nullable=False)
+    # Why the change affects it, as the review showed (SCRUM-70 A3): a list of sentences.
+    reasons = db.Column(JSONB, nullable=False)
+    status = db.Column(db.String(20), nullable=False, default="flagged")
+    # Who accepted the change and when, then who kept the booking and when (naive UTC).
+    flagged_by_id = db.Column(db.Integer, db.ForeignKey("users.id"))
+    flagged_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    decided_by_id = db.Column(db.Integer, db.ForeignKey("users.id"))
+    decided_at = db.Column(db.DateTime)
+
+
 class VenueChange(db.Model):
     """SCRUM-63: one add or edit of a venue, with who made it and when."""
 

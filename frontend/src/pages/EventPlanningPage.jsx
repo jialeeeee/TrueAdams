@@ -179,8 +179,42 @@ function EventRequirements({ eventId, status, requirements, onSaved }) {
   );
 }
 
+const NOT_KEPT = "Your decision was not saved. Check your connection and try again.";
+
+// SCRUM-70 AC10: a booking an accepted change affects, which the coordinator keeps here or
+// cancels or rebooks from the venue request page (SCRUM-94).
+function ChangeFlag({ eventId, booking, onKept }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const keep = async () => {
+    setBusy(true);
+    setError("");
+    try {
+      const response = await apiClient.post(`/events/${eventId}/venue-bookings/${booking.id}/keep`, {});
+      onKept(booking.id, response.data.message);
+    } catch (failure) {
+      const message = failure.response?.data?.error;
+      setError(typeof message === "string" && message.trim() ? message : NOT_KEPT);
+      setBusy(false);
+    }
+  };
+  return (
+    <section aria-label={`Change affecting ${booking.venue.name}`}>
+      <p>{booking.change_flag.label}</p>
+      <ul>
+        {booking.change_flag.reasons.map((reason) => <li key={reason}>{reason}</li>)}
+      </ul>
+      <button type="button" onClick={keep} disabled={busy}>
+        {busy ? "Keeping…" : "Keep this booking"}
+      </button>
+      <Link to={`/events/${eventId}/venue-request`}>Cancel or rebook it</Link>
+      {error && <p role="alert">{error}</p>}
+    </section>
+  );
+}
+
 // SCRUM-85: every venue booking of the event, with the status of each (AC4).
-function VenueBookings({ bookings }) {
+function VenueBookings({ eventId, bookings, onKept }) {
   return (
     <section aria-label="Venue bookings">
       <h2>Venue bookings</h2>
@@ -197,6 +231,7 @@ function VenueBookings({ bookings }) {
               )}
               <p>{`Status: ${bookingStatus(booking)}`}</p>
               {booking.flag && <p>{booking.flag}</p>}
+              {booking.change_flag && <ChangeFlag eventId={eventId} booking={booking} onKept={onKept} />}
             </li>
           ))}
         </ul>
@@ -255,6 +290,19 @@ export default function EventPlanningPage() {
     } finally {
       if (!isStale()) setConfirming(false);
     }
+  };
+
+  // SCRUM-70 AC10: a kept booking is no longer flagged; nothing else about it changes.
+  const kept = (bookingId, message) => {
+    setEvent((current) => ({
+      ...current,
+      venue_bookings: current.venue_bookings.map((booking) => {
+        if (booking.id !== bookingId) return booking;
+        const { change_flag: _done, ...rest } = booking;
+        return rest;
+      }),
+    }));
+    setConfirmation({ message });
   };
 
   const back = <Link to="/events/managed">Back to my managed events</Link>;
@@ -316,7 +364,7 @@ export default function EventPlanningPage() {
         <EventRequirements key={event.id} eventId={event.id} status={event.status}
           requirements={event.requirements} onSaved={setEvent} />
       )}
-      <VenueBookings bookings={event.venue_bookings ?? []} />
+      <VenueBookings eventId={event.id} bookings={event.venue_bookings ?? []} onKept={kept} />
       {event.safety_check && (
         <section aria-label="Safety check">
           <h2>Safety check</h2>

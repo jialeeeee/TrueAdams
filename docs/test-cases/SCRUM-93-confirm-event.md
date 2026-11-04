@@ -250,3 +250,4 @@ Original Jira user story and all four ACs remain verbatim. No backend confirmati
 
 - A confirmed booking flagged because its venue became unavailable (SCRUM-88) does not count towards covering the event. When only flagged bookings would cover it, the missing item is "Replacement for an unavailable venue"; otherwise it stays "Confirmed venue booking" (SCRUM-88 A11). **Automated:** `test_tc_88_a11_07`…`10` in `test_venue_unavailable_safety.py`.
 - Accepting a change request (SCRUM-70 AC11) or a venue becoming unavailable (SCRUM-88 A11) clears the safety decision, so confirming asks for a new "Approved safety check". **Automated:** `test_tc_70_34_accepting_clears_an_approved_safety_check`.
+- A live venue booking flagged by an accepted change request (SCRUM-70 AC10) needs the coordinator's decision first: missing "A decision on the venue bookings an accepted change affects". **Automated:** `test_tc_70_42_confirming_waits_for_a_decision_on_every_flagged_booking`.
