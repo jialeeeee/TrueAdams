@@ -18,7 +18,7 @@
 
 Each rule is tied to an open question below. If the customer answers differently, update the affected test cases before implementation.
 
-- **R1 — Normal fields:** `title`, `purpose`, `description` and `accessibility_needs`. These are the only fields this flow saves. *(Q1, Q5)*
+- **R1 — Normal fields:** `title`, `purpose`, `description` and `accessibility_needs`. These are the only fields this flow saves. *(Q1, Q5)* **Added by SCRUM-38 (A2):** `required_facilities`, `required_accessibility_features` and `required_layouts`, entered on the planning page since 4 Nov 2026 (CF11).
 - **R2 — Important fields:** `venue_id`, `start_time`, `end_time`, `expected_attendance`, `venue_requirements` and `registration_required`, because changing them affects venue bookings, venue capacity or attendees. They are never saved by this flow; SCRUM-52 defines how the coordinator is told to use the review process instead. *(Q2)*
 - **R3 — Other fields:** `status`, `organiser_id`, `coordinator_id`, `coordinator_assigned_at`, `created_at`, `id`, the SCRUM-29/32 request tracking fields (`submitted_at`, `last_saved_at`, `decision_note`, `decided_at`, `decided_by_id`) and `equipment_requirements` (recorded through SCRUM-42) are managed by other stories and cannot be changed here.
 - **R4 — Who can edit:** the same rule as viewing (SCRUM-34, A1). Only the event's current coordinator, while their role is still `coordinator`, checked against the database on every request.

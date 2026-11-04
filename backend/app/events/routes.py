@@ -571,6 +571,14 @@ def _planning_payload(event):
         "id": event.id,
         **fields,
         "not_recorded": [name for name in PLANNING_FIELDS if fields[name] is None],
+        # CF11 (G4 clarification #8): what the event needs of a venue, which the coordinator
+        # records here and the suitability check compares (SCRUM-38). Each is a list, []
+        # when nothing is needed, or None when not recorded.
+        "requirements": {
+            "facilities": event.required_facilities,
+            "accessibility_features": event.required_accessibility_features,
+            "layouts": event.required_layouts,
+        },
         "venue_bookings": venue_bookings,
         # SCRUM-88: only while a booking is flagged, so other events keep their payload.
         **({"change_review": {"needed": True, "reason": REPLACEMENT_FLAG}}
