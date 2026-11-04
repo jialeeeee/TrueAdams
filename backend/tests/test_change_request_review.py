@@ -991,3 +991,198 @@ class ConfirmedEventTests(SafetyTestCase):
         body = self.decided("N1", "accept")
 
         self.assertNotIn("no longer confirmed", body["message"])
+
+
+# ---------- AC10: accepting flags the affected bookings for the coordinator ----------
+
+MISSING_CHANGE_DECISION = "A decision on the venue bookings an accepted change affects"
+CHANGE_FLAG = "Affected by an accepted change: keep it, or cancel or rebook it"
+
+
+class BookingFlagTests(ReviewTestCase):
+    def flags(self, status=None):
+        from app.models import VenueBookingChangeFlag
+
+        self.db.session.expire_all()
+        query = VenueBookingChangeFlag.query.filter(VenueBookingChangeFlag.booking_id.in_(
+            [booking.id for booking in self.bookings.values()]))
+        rows = query.filter_by(status=status).all() if status else query.all()
+        keys = {booking.id: key for key, booking in self.bookings.items()}
+        return {keys[row.booking_id]: row for row in rows}
+
+    def planning_bookings(self):
+        response = self.client.get(f"/api/events/{self.events['V1'].id}/planning",
+                                   headers=self.headers("alice"))
+        self.assertEqual(response.status_code, 200, response.get_json())
+        keys = {booking.id: key for key, booking in self.bookings.items()}
+        return {keys[b["id"]]: b for b in response.get_json()["venue_bookings"]}
+
+    def keep(self, key, user="alice", event="V1"):
+        return self.client.post(
+            f"/api/events/{self.events[event].id}/venue-bookings/{self.bookings[key].id}/keep",
+            headers=self.headers(user))
+
+    def missing_for_confirmation(self):
+        response = self.client.post(f"/api/events/{self.events['V1'].id}/confirm",
+                                    headers=self.headers("alice"))
+        self.assertEqual(response.status_code, 409, response.get_json())
+        return response.get_json()["missing"]
+
+    # TC-70-38 · AC10
+    def test_tc_70_38_accepting_new_times_flags_every_live_booking(self):
+        self.seed_request("T1")
+        review = self.review("T1")["impact"]["venue_bookings"]
+
+        body = self.decided("T1", "accept")
+
+        flags = self.flags()
+        self.assertEqual(sorted(flags), ["B1", "B2", "B3"])
+        for key, item in zip(("B1", "B2", "B3"), review):
+            with self.subTest(booking=key):
+                self.assertEqual(flags[key].status, "flagged")
+                self.assertEqual(flags[key].reasons, item["reasons"])
+                self.assertEqual(flags[key].change_request_id, self.requests["T1"].id)
+                self.assertEqual(flags[key].flagged_by_id, self.users["alice"].id)
+        self.assertIn("3 venue bookings were flagged for you to decide on", body["message"])
+        planning = self.planning_bookings()
+        self.assertEqual(planning["B1"]["change_flag"]["label"], CHANGE_FLAG)
+        self.assertEqual(planning["B1"]["change_flag"]["reasons"], flags["B1"].reasons)
+        for key in ("B4", "B5"):
+            self.assertNotIn("change_flag", planning[key])
+
+    # TC-70-39 · AC10
+    def test_tc_70_39_only_the_bookings_the_change_affects_are_flagged(self):
+        self.seed_request("N1")
+        body = self.decided("N1", "accept")
+        # 250 people: the ballroom (220) and the garden room (120) are too small; the
+        # rooftop's capacity isn't recorded.
+        self.assertEqual(sorted(self.flags()), ["B1", "B2"])
+        self.assertIn("2 venue bookings were flagged", body["message"])
+
+    # TC-70-39 · AC10
+    def test_tc_70_39_rejecting_flags_nothing(self):
+        self.seed_request("T1")
+
+        body = self.decided("T1", "reject", REASON)
+
+        self.assertEqual(self.flags(), {})
+        self.assertNotIn("flagged", body["message"])
+
+    # TC-70-39 · AC10
+    def test_tc_70_39_one_booking_is_counted_as_one(self):
+        for key in ("B2", "B3"):
+            self.bookings[key].status = "cancelled"
+        self.db.session.commit()
+        self.seed_request("S1")
+
+        body = self.decided("S1", "accept")
+
+        self.assertEqual(sorted(self.flags()), ["B1"])
+        self.assertIn("1 venue booking was flagged", body["message"])
+
+    # TC-70-40 · AC10
+    def test_tc_70_40_a_later_change_updates_the_open_flag(self):
+        self.seed_request("N1")
+        self.decided("N1", "accept")
+        self.seed_request("S1")
+
+        self.decided("S1", "accept")
+
+        flags = self.flags()
+        self.assertEqual(sorted(flags), ["B1", "B2", "B3"])
+        self.assertEqual(flags["B1"].change_request_id, self.requests["S1"].id)
+        self.assertIn("venue requirements", flags["B1"].reasons[0])
+
+    # TC-70-41 · AC10
+    def test_tc_70_41_the_coordinator_keeps_a_flagged_booking(self):
+        self.seed_request("T1")
+        self.decided("T1", "accept")
+
+        response = self.keep("B1")
+
+        self.assertEqual(response.status_code, 200, response.get_json())
+        self.assertEqual(response.get_json()["message"],
+                         "You kept the booking at Grand Ballroom. It is no longer flagged.")
+        kept = self.flags()["B1"]
+        self.assertEqual((kept.status, kept.decided_by_id), ("kept", self.users["alice"].id))
+        self.assertIsNotNone(kept.decided_at)
+        self.assertNotIn("change_flag", self.planning_bookings()["B1"])
+        self.assertIn("change_flag", self.planning_bookings()["B2"])
+        again = self.assert_error(self.keep("B1"), 409)
+        self.assertEqual(again["reason"], "not_flagged")
+        self.db.session.expire_all()
+        self.assertEqual(self.db.session.get(VenueBooking, self.bookings["B1"].id).status,
+                         "confirmed")
+
+    # TC-70-41 · AC10
+    def test_tc_70_41_who_may_keep_a_booking_and_in_what_order(self):
+        self.seed_request("T1")
+        self.decided("T1", "accept")
+        ghost = self.make_user(role="coordinator")
+        ghost_headers = self.auth_headers(ghost)
+        self.db.session.delete(ghost)
+        self.db.session.commit()
+        url = f"/api/events/{self.events['V1'].id}/venue-bookings/{self.bookings['B1'].id}/keep"
+
+        self.assertEqual(self.client.post(url).status_code, 401)
+        self.assertEqual(self.assert_error(self.client.post(url, headers=ghost_headers),
+                                           401)["error"], SESSION_EXPIRED)
+        missing = f"/api/events/{self.missing_id(Event)}/venue-bookings/{self.bookings['B1'].id}/keep"
+        self.assert_error(self.client.post(missing, headers=self.headers("alice")), 404)
+        no_booking = (f"/api/events/{self.events['V1'].id}/venue-bookings/"
+                      f"{self.missing_id(VenueBooking)}/keep")
+        self.assert_error(self.client.post(no_booking, headers=self.headers("alice")), 404)
+        self.assert_error(self.keep("B1", user="ben", event="V2"), 404)
+        for user in ("ben", "dana", "gus", "admin"):
+            with self.subTest(user=user):
+                self.assert_error(self.keep("B1", user=user), 403)
+        self.assertEqual(self.flags()["B1"].status, "flagged")
+
+    # TC-70-41 · AC10
+    def test_tc_70_41_a_flag_on_a_booking_no_longer_live_needs_no_decision(self):
+        self.seed_request("T1")
+        self.decided("T1", "accept")
+        self.bookings["B3"].status = "cancelled"
+        self.db.session.commit()
+
+        self.assertNotIn("change_flag", self.planning_bookings()["B3"])
+        self.assertEqual(self.assert_error(self.keep("B3"), 409)["reason"], "not_flagged")
+        # B2's hold lapses on 2026-11-30 12:00.
+        with mock.patch.object(event_routes, "singapore_now",
+                               return_value=datetime(2026, 11, 30, 12, 0)):
+            self.assertNotIn("change_flag", self.planning_bookings()["B2"])
+            self.assertEqual(self.assert_error(self.keep("B2"), 409)["reason"], "not_flagged")
+
+    # TC-70-41 · AC10, AC6
+    def test_tc_70_41_a_failed_save_keeps_the_flag(self):
+        self.seed_request("T1")
+        self.decided("T1", "accept")
+
+        def fail(conn, cursor, statement, parameters, context, executemany):
+            if statement.startswith("UPDATE venue_booking_change_flags"):
+                raise OperationalError(statement, parameters, Exception("simulated outage"))
+
+        self.db.session.expire_all()
+        sa_event.listen(self.db.engine, "before_cursor_execute", fail)
+        try:
+            response = self.keep("B1")
+        finally:
+            sa_event.remove(self.db.engine, "before_cursor_execute", fail)
+
+        body = self.assert_error(response, 503)
+        self.assertIs(body["retryable"], True)
+        self.assertEqual(self.flags()["B1"].status, "flagged")
+
+    # TC-70-42 · AC10
+    def test_tc_70_42_confirming_waits_for_a_decision_on_every_flagged_booking(self):
+        self.assertNotIn(MISSING_CHANGE_DECISION, self.missing_for_confirmation())
+        self.seed_request("N1")
+        self.decided("N1", "accept")
+        self.assertIn(MISSING_CHANGE_DECISION, self.missing_for_confirmation())
+
+        self.assertEqual(self.keep("B1").status_code, 200)
+        self.assertIn(MISSING_CHANGE_DECISION, self.missing_for_confirmation())
+        self.bookings["B2"].status = "cancelled"
+        self.db.session.commit()
+
+        self.assertNotIn(MISSING_CHANGE_DECISION, self.missing_for_confirmation())

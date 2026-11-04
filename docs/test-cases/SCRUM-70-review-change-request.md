@@ -17,7 +17,7 @@
 | AC7 | The organiser is notified of the decision. |
 | AC8 | Accepting a request applies the proposed values to the event, and the event shows the new values. |
 | AC9 | When an accepted change alters the date, time or venue, every attendee registered for the event is notified of the new details. Unregistered attendees are not notified. |
-| AC10 | Accepting a change keeps the event's venue bookings but flags those affected for me to decide on, and releases reserved equipment when the date or time changes. Nothing is cancelled automatically. *(Flagging: not built yet.)* |
+| AC10 | Accepting a change keeps the event's venue bookings but flags those affected for me to decide on, and releases reserved equipment when the date or time changes. Nothing is cancelled automatically. |
 | AC11 | Accepting a significant change to a Confirmed event clears its safety approval and returns it to Approved, so it needs a new safety check and confirmation. |
 
 ## Working assumptions (to confirm)
@@ -41,6 +41,7 @@
 - **A8 — Order of checks:** 401 (no valid user) → 404 (no such event, or no such request for it) → 403 (not the event's current coordinator) → 400 (body not a JSON object, decision missing or unknown, reason missing, blank or too long) → 409 (`decided`, then `not_approved`) → 503 (not saved, `retryable: true`). The event, then the request, are read `FOR UPDATE`, as submitting a request locks the event, so a decision and a new request, or two decisions, happen one at a time.
 - **A9 — Waiting for a coordinator (AC5):** SCRUM-46 already blocks submission when the event has no current coordinator (409 `no_coordinator`). Its message now says the event is waiting for a coordinator: "This event is waiting for a coordinator to be assigned, so there is nobody to review a change request yet. Please try again once a coordinator is assigned."
 - **A11 — Clearing the safety decision (AC11, added 4 Nov 2026):** every field a change request can change is significant (A2), so accepting any request clears the event's safety decision in the same commit as the decision (`app/events/safety.py`): `safety_decision`, who made it, the comment and when all become empty, and a Confirmed event goes back to `approved`. Who confirmed it and when are kept. The event then reappears on the Safety Officer's list once its arrangements are ready (SCRUM-90), and confirmation asks for a new "Approved safety check" (SCRUM-93). A rejection or a request for changes is cleared too, since it was also made on the old arrangements *(Q8)*. Before deciding, the review lists the safety check as affected (`impact.safety_check`, only when there is a decision to clear) and the reply to an accepted request says the safety check was cleared. A rejected request keeps the decision. Confirmed events take change requests too (SCRUM-46 AC1, TC-70-37); when one is accepted, the reply and the organiser's notification say the event is back in planning.
+- **A12 — Flagging the affected bookings (AC10, added 4 Nov 2026):** accepting a request flags each venue booking the review listed as affected (A3: live bookings only), with the same reasons, in a new table `venue_booking_change_flags` (`db/venue_booking_change_flags.sql`), in the same commit as the decision. The booking itself is not changed. A booking has at most one open flag; a later accepted change brings it up to date (its request and reasons). The planning view shows `change_flag: {label, reasons, change_request_id, flagged_at}` on a live booking with an open flag, and the reply to the coordinator says how many were flagged. The coordinator decides on each: **keep it** (`POST /api/events/<id>/venue-bookings/<booking id>/keep`: 401 → 404 → 403 not the event's coordinator → 409 `not_flagged` → 503), which marks the flag `kept` with who and when; or **cancel or rebook it** from the venue request page (SCRUM-94, SCRUM-39), after which the flag needs no decision, as for any booking no longer live (cancelled, rejected, replaced or an expired hold). The event can't be confirmed while a live booking still awaits a decision (SCRUM-93: missing "A decision on the venue bookings an accepted change affects"). *(Q3, Q9)*
 - **A10 — Finding requests:** the coordinator's "Change requests to review" page lists the pending requests of the events they currently coordinate, oldest first, each linking to its review page.
 
 ## Seed data (CV-SEED)
@@ -315,7 +316,7 @@ Also: failed loads explain themselves and offer Retry on both pages.
 | AC7 | 19, 20 |
 | AC8 | 21, 22, 23, 27 |
 | AC9 | 24, 25 |
-| AC10 | 23 (bookings kept, equipment released; flagging not built yet) |
+| AC10 | 23, 38, 39, 40, 41, 42, 43 |
 | AC11 | 33, 34, 35, 36, 37 |
 
 ## Open questions for the customer
@@ -329,6 +330,7 @@ Also: failed loads explain themselves and offer Retry on both pages.
 | Q5 | May a coordinator still reject a pending request after the event is cancelled (as built: no; it stays pending)? | A1, TC-70-03 |
 | Q6 | May a coordinator accept part of a request? | A4 |
 | Q7 | Should registered attendees also be told of other accepted changes, such as the venue requirements? | A7, TC-70-25 |
+| Q9 | Should a booking flagged by an accepted change block confirmation until the coordinator decides on it (as built), or only be shown? | A12, TC-70-42 |
 | Q8 | AC11 names the safety *approval*. Should accepting a change also clear a rejection or a request for changes, so the event goes back on the safety check list (as built), or should those stay until the coordinator's correction is otherwise recorded? | A11, TC-70-35 |
 
 ## AC1, AC11 — a change to a confirmed event (added 4 Nov 2026)
@@ -338,3 +340,41 @@ Also: failed loads explain themselves and offer Retry on both pages.
 - **Steps:** With V1 confirmed and its safety check approved, accept N1. Separately, reject N1. Separately, accept N1 on an approved V1.
 - **Expected result:** Accepting: V1 is approved with attendance 250, its safety decision is empty, who confirmed it is kept, and both the reply and the organiser's notification say "The event is no longer confirmed: it is back in planning until it is confirmed again." plus that the safety check was cleared. Rejecting leaves it confirmed with its approval and says nothing about it. An approved event is never said to be unconfirmed.
 - **Automated:** `test_tc_70_37_accepting_returns_a_confirmed_event_to_approved`, `test_tc_70_37_rejecting_keeps_a_confirmed_event_confirmed`, `test_tc_70_37_an_approved_event_is_not_said_to_be_unconfirmed`
+
+## AC10 — Accepting flags the affected bookings for the coordinator (added 4 Nov 2026)
+
+**TC-70-38 · New times flag every live booking, with the review's reasons**
+- **Traces to:** AC10 · **Type:** Positive · **Depends on:** A12
+- **Steps:** Review T1, then accept it; open V1's planning view.
+- **Expected result:** B1, B2 and B3 each have one `flagged` flag with the reasons the review showed, T1's ID and alice as who flagged it; B4 (rejected) and B5 (expired hold) have none. The reply says "3 venue bookings were flagged for you to decide on". The planning view shows `change_flag` with the label and reasons on B1, not on B4 or B5.
+- **Automated:** `test_tc_70_38_accepting_new_times_flags_every_live_booking`
+
+**TC-70-39 · Only affected bookings are flagged; rejecting flags nothing**
+- **Traces to:** AC10 · **Type:** Business rule · **Depends on:** A12
+- **Steps:** Accept N1 (250 people). Separately reject T1. Separately, with B2 and B3 cancelled, accept S1.
+- **Expected result:** N1 flags B1 and B2 (too small), not B3 (capacity not recorded): "2 venue bookings were flagged". Rejecting flags nothing. S1 flags only B1: "1 venue booking was flagged".
+- **Automated:** `test_tc_70_39_only_the_bookings_the_change_affects_are_flagged`, `test_tc_70_39_rejecting_flags_nothing`, `test_tc_70_39_one_booking_is_counted_as_one`
+
+**TC-70-40 · A later change updates the open flag**
+- **Traces to:** AC10 · **Type:** Business rule · **Depends on:** A12
+- **Steps:** Accept N1, then S1.
+- **Expected result:** Each of B1–B3 has one flag; B1's names S1 and its venue-requirements reason.
+- **Automated:** `test_tc_70_40_a_later_change_updates_the_open_flag`
+
+**TC-70-41 · The coordinator keeps a flagged booking**
+- **Traces to:** AC10, AC6 · **Type:** Positive / Negative · **Depends on:** A12
+- **Steps:** After accepting T1, keep B1 as alice; keep it again. Try with no token, a deleted user, a missing event or booking, B1 under V2, and as ben, dana, gus and admin. Keep a cancelled B3, and B2 after its hold lapses. Keep B1 while saving fails.
+- **Expected result:** "You kept the booking at Grand Ballroom. It is no longer flagged."; the flag is `kept` with alice and the time; the booking is still confirmed; B1 has no `change_flag` while B2 still has. Again: 409 `not_flagged`. 401, 401, 404, 404, 404, then 403 for each user, with the flag unchanged. B3 and the lapsed B2: no `change_flag`, keeping is 409 `not_flagged`. The failed save is 503 `retryable` and the flag stays `flagged`.
+- **Automated:** `test_tc_70_41_the_coordinator_keeps_a_flagged_booking`, `test_tc_70_41_who_may_keep_a_booking_and_in_what_order`, `test_tc_70_41_a_flag_on_a_booking_no_longer_live_needs_no_decision`, `test_tc_70_41_a_failed_save_keeps_the_flag`
+
+**TC-70-42 · Confirming waits for a decision on every flagged booking**
+- **Traces to:** AC10 · **Type:** Business rule · **Depends on:** A12
+- **Steps:** Try to confirm V1 before and after accepting N1, after keeping B1, and after B2 is cancelled.
+- **Expected result:** "A decision on the venue bookings an accepted change affects" is missing only while B1 or B2 still awaits a decision.
+- **Automated:** `test_tc_70_42_confirming_waits_for_a_decision_on_every_flagged_booking`
+
+**TC-70-43 · The planning page shows the flag and lets the coordinator keep the booking** — AC10 · `EventPlanningPage.changeFlags.test.jsx`: "shows why a booking is flagged and how to decide on it", "keeps the booking and stops showing the flag", "explains a refused or failed decision and lets the coordinator try again"
+
+## Before merging (AC10)
+
+Run `backend/db/venue_booking_change_flags.sql` in the Supabase SQL editor as the project owner, then `backend/db/test_role.sql` again (new table). Both are safe to re-run. The CI `supabase-schema` job fails until they have been run.
