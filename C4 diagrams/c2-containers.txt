@@ -3,56 +3,60 @@ workspace "ConnectSphere - Containers" "C4 level 2 (containers) of the ConnectSp
     model {
         # Users: one person per role in use (CF01). Accounts are pre-loaded (no self-registration in
         # Release 1) and a user may hold several roles; each role sees its own screens.
-        organiser = person "Event Organiser" "Drafts and submits event requests, answers clarifications, and requests changes to approved events."
-        lead = person "Event Coordinator Lead" "Assigns and reassigns coordinators and oversees the events they assigned."
-        coordinator = person "Event Coordinator" "Reviews and plans events, decides change requests, sets up registration, and confirms or cancels events."
-        venueStaff = person "Venue Staff" "Maintains and deletes venues, decides booking requests, and manages holds and unavailability."
-        techStaff = person "Technical Support Staff" "Checks equipment availability and reserves equipment for events."
-        safetyOfficer = person "Safety Officer" "Approves, rejects or requests changes to an event's safety arrangements."
-        attendee = person "Attendee" "Browses published events, registers and withdraws."
+        organiser = person "Event Organiser" "Submits event requests and requests changes."
+        lead = person "Event Coordinator Lead" "Assigns coordinators to events."
+        coordinator = person "Event Coordinator" "Plans, confirms and cancels events."
+        venueStaff = person "Venue Staff" "Manages venues, bookings and holds."
+        techStaff = person "Technical Support Staff" "Reserves equipment for events."
+        safetyOfficer = person "Safety Officer" "Approves event safety arrangements."
+        attendee = person "Attendee" "Registers for published events."
 
-        # External systems
-        emailSystem = softwareSystem "Email Gateway / SMTP" "External mail server. Delivers notification emails to organisers, coordinators, Venue Staff, Technical Support Staff and attendees." "External"
+        # External systems. It emails organisers, coordinators, Venue Staff, Technical Support Staff
+        # and attendees; those arrows are left out so nothing points back up the page.
+        emailSystem = softwareSystem "Email Gateway" "External SMTP server that delivers notification emails." "External"
 
-        # The system in scope
+        # The system in scope. Descriptions are kept to a few lines so they fit inside their boxes.
         connectSphere = softwareSystem "ConnectSphere Platform" "Event planning from request to registration." {
-            webApp = container "Front-End App" "One screen per task, with in-app notifications. Sends the sign-in token with every API call; the API enforces every permission." "React 18 / Vite" "WebClient"
-            apiApp = container "API Application" "REST API under /api: checks each caller's stored roles, applies the workflow rules, and saves each change with its notifications in one commit." "Python / Flask / SQLAlchemy, Gunicorn"
-            celeryBeat = container "Celery Beat" "Queues the tentative-hold check every 5 minutes and the incomplete-arrangement reminders every 24 hours." "Python / Celery"
-            celeryWorker = container "Celery Worker" "Sends notification emails, expires tentative holds and reminds coordinators about incomplete arrangements." "Python / Celery"
-            database = container "Database" "Users, events, venues, bookings and holds, equipment, registrations and notifications." "PostgreSQL (Supabase)" "Database"
-            redis = container "Message Broker" "Holds queued background tasks until a worker takes them." "Redis" "Broker"
+            webApp = container "Front-End App" "One screen per task, with in-app notifications." "React / Vite" "WebClient"
+            apiApp = container "API Application" "REST API: checks roles, applies the workflow rules, saves changes." "Python / Flask"
+            celeryBeat = container "Celery Beat" "Queues the hold check (5 min) and reminders (24 h)." "Python / Celery"
+            celeryWorker = container "Celery Worker" "Sends emails, expires holds, sends reminders." "Python / Celery"
+            database = container "Database" "Users, events, venues, bookings, equipment, registrations." "PostgreSQL / Supabase" "Database"
+            redis = container "Message Broker" "Holds queued tasks for the worker." "Redis" "Broker"
         }
 
-        # Every arrow points down the page: people -> front end -> API -> data, with the email server
-        # last. The worker takes its tasks from Redis rather than Redis pointing at the worker, which
-        # is also how Celery works and keeps the layout free of loops.
-        organiser -> webApp "Submits and tracks event requests" "HTTPS"
-        lead -> webApp "Assigns coordinators" "HTTPS"
-        coordinator -> webApp "Plans, confirms and cancels events" "HTTPS"
-        venueStaff -> webApp "Manages venues and bookings" "HTTPS"
-        techStaff -> webApp "Reserves equipment" "HTTPS"
-        safetyOfficer -> webApp "Records safety decisions" "HTTPS"
-        attendee -> webApp "Registers for events" "HTTPS"
+        # Every arrow points down the page, so the layout stacks the containers in rows inside the
+        # boundary: front end; API and Celery Beat; Redis; Celery Worker; database. Each row passes
+        # only a few arrows to the next, so lines and labels don't pile up in one channel. The
+        # people's arrows are tagged so their labels sit just below each person, before the lines
+        # merge on the way into the front end.
+        organiser -> webApp "Submits requests" "HTTPS" "UserAccess"
+        lead -> webApp "Assigns coordinators" "HTTPS" "UserAccess"
+        coordinator -> webApp "Plans events" "HTTPS" "UserAccess"
+        venueStaff -> webApp "Manages venues" "HTTPS" "UserAccess"
+        techStaff -> webApp "Reserves equipment" "HTTPS" "UserAccess"
+        safetyOfficer -> webApp "Records decisions" "HTTPS" "UserAccess"
+        attendee -> webApp "Registers" "HTTPS" "UserAccess"
 
         webApp -> apiApp "API requests" "JSON/HTTPS"
-        apiApp -> database "Reads/writes" "SQLAlchemy"
+        apiApp -> database "Reads/writes" "SQL"
         apiApp -> redis "Queues emails" "Redis"
         celeryBeat -> redis "Queues timed tasks" "Redis"
-        celeryWorker -> redis "Takes tasks; queues emails" "Redis"
-        celeryWorker -> database "Expires holds; saves notifications" "SQLAlchemy"
-        celeryWorker -> emailSystem "Sends emails" "SMTP"
+        redis -> celeryWorker "Delivers tasks" "Redis"
+        celeryWorker -> database "Reads/writes" "SQL"
+        celeryWorker -> emailSystem "Sends emails" "SMTP" "NearSource"
     }
 
     views {
         container connectSphere "Containers" {
             include *
-            autolayout tb 200 150
+            autolayout tb 300 150
         }
 
         styles {
             element "Element" {
                 color #ffffff
+                fontSize 22
             }
             element "Person" {
                 shape Person
@@ -76,11 +80,23 @@ workspace "ConnectSphere - Containers" "C4 level 2 (containers) of the ConnectSp
             element "Broker" {
                 shape Pipe
             }
+
+            # Right-angled solid lines. Labels sit on the part of the line that belongs to one
+            # arrow only, so no two labels share a spot.
             relationship "Relationship" {
                 routing Orthogonal
                 style solid
                 thickness 2
                 color #707070
+                fontSize 20
+                width 220
+            }
+            relationship "UserAccess" {
+                position 20
+            }
+            # Keeps the label of the one arrow that leaves the system inside the boundary.
+            relationship "NearSource" {
+                position 20
             }
         }
     }
