@@ -30,13 +30,13 @@ export default function VenuesPage() {
         <label>
           <input type="checkbox" checked={showArchived}
             onChange={(changed) => setShowArchived(changed.target.checked)} />
-          Show archived venues
+          Show deleted venues
         </label>
       )}
       <ul>
         {venues.map((venue) => (
           <li key={venue.id}>
-            {venue.archived_at ? `${venue.name} (archived)` : venue.name}
+            {venue.archived_at ? `${venue.name} (deleted)` : venue.name}
             {canEdit && <Link to={`/venues/${venue.id}/edit`} aria-label={`Edit ${venue.name}`}>Edit</Link>}
             {canEdit && (
               <Link to={`/venues/${venue.id}/unavailable`}
