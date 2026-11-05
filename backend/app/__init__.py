@@ -1,5 +1,7 @@
 from flask import Flask
 
+# Imported for its check that refuses signed-out tokens (SCRUM-75 AC6).
+from .auth import sessions  # noqa: F401
 from .auth.routes import auth_bp
 from .config import Config
 from .events.routes import events_bp

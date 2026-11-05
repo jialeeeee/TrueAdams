@@ -47,6 +47,12 @@ begin
   end loop;
 end $$;
 
+-- SCRUM-75 AC6: revoked_tokens, granted on its own so the lists above stay as they are.
+grant select, insert, update, delete on public.revoked_tokens to connectsphere_test;
+drop policy if exists connectsphere_test_all on public.revoked_tokens;
+create policy connectsphere_test_all on public.revoked_tokens for all to connectsphere_test
+  using (true) with check (true);
+
 -- The old separate test schema is no longer used.
 drop schema if exists test cascade;
 

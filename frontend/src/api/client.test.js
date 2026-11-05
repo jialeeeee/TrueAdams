@@ -68,4 +68,20 @@ describe("shared API client address", () => {
       if (saved !== undefined) import.meta.env.VITE_API_BASE_URL = saved;
     }
   });
+
+  // TC-75-13 · SCRUM-75 AC6: signing out sends the token it signs out of, after the browser
+  // has forgotten it.
+  it("sends the token being signed out of when it is given", async () => {
+    sessionStorage.removeItem("access_token");
+    const client = await initializeClient();
+    let headers;
+    await client.post("/auth/logout", {}, {
+      signingOutToken: "signed-out-token",
+      adapter: async (config) => {
+        headers = config.headers;
+        return { data: {}, status: 200, statusText: "OK", headers: {}, config };
+      },
+    });
+    expect(headers.get("Authorization")).toBe("Bearer signed-out-token");
+  });
 });
