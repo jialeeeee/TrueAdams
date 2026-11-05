@@ -1,6 +1,6 @@
 # TrueAdams
 
-ConnectSphere — event planning, venue booking, resource allocation, and attendee registration. Architecture is documented as Structurizr C4 DSL: [system context](C4%20diagrams/c1.txt) and [containers](C4%20diagrams/c2-containers.txt).
+ConnectSphere — event planning, venue booking, resource allocation, and attendee registration. Architecture is documented as Structurizr C4 DSL: [system context](C4%20diagrams/c1.txt), [containers](C4%20diagrams/c2-containers.txt) and [API components](C4%20diagrams/c3-components.txt); the code level is Mermaid UML: a [class diagram](C4%20diagrams/c4-domain-model.mmd) and sequence diagrams for [approving a venue booking](C4%20diagrams/c4-seq-booking-approval.mmd) and [accepting a significant change](C4%20diagrams/c4-seq-change-acceptance.mmd).
 
 ## Structure
 
