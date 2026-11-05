@@ -1,5 +1,5 @@
-import { useRef } from "react";
-import { Link, Navigate, Outlet, Route, Routes, useLocation, useNavigate } from "react-router-dom";
+import { useEffect, useRef, useState } from "react";
+import { Link, NavLink, Navigate, Outlet, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import apiClient from "./api/client.js";
 import AssignCoordinatorPage from "./pages/AssignCoordinatorPage.jsx";
 import ChangeRequestPage from "./pages/ChangeRequestPage.jsx";
@@ -53,31 +53,40 @@ import VenuesPage from "./pages/VenuesPage.jsx";
 // each page loads; null means every role. This only tidies the menu: the backend still
 // refuses anyone else, so a role it doesn't know (or none) sees every link, as before.
 // A user with several roles (CF01) sees the links of each of them.
+// The menu's groups, in display order. Each link below names its group; links of one group
+// are listed together, so the menu keeps the order of NAV_LINKS.
+const OVERVIEW = "Overview";
+const ORGANISING = "My events";
+const COORDINATION = "Coordination";
+const SAFETY = "Safety";
+const VENUES = "Venues and planning";
+const EQUIPMENT = "Equipment";
+const ATTENDING = "Attending";
 const NAV_LINKS = [
-  ["/", "Events", null],
-  ["/notifications", "Notifications", null],
-  ["/events/mine", "My event requests", ["organiser"]],
-  ["/events/drafts", "My drafts", ["organiser"]],
-  ["/events/requests", "My requests", ["organiser"]],
-  ["/events/organised", "Registrations for my events", ["organiser"]],
-  ["/events/managed", "My managed events", ["coordinator"]],
-  ["/events/managed/registrations", "Registrations for my managed events", ["coordinator"]],
-  ["/events/queue", "Waiting events", ["coordinator_lead"]],
-  ["/events/supervised", "Events I assigned", ["coordinator_lead"]],
-  ["/events/review-requests", "Requests for review", ["coordinator"]],
-  ["/events/change-requests", "Change requests to review", ["coordinator"]],
-  ["/events/safety-checks", "Safety checks", ["safety_officer"]],
-  ["/venues", "Venues", ["coordinator", "venue_staff"]],
-  ["/venues/availability", "Venue availability", ["coordinator", "venue_staff"]],
+  ["/", "Events", null, OVERVIEW],
+  ["/notifications", "Notifications", null, OVERVIEW],
+  ["/events/mine", "My event requests", ["organiser"], ORGANISING],
+  ["/events/drafts", "My drafts", ["organiser"], ORGANISING],
+  ["/events/requests", "My requests", ["organiser"], ORGANISING],
+  ["/events/organised", "Registrations for my events", ["organiser"], ORGANISING],
+  ["/events/managed", "My managed events", ["coordinator"], COORDINATION],
+  ["/events/managed/registrations", "Registrations for my managed events", ["coordinator"], COORDINATION],
+  ["/events/queue", "Waiting events", ["coordinator_lead"], COORDINATION],
+  ["/events/supervised", "Events I assigned", ["coordinator_lead"], COORDINATION],
+  ["/events/review-requests", "Requests for review", ["coordinator"], COORDINATION],
+  ["/events/change-requests", "Change requests to review", ["coordinator"], COORDINATION],
+  ["/events/safety-checks", "Safety checks", ["safety_officer"], SAFETY],
+  ["/venues", "Venues", ["coordinator", "venue_staff"], VENUES],
+  ["/venues/availability", "Venue availability", ["coordinator", "venue_staff"], VENUES],
   // CF09: one calendar of all events, for planning.
-  ["/events/calendar", "Events calendar", ["coordinator", "venue_staff", "tech_staff"]],
-  ["/venues/search", "Venue search", ["coordinator"]],
-  ["/venues/bookings", "Venue booking requests", ["venue_staff"]],
-  ["/venues/holds", "Tentative holds", ["venue_staff"]],
-  ["/venues/flagged-bookings", "Setup or turnaround conflicts", ["venue_staff"]],
-  ["/venues/replacement-needed", "Replacement venues needed", ["venue_staff"]],
-  ["/equipment-requests", "Equipment requests", ["tech_staff"]],
-  ["/my-registrations", "My registrations", ["attendee"]],
+  ["/events/calendar", "Events calendar", ["coordinator", "venue_staff", "tech_staff"], VENUES],
+  ["/venues/search", "Venue search", ["coordinator"], VENUES],
+  ["/venues/bookings", "Venue booking requests", ["venue_staff"], VENUES],
+  ["/venues/holds", "Tentative holds", ["venue_staff"], VENUES],
+  ["/venues/flagged-bookings", "Setup or turnaround conflicts", ["venue_staff"], VENUES],
+  ["/venues/replacement-needed", "Replacement venues needed", ["venue_staff"], VENUES],
+  ["/equipment-requests", "Equipment requests", ["tech_staff"], EQUIPMENT],
+  ["/my-registrations", "My registrations", ["attendee"], ATTENDING],
 ];
 const KNOWN_ROLES = new Set(NAV_LINKS.flatMap(([, , roles]) => roles ?? []));
 
@@ -86,6 +95,29 @@ function visibleLinks(userRoles) {
   if (!known.length) return NAV_LINKS;
   return NAV_LINKS.filter(([, , roles]) => roles === null || roles.some((role) => known.includes(role)));
 }
+
+// The visible links in groups, keeping their order: a new group starts when the group changes.
+function groupLinks(links) {
+  const groups = [];
+  for (const link of links) {
+    const last = groups[groups.length - 1];
+    if (last && last.name === link[3]) last.links.push(link);
+    else groups.push({ name: link[3], links: [link] });
+  }
+  return groups;
+}
+
+// How each role is named in the header. A role this list doesn't know is shown as stored.
+const ROLE_LABELS = {
+  admin: "Administrator",
+  attendee: "Attendee",
+  coordinator: "Event Coordinator",
+  coordinator_lead: "Coordinator Lead",
+  organiser: "Event Organiser",
+  safety_officer: "Safety Officer",
+  tech_staff: "Technical Support",
+  venue_staff: "Venue Staff",
+};
 
 // The signed-in user's roles from the login reply. A session from before CF01, or one
 // whose list can't be read, falls back to its main role.
@@ -106,12 +138,15 @@ function RequireSignIn() {
 
 export default function App() {
   // Re-read the active session when login/logout or navigation changes location.
-  useLocation();
+  const { pathname } = useLocation();
   const navigate = useNavigate();
   const signedIn = Boolean(sessionStorage.getItem("access_token"));
   const roles = signedIn ? storedRoles() : [];
   // SCRUM-75 AC6: login submissions and logout supersede pending login responses.
   const loginAttempt = useRef(0);
+  // On small screens the menu is hidden behind the Menu button; opening a page closes it.
+  const [menuOpen, setMenuOpen] = useState(false);
+  useEffect(() => setMenuOpen(false), [pathname]);
 
   const signOut = () => {
     loginAttempt.current += 1;
@@ -128,13 +163,40 @@ export default function App() {
   };
 
   return (
-    <div>
-      <nav>
-        {visibleLinks(roles).map(([path, label]) => (
-          <Link key={path} to={path}>{label}</Link>
-        ))}
-        {signedIn ? <button type="button" onClick={signOut}>Sign out</button> : <Link to="/login">Login</Link>}
-      </nav>
+    <div className="app-shell">
+      <a className="skip-link" href="#main">Skip to main content</a>
+      <header className="app-header">
+        <button type="button" className="menu-toggle" aria-expanded={menuOpen}
+          aria-controls="primary-nav" onClick={() => setMenuOpen((open) => !open)}>
+          Menu
+        </button>
+        <Link to="/" className="brand">
+          <span className="brand-mark" aria-hidden="true" />
+          ConnectSphere
+        </Link>
+        <div className="header-user">
+          {/* Groups, not lists: page tests look for the page's own list items. */}
+          {roles.length > 0 && (
+            <div className="role-badges" role="group" aria-label="Your roles">
+              {roles.map((role) => <span key={role}>{ROLE_LABELS[role] ?? role}</span>)}
+            </div>
+          )}
+          {signedIn
+            ? <button type="button" className="button-quiet" onClick={signOut}>Sign out</button>
+            : <Link to="/login" className="button-link">Login</Link>}
+        </div>
+      </header>
+      <div className="app-body">
+        {/* Shown signed out too: a protected page then sends the visitor to Login. */}
+        <nav id="primary-nav" aria-label="Main" className={menuOpen ? "side-nav open" : "side-nav"}>
+          {groupLinks(visibleLinks(roles)).map((group, index) => (
+            <div key={group.name} className="nav-group" role="group" aria-labelledby={`nav-group-${index}`}>
+              <p className="nav-group-title" id={`nav-group-${index}`}>{group.name}</p>
+              {group.links.map(([path, label]) => <NavLink key={path} to={path} end>{label}</NavLink>)}
+            </div>
+          ))}
+        </nav>
+        <main id="main" className="content" tabIndex={-1}>
       <Routes>
         <Route path="/login" element={<LoginPage loginAttempt={loginAttempt} />} />
         <Route element={<RequireSignIn />}>
@@ -188,6 +250,8 @@ export default function App() {
           <Route path="/registrations" element={<Navigate to="/my-registrations" replace />} />
         </Route>
       </Routes>
+        </main>
+      </div>
     </div>
   );
 }

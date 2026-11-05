@@ -1,0 +1,656 @@
+/*
+ * ConnectSphere design system. Plain CSS (AGENTS.md: no CSS framework).
+ *
+ * Colour roles: blue is the brand and the main actions, green confirms and reports
+ * success, yellow is the accent: focus rings, warnings and the current page. Every text
+ * colour below meets WCAG AA contrast on the background it is used on; yellow is only a
+ * background or a border, never text on white.
+ *
+ * Pages use plain semantic HTML (section, h1, ul, form, dl, role="alert"), so most rules
+ * style those elements inside the main content area rather than needing classes.
+ */
+
+:root {
+  /* Blue: brand, links, main actions. */
+  --blue-950: #0a1f4d;
+  --blue-900: #0b2e6b;
+  --blue-800: #1e40af;
+  --blue-700: #1d4ed8;
+  --blue-400: #60a5fa;
+  --blue-100: #dbeafe;
+  --blue-50: #eff6ff;
+  /* Green: success, confirming actions. */
+  --green-800: #166534;
+  --green-700: #15803d;
+  --green-100: #dcfce7;
+  --green-50: #f0fdf4;
+  /* Yellow: accent, focus, warnings. */
+  --yellow-900: #713f12;
+  --yellow-500: #eab308;
+  --yellow-400: #facc15;
+  --yellow-100: #fef9c3;
+  /* Neutrals. */
+  --ink: #0f172a;
+  --ink-muted: #475569;
+  --line: #cbd5e1;
+  --line-soft: #e2e8f0;
+  --surface: #ffffff;
+  --page: #f4f7fb;
+
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --radius: 10px;
+  --radius-small: 6px;
+  --shadow: 0 1px 2px rgb(15 23 42 / 6%), 0 4px 12px rgb(15 23 42 / 6%);
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --header-height: 4rem;
+  --nav-width: 16.5rem;
+  --focus: 0 0 0 3px var(--yellow-400), 0 0 0 5px var(--blue-950);
+}
+
+/* ---------- Base ---------- */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font);
+  font-size: 1rem;
+  line-height: 1.55;
+  color: var(--ink);
+  background: var(--page);
+}
+
+h1,
+h2,
+h3 {
+  line-height: 1.25;
+  color: var(--blue-950);
+}
+
+h1 {
+  font-size: 1.75rem;
+  margin: 0 0 var(--space-4);
+}
+
+h2 {
+  font-size: 1.25rem;
+  margin: var(--space-6) 0 var(--space-3);
+}
+
+h3 {
+  font-size: 1.05rem;
+  margin: var(--space-5) 0 var(--space-2);
+}
+
+p {
+  margin: var(--space-2) 0;
+}
+
+a {
+  color: var(--blue-700);
+  text-underline-offset: 2px;
+}
+
+a:hover {
+  color: var(--blue-900);
+}
+
+/* One visible focus style everywhere, for keyboard users. */
+:focus-visible {
+  outline: none;
+  box-shadow: var(--focus);
+  border-radius: var(--radius-small);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition: none !important;
+    animation: none !important;
+  }
+}
+
+/* ---------- App shell ---------- */
+
+.skip-link {
+  position: absolute;
+  left: var(--space-4);
+  top: -3rem;
+  z-index: 100;
+  padding: var(--space-2) var(--space-4);
+  background: var(--yellow-400);
+  color: var(--blue-950);
+  font-weight: 700;
+  border-radius: var(--radius-small);
+}
+
+.skip-link:focus {
+  top: var(--space-2);
+}
+
+.app-header {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  height: var(--header-height);
+  padding: 0 var(--space-5);
+  background: var(--blue-900);
+  color: #fff;
+  /* The brand stripe: green, blue, yellow. */
+  border-bottom: 4px solid transparent;
+  border-image: linear-gradient(90deg, var(--green-700), var(--blue-700) 50%, var(--yellow-400)) 1;
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  color: #fff;
+  font-size: 1.2rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  text-decoration: none;
+}
+
+.brand:hover {
+  color: #fff;
+}
+
+/* Three overlapping circles: the three colours meeting, as people do at events. */
+.brand-mark {
+  position: relative;
+  width: 2rem;
+  height: 1.4rem;
+}
+
+.brand-mark {
+  background:
+    radial-gradient(circle at 0.55rem 0.7rem, var(--green-700) 0.5rem, transparent 0.52rem),
+    radial-gradient(circle at 1rem 0.7rem, var(--blue-400) 0.5rem, transparent 0.52rem),
+    radial-gradient(circle at 1.45rem 0.7rem, var(--yellow-400) 0.5rem, transparent 0.52rem);
+}
+
+.header-user {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-left: auto;
+}
+
+.role-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.role-badges span {
+  padding: 0.15rem 0.6rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--blue-950);
+  background: var(--yellow-100);
+  border: 1px solid var(--yellow-400);
+  border-radius: 999px;
+}
+
+.app-header .button-quiet,
+.app-header .button-link,
+.menu-toggle {
+  white-space: nowrap;
+  min-height: 2.25rem;
+  padding: 0.35rem 0.9rem;
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #fff;
+  background: transparent;
+  border: 1px solid rgb(255 255 255 / 55%);
+  border-radius: var(--radius-small);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.app-header .button-quiet:hover,
+.app-header .button-link:hover,
+.menu-toggle:hover {
+  color: var(--blue-950);
+  background: var(--yellow-400);
+  border-color: var(--yellow-400);
+}
+
+.app-body {
+  display: grid;
+  grid-template-columns: var(--nav-width) minmax(0, 1fr);
+  min-height: calc(100vh - var(--header-height));
+}
+
+.side-nav {
+  position: sticky;
+  top: var(--header-height);
+  align-self: start;
+  /* Full height, so its background runs down the whole page. */
+  height: calc(100vh - var(--header-height));
+  overflow-y: auto;
+  padding: var(--space-4) var(--space-3) var(--space-6);
+  background: var(--surface);
+  border-right: 1px solid var(--line-soft);
+}
+
+.nav-group + .nav-group {
+  margin-top: var(--space-4);
+}
+
+.nav-group-title {
+  margin: 0 0 var(--space-1);
+  padding: 0 var(--space-3);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--green-800);
+}
+
+.side-nav a {
+  display: block;
+  padding: 0.45rem var(--space-3);
+  border-left: 4px solid transparent;
+  border-radius: 0 var(--radius-small) var(--radius-small) 0;
+  color: var(--ink);
+  font-size: 0.93rem;
+  text-decoration: none;
+}
+
+.side-nav a:hover {
+  background: var(--blue-50);
+  color: var(--blue-900);
+}
+
+/* The current page: NavLink sets aria-current="page". */
+.side-nav a[aria-current="page"] {
+  background: var(--blue-50);
+  border-left-color: var(--yellow-400);
+  color: var(--blue-900);
+  font-weight: 700;
+}
+
+.menu-toggle {
+  display: none;
+}
+
+.content {
+  width: 100%;
+  max-width: 72rem;
+  padding: var(--space-6) var(--space-6) 4rem;
+}
+
+.content:focus {
+  outline: none;
+}
+
+/* Small screens: the menu slides over the page from the Menu button. */
+@media (max-width: 900px) {
+  .menu-toggle {
+    display: inline-block;
+  }
+
+  .app-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .side-nav {
+    position: fixed;
+    top: var(--header-height);
+    left: 0;
+    bottom: 0;
+    z-index: 15;
+    width: min(85vw, var(--nav-width));
+    box-shadow: var(--shadow);
+    transform: translateX(-105%);
+    transition: transform 0.2s ease;
+  }
+
+  .side-nav.open {
+    transform: none;
+  }
+
+  .content {
+    padding: var(--space-5) var(--space-4) 3rem;
+  }
+
+  .role-badges {
+    display: none;
+  }
+
+  .app-header {
+    gap: var(--space-3);
+    padding: 0 var(--space-3);
+  }
+
+  .brand {
+    font-size: 1.05rem;
+  }
+}
+
+/* ---------- Page content ---------- */
+
+/* Each page's own heading area. */
+.content > section > h1,
+.content > form > h1 {
+  padding-bottom: var(--space-3);
+  border-bottom: 3px solid var(--blue-100);
+}
+
+/* Lists of things (events, bookings, requests): one card per item. */
+.content ul,
+.content ol {
+  padding-left: 0;
+  list-style: none;
+}
+
+.content ul > li,
+.content ol > li {
+  margin: 0 0 var(--space-3);
+  padding: var(--space-4);
+  background: var(--surface);
+  border: 1px solid var(--line-soft);
+  border-left: 4px solid var(--blue-700);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.content ul > li > a:first-child,
+.content ol > li > a:first-child {
+  font-weight: 700;
+  font-size: 1.05rem;
+}
+
+/* A list inside a card is plain, not another card. */
+.content li ul > li,
+.content li ol > li,
+.content fieldset ul > li {
+  margin: var(--space-1) 0;
+  padding: 0;
+  background: none;
+  border: 0;
+  box-shadow: none;
+}
+
+/* Links between a page's actions read as a row of quiet buttons. */
+.content > section > a,
+.content > section > p > a {
+  display: inline-block;
+  margin: 0 var(--space-2) var(--space-2) 0;
+}
+
+.content > section > a {
+  padding: 0.4rem 0.9rem;
+  font-weight: 600;
+  text-decoration: none;
+  background: var(--blue-50);
+  border: 1px solid var(--blue-100);
+  border-radius: var(--radius-small);
+}
+
+.content > section > a:hover {
+  background: var(--blue-100);
+}
+
+/* Sub-sections: cards. */
+.content section section,
+.content article,
+.content fieldset {
+  margin: var(--space-5) 0;
+  padding: var(--space-4) var(--space-5);
+  background: var(--surface);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.content section section > h2:first-child,
+.content article > h2:first-child {
+  margin-top: 0;
+}
+
+.content fieldset legend {
+  padding: 0 var(--space-2);
+  font-weight: 700;
+  color: var(--blue-950);
+}
+
+/* Label and value pairs (planning information, event details). */
+.content dl {
+  margin: var(--space-4) 0;
+  background: var(--surface);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.content dl > div {
+  display: grid;
+  grid-template-columns: minmax(10rem, 16rem) 1fr;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+}
+
+.content dl > div:nth-child(even) {
+  background: var(--blue-50);
+}
+
+.content dt {
+  font-weight: 600;
+  color: var(--ink-muted);
+}
+
+.content dd {
+  margin: 0;
+}
+
+@media (max-width: 600px) {
+  .content dl > div {
+    grid-template-columns: 1fr;
+    gap: var(--space-1);
+  }
+}
+
+/* Tables. */
+.content table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--surface);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.content th,
+.content td {
+  padding: var(--space-3) var(--space-4);
+  text-align: left;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.content th {
+  background: var(--blue-900);
+  color: #fff;
+  font-weight: 600;
+}
+
+.content tbody tr:nth-child(even) {
+  background: var(--blue-50);
+}
+
+/* ---------- Messages ---------- */
+
+/* Errors and warnings: yellow, the attention colour. */
+.content [role="alert"] {
+  margin: var(--space-3) 0;
+  padding: var(--space-3) var(--space-4);
+  color: var(--yellow-900);
+  background: var(--yellow-100);
+  border: 1px solid var(--yellow-500);
+  border-left-width: 5px;
+  border-radius: var(--radius-small);
+  font-weight: 600;
+}
+
+/* Confirmations: green. */
+.content [role="status"] {
+  margin: var(--space-3) 0;
+  padding: var(--space-3) var(--space-4);
+  color: var(--green-800);
+  background: var(--green-50);
+  border: 1px solid var(--green-700);
+  border-left-width: 5px;
+  border-radius: var(--radius-small);
+  font-weight: 600;
+}
+
+/* ---------- Forms ---------- */
+
+.content label {
+  display: block;
+  margin: var(--space-4) 0 var(--space-1);
+  font-weight: 600;
+  color: var(--ink);
+}
+
+/* A label wrapping its checkbox or radio sits on one line. */
+.content label:has(> input[type="checkbox"]),
+.content label:has(> input[type="radio"]) {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: var(--space-2) 0;
+  font-weight: 400;
+}
+
+.content input:not([type="checkbox"], [type="radio"]),
+.content select,
+.content textarea {
+  display: block;
+  width: 100%;
+  max-width: 36rem;
+  min-height: 2.6rem;
+  padding: 0.5rem 0.75rem;
+  font: inherit;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-small);
+}
+
+.content textarea {
+  min-height: 6rem;
+  resize: vertical;
+}
+
+.content input:hover:not(:disabled),
+.content select:hover:not(:disabled),
+.content textarea:hover:not(:disabled) {
+  border-color: var(--blue-700);
+}
+
+.content input[type="checkbox"],
+.content input[type="radio"] {
+  width: 1.15rem;
+  height: 1.15rem;
+  accent-color: var(--green-700);
+}
+
+.content input:disabled,
+.content select:disabled,
+.content textarea:disabled {
+  color: var(--ink-muted);
+  background: var(--line-soft);
+  cursor: not-allowed;
+}
+
+.content small {
+  display: block;
+  color: var(--ink-muted);
+}
+
+/* ---------- Buttons ---------- */
+
+.content button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2.5rem;
+  margin: var(--space-3) var(--space-2) var(--space-1) 0;
+  padding: 0.5rem 1.1rem;
+  font: inherit;
+  font-weight: 600;
+  color: #fff;
+  background: var(--blue-700);
+  border: 1px solid var(--blue-700);
+  border-radius: var(--radius-small);
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.content button:hover:not(:disabled) {
+  background: var(--blue-800);
+}
+
+/* Submitting a form confirms it: green. */
+.content button[type="submit"] {
+  background: var(--green-700);
+  border-color: var(--green-700);
+}
+
+.content button[type="submit"]:hover:not(:disabled) {
+  background: var(--green-800);
+}
+
+.content button:disabled {
+  color: var(--ink-muted);
+  background: var(--line-soft);
+  border-color: var(--line);
+  cursor: not-allowed;
+}
+
+/* ---------- Sign-in ---------- */
+
+.content > .auth-card {
+  max-width: 26rem;
+  margin: 3rem auto;
+  padding: var(--space-6);
+  background: var(--surface);
+  border-top: 6px solid var(--blue-700);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.auth-card h1 {
+  border-bottom: 0;
+}
+
+.auth-intro {
+  color: var(--ink-muted);
+}
+
+.auth-card button[type="submit"] {
+  width: 100%;
+  margin-top: var(--space-5);
+}

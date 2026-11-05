@@ -129,6 +129,7 @@ Follow the existing documents: user story and links at the top, **Acceptance cri
 ## Frontend conventions
 
 - React 18 function components with hooks, `react-router-dom` v6, plain JSX (no TypeScript, no CSS framework, no state library).
+- **Styling** lives in [frontend/src/styles.css](frontend/src/styles.css): plain CSS with colour, spacing and type variables (blue for the brand and main actions, green for success and submit buttons, yellow for focus, warnings and the current page). It styles semantic HTML inside `<main>` (section, h1, ul, form, dl, fieldset, `role="alert"`/`"status"`), so a page written with those elements needs no classes. No inline styles or per-page CSS. The shell (header, grouped menu, Menu button for small screens) is in `App.jsx`: give each new `NAV_LINKS` entry its group.
 - Show the backend's `error` message when present and a sensible fallback otherwise (see `explain()` in `ReviewRequestPage.jsx`). A `retryable: true` error should let the user try again without losing their input.
 - Show Singapore-time values as recorded (`value.slice(0, 16).replace("T", " ")`); do not convert them through the browser's time zone.
 
