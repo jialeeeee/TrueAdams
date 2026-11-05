@@ -1,6 +1,6 @@
 # TrueAdams
 
-ConnectSphere — event planning, venue booking, resource allocation, and attendee registration. Architecture is documented as C4 DSL in [C4 diagrams/c2.txt](C4%20diagrams/c2.txt).
+ConnectSphere — event planning, venue booking, resource allocation, and attendee registration. Architecture is documented as Structurizr C4 DSL: [system context](C4%20diagrams/c1.txt) and [containers](C4%20diagrams/c2-containers.txt).
 
 ## Structure
 

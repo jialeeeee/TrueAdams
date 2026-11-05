@@ -1,0 +1,87 @@
+workspace "ConnectSphere - Containers" "C4 level 2 (containers) of the ConnectSphere platform as implemented: the browser client, the Flask API, the Celery worker and scheduler, Redis and the Supabase database. CFnn and SCRUM-NN refer to the functional requirements and Jira stories." {
+
+    model {
+        # Users: one person per role in use (CF01). Accounts are pre-loaded (no self-registration in
+        # Release 1) and a user may hold several roles; each role sees its own screens.
+        organiser = person "Event Organiser" "Drafts and submits event requests, answers clarifications, and requests changes to approved events."
+        lead = person "Event Coordinator Lead" "Assigns and reassigns coordinators and oversees the events they assigned."
+        coordinator = person "Event Coordinator" "Reviews and plans events, decides change requests, sets up registration, and confirms or cancels events."
+        venueStaff = person "Venue Staff" "Maintains and archives venues, decides booking requests, and manages holds and unavailability."
+        techStaff = person "Technical Support Staff" "Checks equipment availability and reserves equipment for events."
+        safetyOfficer = person "Safety Officer" "Approves, rejects or requests changes to an event's safety arrangements."
+        attendee = person "Attendee" "Browses published events, registers and withdraws."
+
+        # External systems
+        emailSystem = softwareSystem "Email Gateway / SMTP" "External mail server. Delivers notification emails to organisers, coordinators, Venue Staff, Technical Support Staff and attendees." "External"
+
+        # The system in scope
+        connectSphere = softwareSystem "ConnectSphere Platform" "Event planning from request to registration." {
+            webApp = container "Front-End App" "One screen per task, with in-app notifications. Sends the sign-in token with every API call; the API enforces every permission." "React 18 / Vite" "WebClient"
+            apiApp = container "API Application" "REST API under /api: checks each caller's stored roles, applies the workflow rules, and saves each change with its notifications in one commit." "Python / Flask / SQLAlchemy, Gunicorn"
+            celeryBeat = container "Celery Beat" "Queues the tentative-hold check every 5 minutes and the incomplete-arrangement reminders every 24 hours." "Python / Celery"
+            celeryWorker = container "Celery Worker" "Sends notification emails, expires tentative holds and reminds coordinators about incomplete arrangements." "Python / Celery"
+            database = container "Database" "Users, events, venues, bookings and holds, equipment, registrations and notifications." "PostgreSQL (Supabase)" "Database"
+            redis = container "Message Broker" "Holds queued background tasks until a worker takes them." "Redis" "Broker"
+        }
+
+        # Every arrow points down the page: people -> front end -> API -> data, with the email server
+        # last. The worker takes its tasks from Redis rather than Redis pointing at the worker, which
+        # is also how Celery works and keeps the layout free of loops.
+        organiser -> webApp "Submits and tracks event requests" "HTTPS"
+        lead -> webApp "Assigns coordinators" "HTTPS"
+        coordinator -> webApp "Plans, confirms and cancels events" "HTTPS"
+        venueStaff -> webApp "Manages venues and bookings" "HTTPS"
+        techStaff -> webApp "Reserves equipment" "HTTPS"
+        safetyOfficer -> webApp "Records safety decisions" "HTTPS"
+        attendee -> webApp "Registers for events" "HTTPS"
+
+        webApp -> apiApp "API requests" "JSON/HTTPS"
+        apiApp -> database "Reads/writes" "SQLAlchemy"
+        apiApp -> redis "Queues emails" "Redis"
+        celeryBeat -> redis "Queues timed tasks" "Redis"
+        celeryWorker -> redis "Takes tasks; queues emails" "Redis"
+        celeryWorker -> database "Expires holds; saves notifications" "SQLAlchemy"
+        celeryWorker -> emailSystem "Sends emails" "SMTP"
+    }
+
+    views {
+        container connectSphere "Containers" {
+            include *
+            autolayout tb 200 150
+        }
+
+        styles {
+            element "Element" {
+                color #ffffff
+            }
+            element "Person" {
+                shape Person
+                background #08427b
+            }
+            element "Software System" {
+                background #1168bd
+            }
+            element "External" {
+                background #8b8496
+            }
+            element "Container" {
+                background #23a2d9
+            }
+            element "WebClient" {
+                shape WebBrowser
+            }
+            element "Database" {
+                shape Cylinder
+            }
+            element "Broker" {
+                shape Pipe
+            }
+            relationship "Relationship" {
+                routing Orthogonal
+                style solid
+                thickness 2
+                color #707070
+            }
+        }
+    }
+}
