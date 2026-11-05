@@ -11,7 +11,7 @@ workspace "ConnectSphere - API Components" "C4 level 3 (components) of the API A
                 # HTTP layer: one Flask blueprint per domain module, all under /api.
                 auth = component "Authentication" "Signs users in and out; issues and revokes JWTs (CF01, SCRUM-75)." "Blueprint: auth/routes.py, auth/sessions.py"
                 eventsApi = component "Event Workflow API" "Requests and drafts, review, Lead assignment, planning edits, change requests, equipment, safety checks, confirmation and cancellation." "Blueprint: events/routes.py"
-                venuesApi = component "Venue and Booking API" "Venue catalogue and archive, all-events calendar, booking requests and decisions, holds, unavailability and replacements." "Blueprint: venues/routes.py"
+                venuesApi = component "Venue and Booking API" "Venue catalogue and deletion, all-events calendar, booking requests and decisions, holds, unavailability and replacements." "Blueprint: venues/routes.py"
                 registrationsApi = component "Registration API" "Attendee registration and withdrawal (CF18)." "Blueprint: registrations/routes.py"
                 notificationsApi = component "Notifications API" "Lists in-app notifications and marks them read (CF20)." "Blueprint: notifications/routes.py"
 
