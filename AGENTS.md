@@ -4,7 +4,7 @@ Instructions for AI coding agents (and teammates) working in this repository. Re
 
 ConnectSphere handles event planning, venue booking, resource allocation and attendee registration. Work is split into Jira stories (`SCRUM-NN`) that teammates build in parallel, so shared code is a contract: if a change would affect another story's behaviour, stop and tell the user rather than changing it.
 
-**Source of truth, in order:** the story's acceptance criteria and its test-case document in [docs/test-cases/](docs/test-cases/) (what to build) → this file (how to build it here) → [README.md](README.md) (setup) → [C4 diagrams/c2.txt](C4%20diagrams/c2.txt) (architecture). [Slides + Docs/](Slides%20+%20Docs/) is course material: read it for process expectations, never edit it.
+**Source of truth, in order:** the story's acceptance criteria and its test-case document in [docs/test-cases/](docs/test-cases/) (what to build) → this file (how to build it here) → [README.md](README.md) (setup) → [C4 diagrams/c1.txt](C4%20diagrams/c1.txt) and [c2-containers.txt](C4%20diagrams/c2-containers.txt) (architecture: system context and containers). [Slides + Docs/](Slides%20+%20Docs/) is course material: read it for process expectations, never edit it.
 
 ## Commands
 
@@ -142,7 +142,7 @@ Follow the existing documents: user story and links at the top, **Acceptance cri
 
 - Branch per story from `main`: `feature/SCRUM-NN-short-description`. Commit messages start with the story: `SCRUM-NN: <what changed>`.
 - Merge `main` into your branch (or the branch you depend on) to pick up others' work; when you merge in a story that adds `Event` fields, re-check the normal/restricted classification and the planning view.
-- PRs target `main`; CI must pass. Update the C4 diagram when you add a container, an external system or a major stored entity.
+- PRs target `main`; CI must pass. Update the C4 diagrams when you add a container, an external system or a major stored entity.
 - Commit only files related to the change. Never commit `.env` (both `backend/.env` and `frontend/.env` exist locally and are gitignored), `.venv/`, `node_modules/`, `.coverage`, `__pycache__/`, `.pytest_cache/` or `.DS_Store`.
 
 ## Never

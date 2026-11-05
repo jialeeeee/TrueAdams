@@ -1,0 +1,62 @@
+workspace "ConnectSphere - System Context" "C4 level 1 (system context) of the ConnectSphere platform as implemented: the people who use it and the external systems it depends on. CFnn and SCRUM-NN refer to the functional requirements and Jira stories." {
+
+    model {
+        # Users: one person per role in use (CF01). Accounts are pre-loaded (no self-registration in
+        # Release 1) and a user may hold several roles; each role sees its own screens.
+        organiser = person "Event Organiser" "Drafts and submits event requests, answers clarifications, and requests changes to approved events."
+        lead = person "Event Coordinator Lead" "Assigns and reassigns coordinators and oversees the events they assigned."
+        coordinator = person "Event Coordinator" "Reviews and plans events, decides change requests, sets up registration, and confirms or cancels events."
+        venueStaff = person "Venue Staff" "Maintains and archives venues, decides booking requests, and manages holds and unavailability."
+        techStaff = person "Technical Support Staff" "Checks equipment availability and reserves equipment for events."
+        safetyOfficer = person "Safety Officer" "Approves, rejects or requests changes to an event's safety arrangements."
+        attendee = person "Attendee" "Browses published events, registers and withdraws."
+
+        # The system in scope
+        connectSphere = softwareSystem "ConnectSphere Platform" "Event planning from request to registration: assignment, review, venue and equipment arrangements, safety approval, confirmation, cancellation and attendee registration."
+
+        # External systems
+        emailSystem = softwareSystem "Email Gateway / SMTP" "External mail server. Delivers notification emails to organisers, coordinators, Venue Staff, Technical Support Staff and attendees." "External"
+
+        # People using the platform (through the browser)
+        organiser -> connectSphere "Submits and tracks event requests" "HTTPS"
+        lead -> connectSphere "Assigns coordinators" "HTTPS"
+        coordinator -> connectSphere "Plans, confirms and cancels events" "HTTPS"
+        venueStaff -> connectSphere "Manages venues and bookings" "HTTPS"
+        techStaff -> connectSphere "Reserves equipment" "HTTPS"
+        safetyOfficer -> connectSphere "Records safety decisions" "HTTPS"
+        attendee -> connectSphere "Registers for events" "HTTPS"
+
+        # Notification emails, sent after the change they report is saved. Who receives them is in
+        # the email system's description: arrows back up to the people would loop the layout.
+        connectSphere -> emailSystem "Sends notification emails through" "SMTP"
+    }
+
+    views {
+        systemContext connectSphere "System_Context" {
+            include *
+            autolayout tb 200 150
+        }
+
+        styles {
+            element "Element" {
+                color #ffffff
+            }
+            element "Person" {
+                shape Person
+                background #08427b
+            }
+            element "Software System" {
+                background #1168bd
+            }
+            element "External" {
+                background #8b8496
+            }
+            relationship "Relationship" {
+                routing Orthogonal
+                style solid
+                thickness 2
+                color #707070
+            }
+        }
+    }
+}
