@@ -140,8 +140,10 @@ it.each(["before", "after"])("ignores a superseded login response arriving %s th
 // The nav shows each role its own pages. The backend still refuses everyone else.
 it.each([
   ["attendee", ["Events", "Notifications", "My registrations"]],
-  ["venue_staff", ["Events", "Notifications", "Venues", "Venue availability", "Venue booking requests",
-    "Tentative holds", "Setup or turnaround conflicts", "Replacement venues needed"]],
+  // CF09 added "Events calendar" for Venue Staff, coordinators and Technical Support Staff.
+  ["venue_staff", ["Events", "Notifications", "Venues", "Venue availability", "Events calendar",
+    "Venue booking requests", "Tentative holds", "Setup or turnaround conflicts", "Replacement venues needed"]],
+  ["tech_staff", ["Events", "Notifications", "Events calendar", "Equipment requests"]],
   ["safety_officer", ["Events", "Notifications", "Safety checks"]],
 ])("shows a signed-in %s only their own links", async (role, links) => {
   apiClient.post.mockResolvedValue({ data: { access_token: "role-token", role } });
