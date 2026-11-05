@@ -1,0 +1,4 @@
+# End-to-end tests only (e2e/test_journeys.py). The browser comes from
+# `python -m playwright install --with-deps chromium`.
+playwright==1.63.0
+psycopg2-binary==2.9.9
