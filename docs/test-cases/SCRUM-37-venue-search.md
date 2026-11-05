@@ -299,6 +299,8 @@ Reset the database to this data before **every** test case. Users and the first 
 - **Test data:** Minimum capacity = 300; Facilities = Stage.
 - **Expected result:** (1) Two results: Aurora Ballroom and Summit Hall. Each shows its name, location, capacity (400) and the matched facility (Stage). Characteristics that were not filtered on are not shown as matches. (2) The link opens Summit Hall's venue details page (SCRUM-35), not another venue's.
 
+**Changed 5 Nov 2026 (SCRUM-35 AC3, CF08):** a venue's details now come from the shared `utils/VenueDetails.jsx`, which shows every planning characteristic and tells a recorded absence ("None", "No", "0") from a field that was never recorded ("Not recorded"). The frontend edge case "says what is not recorded in a result and its details" used to expect "Not recorded" for empty facility and layout lists; it now expects "None" for those, as CF08 requires.
+
 **TC-37-29 · Missing location is shown as "not recorded"**
 - **Traces to:** AC5 · **Type:** Boundary
 - **Preconditions:** SV-SEED loaded; logged in as `coordinator`.
