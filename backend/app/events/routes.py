@@ -31,7 +31,8 @@ from ..resources import availability, reservations as reserving
 from ..venues.routes import _notify_venue_staff
 from ..roles import has_any_role, has_role, holding
 from ..venues.scheduling import (
-    BLOCKING_BOOKING_STATUS, FLAGGED, REPLACEMENT_FLAG, TENTATIVE_STATUS, overlapping)
+    BLOCKING_BOOKING_STATUS, FLAGGED, PENDING_STATUS, REPLACEMENT_FLAG, TENTATIVE_STATUS,
+    overlapping)
 from ..venues.routes import LAYOUT_OPTIONS
 from . import change_requests, change_review, equipment, safety, suitability
 from .permissions import (
@@ -238,6 +239,16 @@ def _open_change_flags(bookings, now):
         VenueBookingChangeFlag.status == CHANGE_FLAGGED).all()}
 
 
+def _undecided_bookings(bookings, now):
+    """SCRUM-93 A5: the bookings still waiting for a decision: pending requests, and holds
+    that have not expired. A hold has expired from its expiry time, even before the expiry
+    check records it (SCRUM-86 A3)."""
+    return [booking for booking in bookings
+            if booking.status == PENDING_STATUS
+            or (booking.status == TENTATIVE_STATUS
+                and (booking.hold_expires_at is None or booking.hold_expires_at > now))]
+
+
 def _usable_bookings(bookings):
     """The confirmed bookings that still give the event a venue: a booking flagged because
     its venue became unavailable doesn't (SCRUM-88 A11), so neither the safety check list nor
@@ -307,6 +318,12 @@ def _safety_check_items(events):
             EquipmentRequirement.event_id.in_(event_ids)).all()
         reservations = EquipmentReservation.query.filter_by(status=reserving.RESERVED).filter(
             EquipmentReservation.event_id.in_(event_ids)).all()
+        # SCRUM-93 A5: an event with a request or hold still undecided is not ready yet.
+        undecided = {booking.event_id for booking in _undecided_bookings(
+            VenueBooking.query.filter(
+                VenueBooking.event_id.in_(event_ids),
+                VenueBooking.status.in_(UNDECIDED_BOOKING_STATUSES)).all(),
+            singapore_now())}
         venue_ids = {booking.venue_id for booking in bookings}
         venues = {venue.id: venue for venue in Venue.query.filter(Venue.id.in_(venue_ids)).all()}
 
@@ -333,6 +350,8 @@ def _safety_check_items(events):
             reserved[key] = reserved.get(key, 0) + reservation.quantity
 
         for event in events:
+            if event.id in undecided:
+                continue
             if not _safety_schedule_covered(event, event_bookings.get(event.id, [])):
                 continue
             needed = event_requirements.get(event.id, [])
@@ -510,13 +529,20 @@ MISSING_EQUIPMENT = "Reserved equipment"
 MISSING_SAFETY_CHECK = "Approved safety check"
 # SCRUM-70 AC10 (A12): the coordinator decides on each booking a change affected first.
 MISSING_CHANGE_DECISION = "A decision on the venue bookings an accepted change affects"
+# SCRUM-93 A5 (G4 clarification #26): every essential arrangement must be approved before
+# the event is confirmed, so a venue request still pending, or a hold not yet confirmed,
+# blocks confirmation and the safety check list even when confirmed bookings cover the
+# event. The coordinator cancels a request that is no longer needed (SCRUM-94).
+MISSING_BOOKING_DECISION = "A decision on every pending venue request and hold"
+UNDECIDED_BOOKING_STATUSES = (PENDING_STATUS, TENTATIVE_STATUS)
 
 
 def _missing_for_confirmation(event):
     """What the event still needs before it can be confirmed (SCRUM-93 AC2), in order: its
-    whole period covered by usable confirmed venue bookings, a decision on each booking an
-    accepted change affected, its equipment fully reserved and an approved safety check. An
-    empty list means it can be confirmed."""
+    whole period covered by usable confirmed venue bookings, a decision on every pending
+    request and hold (A5), a decision on each booking an accepted change affected, its
+    equipment fully reserved and an approved safety check. An empty list means it can be
+    confirmed."""
     # The main venue alone cannot establish readiness for multiple venues.
     bookings = VenueBooking.query.filter_by(
         event_id=event.id, status=BLOCKING_BOOKING_STATUS).all()
@@ -536,8 +562,11 @@ def _missing_for_confirmation(event):
                                and _safety_schedule_covered(event, bookings))
         missing.append(MISSING_REPLACEMENT_VENUE if flagged_would_cover
                        else MISSING_VENUE_BOOKING)
-    if _open_change_flags(VenueBooking.query.filter_by(event_id=event.id).all(),
-                          singapore_now()):
+    now = singapore_now()
+    all_bookings = VenueBooking.query.filter_by(event_id=event.id).all()
+    if _undecided_bookings(all_bookings, now):
+        missing.append(MISSING_BOOKING_DECISION)
+    if _open_change_flags(all_bookings, now):
         missing.append(MISSING_CHANGE_DECISION)
     if not _equipment_fully_reserved(event, requirements, reserved):
         missing.append(MISSING_EQUIPMENT)

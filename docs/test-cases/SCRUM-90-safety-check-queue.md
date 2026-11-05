@@ -301,3 +301,8 @@ All four Jira ACs remain verbatim. No additional eligibility/status rule, bookin
 ## Flagged bookings (added 4 Nov 2026)
 
 A confirmed booking flagged because its venue became unavailable (SCRUM-88) does not count towards covering the event, so the event leaves the list until other confirmed bookings cover it (SCRUM-88 A11). **Automated:** `test_tc_88_a11_05_a_flagged_booking_takes_the_event_off_the_safety_list`, `test_tc_88_a11_06_another_confirmed_booking_puts_it_back_on_the_list`.
+
+## Undecided venue requests and holds (added 5 Nov 2026)
+
+An event whose venue booking request is still pending, or whose tentative hold has not expired, is not ready for the safety check, even when its confirmed bookings cover it: G4 clarification #26 says every essential arrangement must be approved first. It reappears once the request is decided or the hold confirmed, expires or is cancelled. The queue and SCRUM-91 approval share `_safety_check_items`, so both apply it. See SCRUM-93 A5 and TC-93-08, whose subtests assert the queue's answer for each booking state.
+
