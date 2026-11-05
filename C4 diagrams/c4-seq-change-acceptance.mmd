@@ -1,0 +1,22 @@
+%% C4 level 4 (code): UML sequence diagram of accepting a significant change request
+%% (SCRUM-70 AC10-AC11, SCRUM-44 A10). backend/app/events/routes.py: decide_change_request.
+sequenceDiagram
+    autonumber
+    actor COORD as Event Coordinator
+    participant API as Event Workflow API
+    participant RULES as Event Rules
+    participant DM as Data Model
+    participant DB as Database
+    participant MQ as Message Broker
+
+    COORD->>API: Accept change request
+    API->>DB: Lock the event and the request
+    API->>RULES: Parse decision: is the change significant?
+    API->>DM: Apply new values to the event
+    API->>DM: Flag affected venue bookings (never cancel)
+    API->>RULES: Clear safety decision (Confirmed back to Approved)
+    API->>DM: Notifications: organiser, registered attendees
+    DM->>DM: before_flush: times changed, so release equipment reservations
+    API->>DB: Commit all of the above together
+    API->>MQ: Queue emails (after commit)
+    API-->>COORD: 200, listing what was released and who was told

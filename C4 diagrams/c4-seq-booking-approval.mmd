@@ -1,0 +1,27 @@
+%% C4 level 4 (code): UML sequence diagram of approving a venue booking request
+%% (SCRUM-40, SCRUM-41, SCRUM-84). backend/app/venues/routes.py: approve_booking.
+sequenceDiagram
+    autonumber
+    actor VS as Venue Staff
+    participant FE as Front-End App
+    participant API as Venue and Booking API
+    participant PERM as Roles and Permissions
+    participant SCH as Venue Scheduling
+    participant DB as Database
+    participant MQ as Message Broker
+
+    VS->>FE: Approve booking request
+    FE->>API: POST /api/venues/bookings/{id}/approve (JWT)
+    API->>PERM: Holds the Venue Staff role? (role read from DB)
+    PERM-->>API: Yes
+    API->>DB: Lock booking and venue rows
+    API->>SCH: Occupied period = [start - setup, end + turnaround)
+    API->>DB: Confirmed bookings, unexpired holds and blocks overlapping it
+    alt Conflict found
+        API-->>FE: 409, with the conflicting period
+    else No conflict
+        API->>DB: Booking = confirmed + in-app notification (one commit)
+        Note over DB: Exclusion constraint also refuses<br/>overlapping confirmed bookings
+        API->>MQ: Queue email to coordinator (after commit)
+        API-->>FE: 200 Approved
+    end

@@ -1,0 +1,80 @@
+workspace "ConnectSphere - API Components" "C4 level 3 (components) of the API Application container as implemented. Drawn because one Flask monolith holds every workflow: this view shows where the shared rules live, so a change to a business rule lands in one place. CFnn, W70n and SCRUM-NN refer to the functional requirements, Week 7 changes and Jira stories." {
+
+    model {
+        connectSphere = softwareSystem "ConnectSphere Platform" "Event planning from request to registration." {
+            webApp = container "Front-End App" "One screen per task, with in-app notifications." "React 18 / Vite" "WebClient"
+            celeryWorker = container "Celery Worker" "Runs queued and timed background tasks." "Python / Celery"
+            database = container "Database" "Users, events, venues, bookings and holds, equipment, registrations and notifications." "PostgreSQL (Supabase)" "Database"
+            redis = container "Message Broker" "Holds queued background tasks until a worker takes them." "Redis" "Broker"
+
+            apiApp = container "API Application" "REST API under /api." "Python / Flask / SQLAlchemy, Gunicorn" {
+                # HTTP layer: one Flask blueprint per domain module, all under /api.
+                auth = component "Authentication" "Signs users in and out; issues and revokes JWTs (CF01, SCRUM-75)." "Blueprint: auth/routes.py, auth/sessions.py"
+                eventsApi = component "Event Workflow API" "Requests and drafts, review, Lead assignment, planning edits, change requests, equipment, safety checks, confirmation and cancellation." "Blueprint: events/routes.py"
+                venuesApi = component "Venue and Booking API" "Venue catalogue and deletion, all-events calendar, booking requests and decisions, holds, unavailability and replacements." "Blueprint: venues/routes.py"
+                registrationsApi = component "Registration API" "Attendee registration and withdrawal (CF18)." "Blueprint: registrations/routes.py"
+                notificationsApi = component "Notifications API" "Lists in-app notifications and marks them read (CF20)." "Blueprint: notifications/routes.py"
+
+                # Shared rules, free of HTTP so they can be unit tested on their own.
+                permissions = component "Roles and Permissions" "Which roles a user holds (main plus additional) and their relationship to an event: organiser, assigned coordinator, assigning Lead." "roles.py, events/permissions.py"
+                eventRules = component "Event Rules" "Venue suitability, change-request parsing and impact, equipment validation, and when a safety decision stops applying." "events/suitability.py, change_requests.py, change_review.py, equipment.py, safety.py"
+                scheduling = component "Venue Scheduling" "Occupied periods with setup and turnaround, half-open overlaps, and the current status of holds (W701, W704)." "venues/scheduling.py"
+                stock = component "Equipment Stock" "Available quantities, reservations, and release when an event is cancelled or its times change (CF16, CF17)." "resources/availability.py, reservations.py, release.py"
+                timedJobs = component "Timed Jobs" "Hold expiry every 5 minutes and incomplete-arrangement reminders every 24 hours; run by the Celery worker." "tasks.py, venues/hold_expiry.py, events/reminders.py"
+                dataModel = component "Data Model" "SQLAlchemy models, database constraints and the before_flush hook that releases equipment." "models.py"
+            }
+        }
+
+        webApp -> auth "Signs in and out" "JSON/HTTPS"
+        webApp -> eventsApi "Event workflow calls" "JSON/HTTPS"
+        webApp -> venuesApi "Venue and booking calls" "JSON/HTTPS"
+        webApp -> registrationsApi "Registers and withdraws" "JSON/HTTPS"
+        webApp -> notificationsApi "Reads notifications" "JSON/HTTPS"
+
+        eventsApi -> permissions "Checks role and relationship"
+        venuesApi -> permissions "Checks role and relationship"
+        eventsApi -> eventRules "Applies business rules"
+        eventsApi -> stock "Checks and reserves equipment"
+        venuesApi -> scheduling "Checks availability and conflicts"
+        timedJobs -> scheduling "Finds expired holds"
+
+        eventsApi -> dataModel "Reads/writes"
+        venuesApi -> dataModel "Reads/writes"
+        registrationsApi -> dataModel "Reads/writes"
+        auth -> dataModel "Reads users; records revoked tokens"
+        dataModel -> database "SQL" "SQLAlchemy"
+
+        eventsApi -> redis "Queues emails" "Redis"
+        venuesApi -> redis "Queues emails" "Redis"
+        celeryWorker -> timedJobs "Runs"
+    }
+
+    views {
+        component apiApp "Components" {
+            include *
+            autolayout tb 150 120
+        }
+
+        styles {
+            element "Element" {
+                color #ffffff
+            }
+            element "Container" {
+                background #23a2d9
+            }
+            element "Component" {
+                background #85bbf0
+                color #000000
+            }
+            element "WebClient" {
+                shape WebBrowser
+            }
+            element "Database" {
+                shape Cylinder
+            }
+            element "Broker" {
+                shape Pipe
+            }
+        }
+    }
+}
