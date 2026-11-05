@@ -36,16 +36,22 @@ workspace "ConnectSphere - API Components" "C4 level 3 (components) of the API A
         eventsApi -> eventRules "Applies business rules"
         eventsApi -> stock "Checks and reserves equipment"
         venuesApi -> scheduling "Checks availability and conflicts"
+        registrationsApi -> permissions "Checks role"
         timedJobs -> scheduling "Finds expired holds"
+        timedJobs -> eventsApi "Reuses the confirmation check"
 
         eventsApi -> dataModel "Reads/writes"
         venuesApi -> dataModel "Reads/writes"
         registrationsApi -> dataModel "Reads/writes"
+        notificationsApi -> dataModel "Reads/writes"
         auth -> dataModel "Reads users; records revoked tokens"
+        stock -> dataModel "Reads/writes"
+        timedJobs -> dataModel "Expires holds; saves reminders"
         dataModel -> database "SQL" "SQLAlchemy"
 
         eventsApi -> redis "Queues emails" "Redis"
         venuesApi -> redis "Queues emails" "Redis"
+        timedJobs -> redis "Queues emails" "Redis"
         celeryWorker -> timedJobs "Runs"
     }
 

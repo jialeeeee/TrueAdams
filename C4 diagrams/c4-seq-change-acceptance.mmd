@@ -15,7 +15,7 @@ sequenceDiagram
     API->>DM: Apply new values to the event
     API->>DM: Flag affected venue bookings (never cancel)
     API->>RULES: Clear safety decision (Confirmed back to Approved)
-    API->>DM: Notifications: organiser, registered attendees
+    API->>DM: Notifications: organiser, and registered attendees if the times changed
     DM->>DM: before_flush: times changed, so release equipment reservations
     API->>DB: Commit all of the above together
     API->>MQ: Queue emails (after commit)
