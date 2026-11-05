@@ -51,6 +51,10 @@ class Venue(db.Model):
     # set, which every scheduling check treats as 0 (scheduling.buffers).
     setup_minutes = db.Column(db.Integer)
     turnaround_minutes = db.Column(db.Integer)
+    # CF08: when (naive UTC) Venue Staff archived the venue, which is how a venue is
+    # deleted: it leaves the catalogue, search and new bookings, and its record and history
+    # are kept. NULL for a venue in use. Who archived it is in venue_changes.
+    archived_at = db.Column(db.DateTime)
 
 
 class Resource(db.Model):
@@ -102,6 +106,11 @@ class Event(db.Model):
     # neither field is editable through normal planning PATCH.
     confirmed_by_id = db.Column(db.Integer, db.ForeignKey("users.id"))
     confirmed_at = db.Column(db.DateTime)  # Naive UTC.
+    # SCRUM-98 AC4: who cancelled the event, when (naive UTC) and why. Records only, never
+    # edited; a cancelled event can't be reinstated (AC8).
+    cancelled_by_id = db.Column(db.Integer, db.ForeignKey("users.id"))
+    cancelled_at = db.Column(db.DateTime)
+    cancellation_reason = db.Column(db.Text)
     # When (naive UTC) and by which coordinator the review was started, moving the
     # request to under_review (SCRUM-31, reopened). Records, not editable fields.
     review_started_at = db.Column(db.DateTime)
@@ -479,7 +488,7 @@ class VenueChange(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     venue_id = db.Column(db.Integer, db.ForeignKey("venues.id"), nullable=False)
-    # "added" or "edited".
+    # "added", "edited", or "archived" / "restored" (CF08).
     action = db.Column(db.String(10), nullable=False)
     changed_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
     # Naive UTC, like the other audit timestamps.

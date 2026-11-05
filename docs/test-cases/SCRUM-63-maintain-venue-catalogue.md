@@ -78,3 +78,5 @@ Extra cases beyond the sheet: capacity sent as "40" or 40.0, layouts in any case
 Run `backend/db/venue_catalogue.sql`, then `backend/db/test_role.sql`, in the Supabase SQL editor as the project owner. The CI `supabase-schema` job fails until the table exists.
 
 For AC9 also run `backend/db/venue_setup_turnaround_minutes.sql` (adds the two columns to `venues`; no new table, so `test_role.sql` need not be re-run). Until it is run, `test_database_tables_match_the_models` fails for everyone.
+
+**Deleting venues (CF08, 4 Nov 2026):** Venue Staff delete a venue by archiving it; see [CF08-archive-venue.md](CF08-archive-venue.md). An archived venue can't be edited until it is restored (409 `archived`), and the change history also shows "Archived" and "Restored" entries.

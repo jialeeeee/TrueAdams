@@ -90,6 +90,12 @@ def _recorded(value):
     return value
 
 
+def _archived(venue):
+    """CF08: when the venue was archived, only for an archived venue, so the payload of a
+    venue in use is unchanged."""
+    return {"archived_at": venue.archived_at.isoformat()} if venue.archived_at else {}
+
+
 def _summary(venue):
     return {
         "id": venue.id,
@@ -97,6 +103,7 @@ def _summary(venue):
         "location": _recorded(venue.location),
         "capacity": venue.capacity,
         "is_available": venue.is_available,
+        **_archived(venue),
     }
 
 
@@ -108,6 +115,7 @@ def _details(venue):
         "is_available": venue.is_available,
         **fields,
         "not_recorded": [name for name in DETAIL_FIELDS if fields[name] is None],
+        **_archived(venue),
     }
 
 
@@ -120,8 +128,13 @@ def _load_failed(message="Venue information could not be loaded. Please try agai
 @jwt_required()
 def list_venues():
     try:
-        _require_viewer()
-        venues = [_summary(v) for v in Venue.query.order_by(Venue.name).all()]
+        user = _require_viewer()
+        query = Venue.query
+        # CF08: archived venues leave the catalogue; Venue Staff can list them to restore one.
+        if not (request.args.get("archived") == "include"
+                and has_any_role(user, CATALOGUE_ROLES)):
+            query = query.filter(Venue.archived_at.is_(None))
+        venues = [_summary(v) for v in query.order_by(Venue.name).all()]
     except _Rejected as rejected:
         return _error(rejected.message, rejected.status_code)
     except SQLAlchemyError:
@@ -325,6 +338,8 @@ def update_venue(venue_id: int):
         venue = db.session.get(Venue, venue_id)
         if venue is None:
             raise _Rejected("Venue not found.", 404)
+        if venue.archived_at is not None:
+            raise _Rejected(ARCHIVED_NOT_EDITABLE, 409, reason="archived")
         values = _check_catalogue_request(request.get_json(silent=True), creating=False)
         changes = {}
         for key, value in values.items():
@@ -347,6 +362,93 @@ def update_venue(venue_id: int):
     except SQLAlchemyError:
         return _save_failed()
     return jsonify({"message": f"{payload['name']} was updated.", "venue": payload})
+
+
+# ---------- Delete (archive) and restore a venue (CF08) ----------
+
+ARCHIVED_NOT_EDITABLE = "This venue is archived. Restore it before editing it."
+# A booking at the venue that holds, or may yet hold, it and hasn't ended (SCRUM-94 AC1).
+UPCOMING_BOOKING_STATUSES = {"pending", "tentative", "confirmed"}
+
+
+def _catalogue_venue(venue_id):
+    """The caller (Venue Staff) and the venue, locked, in the order 401, 404, 403."""
+    user = _require_viewer(roles=None)
+    venue = db.session.get(Venue, venue_id, with_for_update=True, populate_existing=True)
+    if venue is None:
+        raise _Rejected("Venue not found.", 404)
+    if not has_any_role(user, CATALOGUE_ROLES):
+        raise _Rejected("Only Venue Staff can archive or restore venues.", 403)
+    return user, venue
+
+
+def _upcoming_bookings(venue, now):
+    """The venue's bookings still to happen that hold, or may yet hold, it (A2)."""
+    rows = (VenueBooking.query
+            .filter(VenueBooking.venue_id == venue.id,
+                    VenueBooking.status.in_(UPCOMING_BOOKING_STATUSES),
+                    VenueBooking.end_time > now)
+            .with_for_update().all())
+    return [row for row in rows
+            if scheduling.current_status(row, now) in UPCOMING_BOOKING_STATUSES]
+
+
+@venues_bp.post("/<int:venue_id>/archive")
+@jwt_required()
+def archive_venue(venue_id: int):
+    """CF08: Venue Staff delete a venue by archiving it (A1). A venue with bookings still to
+    come is refused: marking it unavailable (SCRUM-88) gets their coordinators to find
+    replacements first (A2)."""
+    try:
+        user, venue = _catalogue_venue(venue_id)
+        if venue.archived_at is not None:
+            raise _Rejected(f"{venue.name} is already archived.", 409, reason="archived")
+        upcoming = _upcoming_bookings(venue, singapore_now())
+        if upcoming:
+            count = len(upcoming)
+            raise _Rejected(
+                f"{venue.name} has {count} upcoming booking{'s' if count != 1 else ''}, so "
+                "it can't be archived yet. Record it as unavailable so their coordinators "
+                "find replacement venues, or archive it once they are over.", 409,
+                reason="upcoming_bookings", bookings=sorted(row.id for row in upcoming))
+        venue.archived_at = datetime.utcnow()
+        db.session.add(VenueChange(
+            venue_id=venue.id, action="archived", changed_by_id=user.id,
+            changes={"archived_at": {"from": None, "to": venue.archived_at.isoformat()}}))
+        payload = _details(venue)
+        db.session.commit()
+    except _Rejected as rejected:
+        db.session.rollback()
+        return _error(rejected.message, rejected.status_code, **rejected.extra)
+    except SQLAlchemyError:
+        db.session.rollback()
+        return _error("The venue was not archived. Please try again.", 503, retryable=True)
+    return jsonify({"message": f"{payload['name']} was archived. It is no longer offered for "
+                               "new bookings, and its records are kept.", "venue": payload})
+
+
+@venues_bp.post("/<int:venue_id>/restore")
+@jwt_required()
+def restore_venue(venue_id: int):
+    """CF08: put an archived venue back in the catalogue (A3)."""
+    try:
+        user, venue = _catalogue_venue(venue_id)
+        if venue.archived_at is None:
+            raise _Rejected(f"{venue.name} isn't archived.", 409, reason="not_archived")
+        archived_at, venue.archived_at = venue.archived_at, None
+        db.session.add(VenueChange(
+            venue_id=venue.id, action="restored", changed_by_id=user.id,
+            changes={"archived_at": {"from": archived_at.isoformat(), "to": None}}))
+        payload = _details(venue)
+        db.session.commit()
+    except _Rejected as rejected:
+        db.session.rollback()
+        return _error(rejected.message, rejected.status_code, **rejected.extra)
+    except SQLAlchemyError:
+        db.session.rollback()
+        return _error("The venue was not restored. Please try again.", 503, retryable=True)
+    return jsonify({"message": f"{payload['name']} is back in the catalogue.",
+                    "venue": payload})
 
 
 # ---------- Setup or turnaround conflicts (SCRUM-84 AC5) ----------
@@ -759,6 +861,82 @@ def _availability(venue, first, last):
     }
 
 
+# ---------- One calendar of all events, for planning (CF09) ----------
+
+# CF09: "Coordinators and Venue and Technical Support Staff also need one calendar showing
+# all events, for planning." (A1)
+CALENDAR_ROLES = {"coordinator", "venue_staff", "tech_staff"}
+# Events with a plan to show: from submission until cancellation or rejection (A2).
+CALENDAR_EVENT_STATUSES = {"submitted", "under_review", "approved", "confirmed"}
+# The bookings that hold, or may yet hold, a venue for the event (A3).
+CALENDAR_BOOKING_STATUSES = {"pending", scheduling.TENTATIVE_STATUS,
+                             scheduling.BLOCKING_BOOKING_STATUS}
+
+
+def _calendar_entry(event, bookings, venues, coordinators, user, now):
+    listed = [booking for booking in bookings
+              if scheduling.current_status(booking, now) in CALENDAR_BOOKING_STATUSES]
+    coordinator = coordinators.get(event.coordinator_id)
+    return {
+        "id": event.id,
+        "title": event.title,
+        "status": event.status,
+        "start_time": event.start_time.isoformat(),
+        "end_time": event.end_time.isoformat(),
+        "venues": [{"id": booking.venue_id, "name": venues[booking.venue_id].name,
+                    "booking_status": booking.status,
+                    "start_time": booking.start_time.isoformat(),
+                    "end_time": booking.end_time.isoformat()} for booking in listed],
+        "coordinator": ({"id": coordinator.id, "email": coordinator.email}
+                        if coordinator else None),
+        # Only the event's coordinator can open its planning view (SCRUM-34).
+        "managed": is_current_coordinator(user, event),
+    }
+
+
+@venues_bp.get("/calendar")
+@jwt_required()
+def events_calendar():
+    """CF09: every event with a plan whose time overlaps the chosen days (Singapore time),
+    soonest first, with the venues booked or requested for it (A1-A4). The same range rules
+    as a venue's calendar: `from`, optional `to`, at most MAX_RANGE_DAYS days."""
+    try:
+        user = _require_viewer(CALENDAR_ROLES,
+                               "Only coordinators, Venue Staff and Technical Support Staff "
+                               "can view the events calendar.")
+        first, last = _date_range(request.args)
+        start = datetime.combine(first, time.min)
+        end = datetime.combine(last + timedelta(days=1), time.min)
+        events = (Event.query
+                  .filter(Event.status.in_(CALENDAR_EVENT_STATUSES),
+                          Event.start_time < end, Event.end_time > start)
+                  .order_by(Event.start_time, Event.id).all())
+        ids = [event.id for event in events]
+        bookings = (VenueBooking.query
+                    .filter(VenueBooking.event_id.in_(ids),
+                            VenueBooking.status.in_(CALENDAR_BOOKING_STATUSES))
+                    .order_by(VenueBooking.start_time, VenueBooking.id).all() if ids else [])
+        venue_ids = {booking.venue_id for booking in bookings}
+        venues = ({venue.id: venue for venue in Venue.query.filter(Venue.id.in_(venue_ids))}
+                  if venue_ids else {})
+        coordinator_ids = {event.coordinator_id for event in events if event.coordinator_id}
+        coordinators = ({row.id: row for row in User.query.filter(User.id.in_(coordinator_ids))}
+                        if coordinator_ids else {})
+        by_event = {}
+        for booking in bookings:
+            by_event.setdefault(booking.event_id, []).append(booking)
+        now = singapore_now()
+        items = [_calendar_entry(event, by_event.get(event.id, []), venues, coordinators,
+                                 user, now) for event in events]
+    except _Rejected as rejected:
+        return _error(rejected.message, rejected.status_code)
+    except SQLAlchemyError:
+        # A partial list could hide a clash, so any failure fails the lot.
+        return _load_failed("The events calendar could not be loaded. Please try again.")
+    return jsonify({"from": first.isoformat(), "to": last.isoformat(), "events": items,
+                    "message": None if items else "No events are planned for these dates."})
+
+
 @venues_bp.get("/<int:venue_id>/availability")
 @jwt_required()
 def check_availability(venue_id: int):
@@ -875,8 +1053,10 @@ def _search_result(venue, filters):
 
 
 def _search(filters):
-    # Venues marked as not bookable never appear (SCRUM-37 assumption A8).
-    venues = Venue.query.filter(Venue.is_available.isnot(False)).order_by(Venue.name).all()
+    # Venues marked as not bookable never appear (SCRUM-37 assumption A8), nor archived ones
+    # (CF08).
+    venues = (Venue.query.filter(Venue.is_available.isnot(False), Venue.archived_at.is_(None))
+              .order_by(Venue.name).all())
     results = [r for r in (_search_result(v, filters) for v in venues) if r is not None]
 
     if "period" in filters and results:
@@ -1070,6 +1250,9 @@ def request_booking():
         venue = db.session.get(Venue, body["venue_id"])
         if venue is None:
             raise _Rejected("Venue not found.", 404)
+        if venue.archived_at is not None:
+            raise _Rejected(f"{venue.name} has been removed from the catalogue, so it can't "
+                            "be requested. Choose another venue.", 409, reason="archived")
         if event.status != REQUESTABLE_EVENT_STATUS:
             raise _Rejected(
                 "A venue can only be requested for an approved event. "

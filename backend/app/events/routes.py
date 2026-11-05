@@ -27,6 +27,8 @@ from ..models import (
 )
 from ..registrations.routes import REGISTERED, REGISTRABLE_STATUSES, WITHDRAWN, singapore_now
 from ..resources import availability, reservations as reserving
+# SCRUM-98 reuses SCRUM-94's notice to Venue Staff, who aren't linked to venues.
+from ..venues.routes import _notify_venue_staff
 from ..roles import has_any_role, has_role, holding
 from ..venues.scheduling import (
     BLOCKING_BOOKING_STATUS, FLAGGED, REPLACEMENT_FLAG, TENTATIVE_STATUS, overlapping)
@@ -41,6 +43,7 @@ from .permissions import (
     is_current_coordinator as _is_current_coordinator,
     is_current_organiser,
     is_tech_staff,
+    TECH_STAFF_ROLE,
 )
 
 events_bp = Blueprint("events", __name__)
@@ -675,6 +678,8 @@ def _planning_payload(event):
         # Add only recorded safety decisions; preserve the existing payload for
         # events with no safety check (SCRUM-91 AC2).
         **({"safety_check": _safety_decision_payload(event)} if event.safety_decision else {}),
+        # SCRUM-98 AC4: only once cancelled, so other events keep their payload.
+        **({"cancellation": _cancellation_payload(event)} if event.cancelled_at else {}),
     }
 
 
@@ -3073,6 +3078,182 @@ def request_reassignment(event_id: int):
 
 
 # ---------- Assess a venue against an event's requirements (SCRUM-38) ----------
+
+
+# ---------- The coordinator cancels an event (SCRUM-98) ----------
+
+# AC2: a draft, rejected or already cancelled event can't be cancelled; these can (A2).
+CANCELLABLE_EVENT_STATUSES = {"submitted", "under_review", "approved", "confirmed"}
+CANCELLED_EVENT_STATUS = "cancelled"
+# AC3, as for every decision reason. Must match MAX_REASON_LENGTH in
+# frontend/src/pages/EventPlanningPage.jsx.
+CANCELLATION_REASON_MAX = 500
+# Must match REASON_REQUIRED in frontend/src/pages/EventPlanningPage.jsx.
+CANCELLATION_REASON_REQUIRED = "Give a reason for cancelling the event."
+# AC5: the bookings that hold, or may yet hold, a venue (SCRUM-94 AC1) are cancelled.
+CANCELLED_BOOKING_STATUSES = {"pending", TENTATIVE_STATUS, BLOCKING_BOOKING_STATUS}
+CANCELLED_BOOKING = "cancelled"
+EVENT_CANCELLED_NOTIFICATION = "event_cancelled"
+EVENT_NOT_CANCELLED = ("The event was not cancelled, and nothing about it changed. Please "
+                       "try again.")
+NOT_REINSTATED = "A cancelled event can't be reinstated; a similar event needs a new request."
+
+
+def _cancellation_reason(body):
+    """The trimmed reason from the body, or _Rejected (AC3, A3)."""
+    if not isinstance(body, dict):
+        raise _Rejected("Send the cancellation as a JSON object.", 400)
+    reason = body.get("reason")
+    if reason is not None and not isinstance(reason, str):
+        raise _Rejected("The reason must be text.", 400, field="reason")
+    reason = reason.strip() if reason and _has_visible_text(reason) else None
+    if reason is None:
+        raise _Rejected(CANCELLATION_REASON_REQUIRED, 400, field="reason")
+    if len(reason) > CANCELLATION_REASON_MAX:
+        raise _Rejected(f"Your reason is {len(reason):,} characters long. The limit is "
+                        f"{CANCELLATION_REASON_MAX} characters, so remove "
+                        f"{len(reason) - CANCELLATION_REASON_MAX:,} and try again.", 400,
+                        field="reason")
+    return reason
+
+
+def _cancel_blocked(event, now):
+    """Why the event can't be cancelled now, as (reason, message), or None (AC1, AC2, AC8)."""
+    if event.status not in CANCELLABLE_EVENT_STATUSES:
+        message = (f"This event is {event.status.replace('_', ' ')}, so it can't be "
+                   "cancelled.")
+        if event.status == CANCELLED_EVENT_STATUS:
+            message += f" {NOT_REINSTATED}"
+        return "not_cancellable", message
+    if event.start_time is not None and event.start_time <= now:
+        return "started", "This event has already started, so it can no longer be cancelled."
+    return None
+
+
+def _cancellation_payload(event):
+    canceller = db.session.get(User, event.cancelled_by_id) if event.cancelled_by_id else None
+    return {"cancelled_by": _user_summary(canceller) if canceller else None,
+            "cancelled_at": _isoformat(event.cancelled_at),
+            "reason": event.cancellation_reason}
+
+
+def _when(value):
+    return f"{value:%Y-%m-%d %H:%M}" if value else "date not recorded"
+
+
+def _notify(users, kind, message, event_id, subject):
+    """An in-app notification for each user; their emails, to queue after the commit."""
+    for user in users:
+        db.session.add(Notification(recipient_id=user.id, kind=kind, message=message,
+                                    event_id=event_id))
+    return [(user.email, subject, message) for user in users]
+
+
+@events_bp.post("/<int:event_id>/cancel")
+@jwt_required()
+def cancel_event(event_id: int):
+    """SCRUM-98: the event's coordinator cancels it, before it starts, with a reason.
+
+    The event becomes cancelled with who, when and why (AC4); its pending, tentative and
+    confirmed venue bookings are cancelled and its reserved equipment released, keeping
+    their records (AC5); its active registrations are cancelled (AC6); and the organiser,
+    the registered attendees, Venue Staff and Technical Support Staff are told (AC7). All
+    of it is saved in one commit, so a failure changes nothing (AC9). Checks: 401, 404,
+    403, 400, 409, 503."""
+    emails = []
+    try:
+        user = _current_user()
+        if user is None:
+            raise _Rejected("Your session is no longer valid. Please log in again.", 401)
+        event = (db.session.get(Event, event_id, with_for_update=True, populate_existing=True)
+                 if event_id <= DB_INTEGER_MAX else None)
+        if event is None:
+            raise _Rejected(EVENT_NOT_FOUND, 404)
+        if not _is_current_coordinator(user, event):
+            raise _Rejected("Only the event's coordinator can cancel it.", 403)
+        reason = _cancellation_reason(request.get_json(silent=True))
+        blocked = _cancel_blocked(event, singapore_now())
+        if blocked:
+            raise _Rejected(blocked[1], 409, reason=blocked[0])
+
+        bookings = (VenueBooking.query
+                    .filter(VenueBooking.event_id == event.id,
+                            VenueBooking.status.in_(CANCELLED_BOOKING_STATUSES))
+                    .order_by(VenueBooking.start_time, VenueBooking.id)
+                    .with_for_update().all())
+        registrations = (Registration.query.filter_by(event_id=event.id, status=REGISTERED)
+                         .with_for_update().all())
+        reserved = EquipmentReservation.query.filter_by(
+            event_id=event.id, status=reserving.RESERVED).count()
+        has_equipment = reserved > 0 or EquipmentRequirement.query.filter_by(
+            event_id=event.id).count() > 0
+
+        for booking in bookings:
+            booking.status = CANCELLED_BOOKING
+        for registration in registrations:
+            registration.status = CANCELLED_REGISTRATION
+        # Reserved equipment is released when this is saved (resources/release.py, AC5).
+        event.status = CANCELLED_EVENT_STATUS
+        event.cancelled_by_id = user.id
+        event.cancelled_at = datetime.utcnow()
+        event.cancellation_reason = reason
+
+        title, when = event.title, _when(event.start_time)
+        organiser = db.session.get(User, event.organiser_id)
+        emails += _notify(
+            [organiser], EVENT_CANCELLED_NOTIFICATION,
+            f'Your event "{title}" ({when}) was cancelled by {user.email} on '
+            f"{_singapore_time(event.cancelled_at)}. Reason: {reason}. Its venue bookings, "
+            "equipment reservations and registrations were released. "
+            f"{NOT_REINSTATED}",
+            event.id, f"Event cancelled: {title}")
+        # The reason is internal planning information, so attendees aren't shown it (A6).
+        attendees = [db.session.get(User, registration.attendee_id)
+                     for registration in registrations]
+        emails += _notify(
+            attendees, EVENT_CANCELLED_NOTIFICATION,
+            f'"{title}" ({when}, Singapore time) has been cancelled, so your registration '
+            "was cancelled.", event.id, f"Event cancelled: {title}")
+        if bookings:
+            venues = {booking.venue_id: db.session.get(Venue, booking.venue_id)
+                      for booking in bookings}
+            freed = "; ".join(f"{venues[b.venue_id].name}, {_when(b.start_time)} to "
+                              f"{_when(b.end_time)}" for b in bookings)
+            message = (f'{user.email} cancelled "{title}" ({when}). Its venue bookings were '
+                       f"cancelled, so these are free again: {freed}.")
+            emails += [(address, f"Venue bookings cancelled: {title}", message)
+                       for address in _notify_venue_staff(message, event.id,
+                                                          kind=EVENT_CANCELLED_NOTIFICATION)]
+        if has_equipment:
+            tech_staff = User.query.filter(holding({TECH_STAFF_ROLE})).all()
+            released = ("Its reserved equipment was released and is available again."
+                        if reserved else "Its equipment requirements no longer need arranging.")
+            emails += _notify(tech_staff, EVENT_CANCELLED_NOTIFICATION,
+                              f'{user.email} cancelled "{title}" ({when}). {released}',
+                              event.id, f"Event cancelled: {title}")
+
+        payload = {"id": event.id, "status": event.status,
+                   "cancellation": _cancellation_payload(event)}
+        counts = {"venue_bookings": len(bookings), "equipment_reservations": reserved,
+                  "registrations": len(registrations)}
+        db.session.commit()
+    except _Rejected as rejected:
+        db.session.rollback()
+        return _error(rejected.message, rejected.status_code, **rejected.extra)
+    except SQLAlchemyError:
+        db.session.rollback()
+        return _error(EVENT_NOT_CANCELLED, 503, retryable=True)
+
+    footer = "\n\nSign in to ConnectSphere for details."
+    email_queued = all([_queue_email(to, subject, f"{body}{footer}", event_id)
+                        for to, subject, body in emails])
+    return jsonify({
+        "message": (f'You cancelled "{title}". Its venue bookings, equipment reservations '
+                    "and registrations were released, and everyone affected has been told."),
+        "event": payload,
+        "released": counts,
+        "notification": {"in_app": True, "email_queued": email_queued},
+    })
 
 
 @events_bp.get("/<int:event_id>/venue-suitability")
