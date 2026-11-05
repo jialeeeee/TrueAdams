@@ -96,12 +96,19 @@ Unit records are in memory. Authorization changes the stored role while retainin
 - **Automated:** `SafetyApprovalUnitTests.test_failed_save_returns_an_error_and_rolls_back_without_email` verifies the HTTP error/rollback/no-email branch without a database; `SafetyApprovalLocalTests.test_failed_commit_rolls_back_decision_and_notification_together` verifies real transaction atomicity when local PostgreSQL is available; frontend `shows the save error and keeps the event unapproved with its comment`.
 - **Current limitation:** PostgreSQL rollback test skipped before any connection because the configured test target is remote. Mocked unit commit calls alone are not claimed as proof of database atomicity.
 
+**TC-91-06 · An event with no assigned coordinator: the approval is saved and nobody is notified** *(added 5 Nov 2026 with branch coverage)*
+
+- **Traces to:** AC2 · **Type:** Boundary, PostgreSQL integration · **Preconditions:** SA-SEED with the event's coordinator removed.
+- **Steps:** Approve with a comment.
+- **Expected result:** HTTP 200; the approval is persisted; no notification row is saved and no email is queued; `notification` is `{"in_app": false, "email_queued": false}`, so the reply never claims a notification that wasn't made.
+- **Automated:** `SafetyApprovalLocalTests.test_approval_without_a_coordinator_notifies_nobody`.
+
 ## Traceability matrix
 
 | AC | Backend | Frontend | Current coverage limit |
 |---|---|---|---|
 | AC1 | TC-91-01 | TC-91-01 | GREEN in isolated HTTP and UI tests |
-| AC2 | TC-91-02 | TC-91-01/02 combined success scenario | Coordinator UI GREEN; real persistence/notification verification pending local PostgreSQL |
+| AC2 | TC-91-02, TC-91-06 | TC-91-01/02 combined success scenario | Coordinator UI GREEN; real persistence/notification verification pending local PostgreSQL |
 | AC3 | TC-91-03 | — | BLOCKED by SCRUM-93; before/after check incomplete and explicitly skipped |
 | AC4 | TC-91-04; positive TC-91-01 | — | GREEN; JWT/stored-role checks and no unauthorized writes |
 | AC5 | TC-91-05 | TC-91-05 | HTTP failure/rollback branch and UI GREEN; real row rollback pending local PostgreSQL |

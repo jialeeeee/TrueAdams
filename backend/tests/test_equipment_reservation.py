@@ -718,6 +718,19 @@ class NotificationTests(ReservationTestCase):
         self.assertEqual(len(self.rows("R1", status="reserved")), 1)
         self.assertEqual(len(self.notifications("alice")), 1)
 
+    # TC-44-57 · AC8
+    def test_tc_44_57_an_event_without_a_coordinator_tells_nobody(self):
+        self.events["R1"].coordinator_id = None
+        self.db.session.commit()
+
+        result = self.reserved("R1", "Projector", ("BenQ LU935", 1))
+
+        self.assertEqual(len(self.rows("R1", status="reserved")), 1)
+        self.assertEqual(result["notification"], {"in_app": False, "email_queued": False})
+        self.assertNotIn("coordinator has been notified", result["confirmation"])
+        self.assertEqual(Notification.query.filter_by(event_id=self.events["R1"].id).count(), 0)
+        self.email.assert_not_called()
+
 
 # ---------- AC9: cancelling, or changing the requirements, releases the reservation ----------
 

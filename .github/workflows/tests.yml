@@ -56,8 +56,9 @@ jobs:
           TEST_DATABASE_URL: postgresql://connectsphere_test:ci-only@localhost:5432/postgres
         run: coverage run -m unittest discover -v
 
-      # Fails below 100% (backend/.coveragerc): a new line needs a test, or a
-      # "# pragma: no cover" with the reason it can't have one.
+      # Fails below 100% of statements and branches (backend/.coveragerc): a new line or
+      # branch outcome needs a test, or a "# pragma: no cover" / "# pragma: no branch"
+      # with the reason it can't have one.
       - name: Coverage
         run: coverage report
 

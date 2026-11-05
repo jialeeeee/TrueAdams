@@ -1,6 +1,10 @@
-# `coverage run -m unittest discover && coverage report`: fails below 100%.
+# `coverage run -m unittest discover && coverage report`: fails below 100% of statements
+# and branches.
 [run]
 source = app
+# Every branch outcome too, not only every line (Week 6). An outcome that cannot happen is
+# marked "# pragma: no branch" with the reason, as unreachable lines use "# pragma: no cover".
+branch = True
 
 [report]
 show_missing = True

@@ -83,6 +83,14 @@ The single optional local method combines AC3 durability and AC6 rollback, testi
 - **Expected result:** Exact decision/comment, S1 ID and naive UTC decision timestamp between request start/end. Planning summary exposes all four facts, including S1's identity. Latest-outcome fields suffice; no new history table.
 - **Automated:** HTTP summary in `test_planning_outcome_and_comment_notify_the_assigned_coordinator`; real storage in `SafetyRejectionChangesLocalTests.test_flushed_failure_is_atomic_and_retry_persists_coordinator_visible_decision` (successful retry). Frontend reuses the existing summary for each decision.
 
+**TC-92-07 · An event with no assigned coordinator: the decision is saved and nobody is notified** *(added 5 Nov 2026 with branch coverage)*
+
+- **Traces to:** AC2, AC3 · **Type:** Boundary, PostgreSQL integration · **Depends on:** A4 (existing behaviour, no new missing-assignee rule).
+- **Preconditions:** SR-SEED with the event's coordinator removed.
+- **Steps:** Reject with a comment; clear the decision; request changes with a comment.
+- **Expected result:** Each time HTTP 200 and the decision is stored; no notification row is saved and no email is queued; `notification` is `{"in_app": false, "email_queued": false}`.
+- **Automated:** `SafetyRejectionChangesLocalTests.test_decision_without_a_coordinator_notifies_nobody`.
+
 ## AC4 — Correction then a fresh safety check
 
 **TC-92-04 · Wait for the coordinator's update, recheck readiness, then require new approval**
@@ -119,7 +127,7 @@ The single optional local method combines AC3 durability and AC6 rollback, testi
 |---|---|---|---|
 | AC1 | TC-92-01 | Required comment and both actions | Combined success/validation scenario |
 | AC2 | TC-92-02 | Planning, notification and coordinator read | Same success scenario, existing planning view |
-| AC3 | TC-92-03 | Summary plus optional real persistence | Same existing planning view |
+| AC3 | TC-92-03, TC-92-07 | Summary plus optional real persistence | Same existing planning view |
 | AC4 | TC-92-04 | Actual queue → coordinator PATCH → approval → confirmation | — |
 | AC5 | TC-92-05 | Stored-role and unauthenticated denials | — |
 | AC6 | TC-92-06 | HTTP rollback branch plus optional flushed transaction | Combined failure/retained-input scenario |

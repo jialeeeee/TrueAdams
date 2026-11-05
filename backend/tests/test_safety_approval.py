@@ -212,6 +212,19 @@ class SafetyApprovalLocalTests(AppTestCase):
         event = self.db.session.get(Event, self.event_id)
         return {column.name: getattr(event, column.name) for column in Event.__table__.columns}
 
+    # TC-91-06 / AC2: an event with no assigned coordinator still records the approval;
+    # nobody is notified, and the reply says so instead of claiming a notification.
+    def test_approval_without_a_coordinator_notifies_nobody(self):
+        self.event.coordinator_id = None
+        self.db.session.commit()
+        response = self.approve()
+        self.assertEqual(response.status_code, 200, response.get_json())
+        self.assertEqual(response.get_json()["notification"],
+                         {"in_app": False, "email_queued": False})
+        self.assertEqual(self.stored_event()["safety_decision"], "approved")
+        self.assertEqual(Notification.query.filter_by(event_id=self.event_id).count(), 0)
+        self.email.assert_not_called()
+
     # TC-91-02 / AC2: real persistence, independent coordinator read and notification.
     def test_persisted_decision_is_visible_to_the_notified_coordinator(self):
         before = datetime.utcnow()

@@ -252,6 +252,13 @@ Expected for R1 with nothing reserved: microphones 4 can be reserved (2 Shure, 2
 - **Expected result:** HTTP 201 with `email_queued: false`; the reservation and the in-app notification are saved.
 - **Automated:** `test_tc_44_29_an_email_queue_failure_does_not_undo_the_reservation`
 
+**TC-44-57 · An event without a coordinator tells nobody** *(added 5 Nov 2026 with branch coverage)*
+- **Traces to:** AC8 · **Type:** Boundary · **Depends on:** A9
+- **Preconditions:** R1 has no assigned coordinator.
+- **Steps:** Reserve 1 × BenQ for R1.
+- **Expected result:** HTTP 201; the reservation is saved; no notification is saved and no email is queued; `notification` is `{"in_app": false, "email_queued": false}` and the confirmation doesn't say the coordinator was notified.
+- **Automated:** `test_tc_44_57_an_event_without_a_coordinator_tells_nobody`
+
 ## AC9 — Cancelling, or changing the requirements, releases the reservation
 
 Each case starts with R1 holding 2 × Shure and 1 × Sennheiser (microphones) and 1 × BenQ (projector).
