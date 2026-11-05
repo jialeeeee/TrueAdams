@@ -1,6 +1,6 @@
 # CF08 — Venue Staff delete (archive) a venue record: Test Cases
 
-**Requirement:** CF08 Venue catalogue: "Venue Staff can create, edit and delete venue records." SCRUM-63 covers adding and editing; this covers deleting. *No Jira story exists for it yet; add one to the backlog (for example "Venue Staff archive a venue") before marking it Done.*
+**Requirement:** CF08 Venue catalogue: "Venue Staff can create, edit and delete venue records." (G4 clarification #15). SCRUM-63 covers adding and editing; **SCRUM-101 "Venue Staff delete a venue"** covers deleting.
 
 **Created:** 4 Nov 2026 · **Status of all cases:** automated cases pass (4 Nov 2026, local PostgreSQL as in CI + Vitest) · **Automated tests:** `backend/tests/test_venue_archive.py`, `frontend/src/pages/VenueArchive.test.jsx` · **Endpoints:** `POST /api/venues/<id>/archive`, `POST /api/venues/<id>/restore`, and `GET /api/venues/?archived=include` · **Related:** SCRUM-63 (catalogue and its change history), SCRUM-37 (search), SCRUM-39 (venue requests), SCRUM-88 (recording a venue as unavailable)
 
@@ -13,6 +13,10 @@
 | C3 | Venue Staff can undo a deletion. |
 | C4 | Only Venue Staff can delete or undo. Anyone else is denied and nothing changes. |
 | C5 | Each deletion and undo records who and when; a failed save changes nothing and says so. |
+
+## Wording (SCRUM-101, 5 Nov 2026)
+
+Everything Venue Staff see says **delete**, the customer's word: the "Delete venue" button and its "Delete" confirmation, "Deleted on …", "Show deleted venues", "(deleted)", "Deleted by …" in the history, and the server's messages ("was deleted", "can't be deleted yet", "has been deleted. Restore it before editing it."). A deleted venue can be restored. Behaviour is unchanged: deleting is still the soft delete of A1, and the API, database and code keep the name *archive* (`POST /api/venues/<id>/archive`, `venues.archived_at`, reason `archived`), so no other story or client changes.
 
 ## Working assumptions (team decision, 4 Nov 2026)
 
@@ -34,9 +38,9 @@
 | TC-CF08-06 | C4 | 401 (no token, deleted user), 404, 403 for a coordinator, organiser and Technical Support, nothing recorded; Venue Staff as an additional role may | `test_tc_cf08_06_who_may_archive_and_restore_and_in_what_order`, `test_tc_cf08_06_an_additional_venue_staff_role_is_enough` |
 | TC-CF08-07 | C3, C5 | Restoring puts it back, records who and when, and it can be edited; archiving twice or restoring a venue in use is 409 | `test_tc_cf08_07_restoring_puts_the_venue_back`, `test_tc_cf08_07_archiving_twice_or_restoring_a_venue_in_use_is_refused` |
 | TC-CF08-08 | C5 | A failed archive or restore is 503 `retryable` and changes nothing | `test_tc_cf08_08_a_failed_archive_or_restore_changes_nothing` |
-| TC-CF08-09 | C1 | The edit page archives after a confirmation step, shows it archived with no Save, and the history says "Archived"; "Back" archives nothing | frontend "archives the venue after a confirmation step", "backing out archives nothing" |
-| TC-CF08-10 | C2, C5 | A refusal or failure is explained | frontend "explains why a venue can't be archived" |
-| TC-CF08-11 | C3, C4 | Restoring from the edit page; a failed restore explained; Venue Staff can show archived venues on the list, marked "(archived)"; nobody else is offered it | frontend "restores an archived venue", "explains a failed restore", "lets Venue Staff show archived venues, marked as archived", "offers nobody else archived venues" |
+| TC-CF08-09 | C1 | The edit page deletes after a confirmation step, shows it deleted with no Save, and the history says "Deleted"; "Back" deletes nothing | frontend "deletes the venue after a confirmation step", "backing out deletes nothing" |
+| TC-CF08-10 | C2, C5 | A refusal or failure is explained | frontend "explains why a venue can't be deleted" |
+| TC-CF08-11 | C3, C4 | Restoring from the edit page; a failed restore explained; Venue Staff can show deleted venues on the list, marked "(deleted)"; nobody else is offered it | frontend "restores a deleted venue", "explains a failed restore", "lets Venue Staff show deleted venues, marked as deleted", "offers nobody else deleted venues" |
 
 ## Open questions for the customer
 

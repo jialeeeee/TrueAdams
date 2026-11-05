@@ -72,62 +72,62 @@ beforeEach(() => {
   serve();
 });
 
-describe("archiving a venue (CF08)", () => {
+describe("deleting a venue (CF08, SCRUM-101)", () => {
   // TC-CF08-09 · A1
-  it("archives the venue after a confirmation step", async () => {
-    const message = "Orchard Hall was archived. It is no longer offered for new bookings, and its records are kept.";
+  it("deletes the venue after a confirmation step", async () => {
+    const message = "Orchard Hall was deleted. It is no longer offered for new bookings, and its records are kept.";
     apiClient.post.mockImplementation(async () => {
       history = [entry("added"), entry("archived")];
       return { data: { message, venue: { ...HALL, archived_at: ARCHIVED_AT } } };
     });
     const user = renderAt("/venues/1/edit");
 
-    await user.click(await screen.findByRole("button", { name: "Archive venue" }));
-    const step = screen.getByRole("region", { name: "Archive this venue" });
+    await user.click(await screen.findByRole("button", { name: "Delete venue" }));
+    const step = screen.getByRole("region", { name: "Delete this venue" });
     expect(within(step).getByText(/it can be restored/)).toBeTruthy();
-    await user.click(within(step).getByRole("button", { name: "Archive" }));
+    await user.click(within(step).getByRole("button", { name: "Delete" }));
 
     expect(apiClient.post).toHaveBeenCalledWith("/venues/1/archive", {});
     expect((await screen.findByRole("status")).textContent).toBe(message);
-    const archived = screen.getByRole("region", { name: "Archived venue" });
-    expect(archived.textContent).toContain(`Archived on ${localTime(ARCHIVED_AT)}. It isn't offered for new bookings`);
+    const archived = screen.getByRole("region", { name: "Deleted venue" });
+    expect(archived.textContent).toContain(`Deleted on ${localTime(ARCHIVED_AT)}. It isn't offered for new bookings`);
     expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
-    expect(screen.getByText(`Archived by ${STAFF.email} on ${localTime("2027-05-01T01:00:00")}`)).toBeTruthy();
+    expect(screen.getByText(`Deleted by ${STAFF.email} on ${localTime("2027-05-01T01:00:00")}`)).toBeTruthy();
   });
 
   // TC-CF08-09 · A1
-  it("backing out archives nothing", async () => {
+  it("backing out deletes nothing", async () => {
     const user = renderAt("/venues/1/edit");
 
-    await user.click(await screen.findByRole("button", { name: "Archive venue" }));
+    await user.click(await screen.findByRole("button", { name: "Delete venue" }));
     await user.click(screen.getByRole("button", { name: "Back" }));
 
     expect(apiClient.post).not.toHaveBeenCalled();
-    expect(screen.getByRole("button", { name: "Archive venue" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Delete venue" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Save" })).toBeTruthy();
   });
 
   // TC-CF08-10 · A2, A5
-  it("explains why a venue can't be archived", async () => {
-    const refusal = "Orchard Hall has 2 upcoming bookings, so it can't be archived yet. Record it as unavailable so their coordinators find replacement venues, or archive it once they are over.";
+  it("explains why a venue can't be deleted", async () => {
+    const refusal = "Orchard Hall has 2 upcoming bookings, so it can't be deleted yet. Record it as unavailable so their coordinators find replacement venues, or delete it once they are over.";
     apiClient.post
       .mockRejectedValueOnce(failure(409, { error: refusal, reason: "upcoming_bookings", bookings: [5, 6] }))
       .mockRejectedValueOnce(new Error("Network Error"));
     const user = renderAt("/venues/1/edit");
 
-    await user.click(await screen.findByRole("button", { name: "Archive venue" }));
-    await user.click(screen.getByRole("button", { name: "Archive" }));
+    await user.click(await screen.findByRole("button", { name: "Delete venue" }));
+    await user.click(screen.getByRole("button", { name: "Delete" }));
     expect((await screen.findByRole("alert")).textContent).toBe(refusal);
-    expect(screen.queryByRole("region", { name: "Archived venue" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "Deleted venue" })).toBeNull();
 
-    await user.click(screen.getByRole("button", { name: "Archive venue" }));
-    await user.click(screen.getByRole("button", { name: "Archive" }));
+    await user.click(screen.getByRole("button", { name: "Delete venue" }));
+    await user.click(screen.getByRole("button", { name: "Delete" }));
     expect((await screen.findByRole("alert")).textContent)
-      .toBe("The venue was not archived. Check your connection and try again.");
+      .toBe("The venue was not deleted. Check your connection and try again.");
   });
 
   // TC-CF08-11 · A3
-  it("restores an archived venue", async () => {
+  it("restores a deleted venue", async () => {
     venue = { ...HALL, archived_at: ARCHIVED_AT };
     history = [entry("added"), entry("archived")];
     apiClient.post.mockImplementation(async () => {
@@ -141,7 +141,7 @@ describe("archiving a venue (CF08)", () => {
     expect(apiClient.post).toHaveBeenCalledWith("/venues/1/restore", {});
     expect((await screen.findByRole("status")).textContent).toBe("Orchard Hall is back in the catalogue.");
     expect(screen.getByRole("button", { name: "Save" })).toBeTruthy();
-    expect(screen.queryByRole("region", { name: "Archived venue" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "Deleted venue" })).toBeNull();
     expect(screen.getByText(`Restored by ${STAFF.email} on ${localTime("2027-05-01T01:00:00")}`)).toBeTruthy();
   });
 
@@ -155,32 +155,32 @@ describe("archiving a venue (CF08)", () => {
 
     expect((await screen.findByRole("alert")).textContent)
       .toBe("The venue was not restored. Check your connection and try again.");
-    expect(screen.getByRole("region", { name: "Archived venue" })).toBeTruthy();
+    expect(screen.getByRole("region", { name: "Deleted venue" })).toBeTruthy();
   });
 });
 
-describe("listing archived venues (CF08)", () => {
+describe("listing deleted venues (CF08, SCRUM-101)", () => {
   // TC-CF08-11 · A1, A3
-  it("lets Venue Staff show archived venues, marked as archived", async () => {
+  it("lets Venue Staff show deleted venues, marked as deleted", async () => {
     const user = renderAt("/venues");
     expect(await screen.findByText("Orchard Hall")).toBeTruthy();
-    expect(screen.queryByText("Old Annex (archived)")).toBeNull();
+    expect(screen.queryByText("Old Annex (deleted)")).toBeNull();
 
-    await user.click(await screen.findByLabelText("Show archived venues"));
-    expect(await screen.findByText("Old Annex (archived)")).toBeTruthy();
+    await user.click(await screen.findByLabelText("Show deleted venues"));
+    expect(await screen.findByText("Old Annex (deleted)")).toBeTruthy();
     expect(apiClient.get).toHaveBeenCalledWith("/venues/", { params: { archived: "include" } });
 
-    await user.click(screen.getByLabelText("Show archived venues"));
+    await user.click(screen.getByLabelText("Show deleted venues"));
     expect(await screen.findByText("Orchard Hall")).toBeTruthy();
-    expect(screen.queryByText("Old Annex (archived)")).toBeNull();
+    expect(screen.queryByText("Old Annex (deleted)")).toBeNull();
   });
 
   // TC-CF08-11 · A1
-  it("offers nobody else archived venues", async () => {
+  it("offers nobody else deleted venues", async () => {
     staff = false;
     renderAt("/venues");
 
     expect(await screen.findByText("Orchard Hall")).toBeTruthy();
-    expect(screen.queryByLabelText("Show archived venues")).toBeNull();
+    expect(screen.queryByLabelText("Show deleted venues")).toBeNull();
   });
 });
