@@ -71,16 +71,23 @@ export default function LoginPage({ loginAttempt }) {
   };
 
   return (
-    <form onSubmit={handleSubmit}>
+    <form onSubmit={handleSubmit} className="auth-card">
       <h1>Login</h1>
+      <p className="auth-intro">Sign in to plan events, book venues and manage registrations.</p>
       {error && <p role="alert">{error}</p>}
+      <label htmlFor="login-email">Email</label>
       <input
+        id="login-email"
+        autoComplete="username"
         type="email"
         value={email}
         onChange={(e) => setEmail(e.target.value)}
         placeholder="Email"
       />
+      <label htmlFor="login-password">Password</label>
       <input
+        id="login-password"
+        autoComplete="current-password"
         type="password"
         value={password}
         onChange={(e) => setPassword(e.target.value)}
