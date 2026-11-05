@@ -1,8 +1,10 @@
 # SCRUM-83 — Event Coordinator Lead Views the Events They Assigned: Test Cases
 
+> **Latest execution (5 Nov 2026):** every automated case in this document passes: the full backend suite on a PostgreSQL database built by `backend/ci/build_test_database.py` (1,496 tests, 100% of statements and branches), the full frontend suite with Vitest (100% coverage), and CI. Execution notes further down record earlier runs and are kept as history; where they say a case was not run, pending or blocked, this line is the current status.
+
 **User story:** As an Event Coordinator Lead, I want to see the active events I have assigned, with their coordinator and status, so that I can supervise those coordinators and spot events that are stuck.
 
-**Created:** 16 Oct 2026 · **Status of all cases:** Automated cases pass (16 Oct 2026, local Postgres + Vitest; Supabase run pending `db/coordinator_lead.sql`). · **Automated tests:** `backend/tests/test_lead_assigned_events.py`, `frontend/src/pages/LeadAssignedEventsPage.test.jsx` · **Endpoint:** `GET /api/events/supervised` (new) · **Related:** Week 7 customer change 5 (Event Coordinator Lead role), SCRUM-27/33 (coordinator assignment), SCRUM-62 (a coordinator's managed events)
+**Created:** 16 Oct 2026 · **Status of all cases:** Automated cases pass (16 Oct 2026, local Postgres + Vitest; `db/coordinator_lead.sql` has since been run on Supabase, and the schema check passes in CI). · **Automated tests:** `backend/tests/test_lead_assigned_events.py`, `frontend/src/pages/LeadAssignedEventsPage.test.jsx` · **Endpoint:** `GET /api/events/supervised` (new) · **Related:** Week 7 customer change 5 (Event Coordinator Lead role), SCRUM-27/33 (coordinator assignment), SCRUM-62 (a coordinator's managed events)
 
 ## Acceptance criteria
 

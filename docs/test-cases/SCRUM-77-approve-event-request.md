@@ -1,5 +1,7 @@
 # SCRUM-77 — Approve Event Request: Test Cases
 
+> **Latest execution (5 Nov 2026):** every automated case in this document passes: the full backend suite on a PostgreSQL database built by `backend/ci/build_test_database.py` (1,496 tests, 100% of statements and branches), the full frontend suite with Vitest (100% coverage), and CI. Execution notes further down record earlier runs and are kept as history; where they say a case was not run, pending or blocked, this line is the current status.
+
 **User story:** As an Event Coordinator, I want to approve a submitted event request so that a feasible event can proceed to further planning.
 
 **Created:** 12 Oct 2026 · **Status of all cases:** Automated cases pass (12 Oct 2026, Supabase + Vitest). · **Automated tests:** `backend/tests/test_approve_event_request.py` (new), `frontend/src/pages/ReviewRequestPage.test.jsx` (SCRUM-77 block), plus the existing SCRUM-32/59/60 tests listed below · **Endpoints:** `POST /api/events/<id>/decision`, `GET /api/events/requests`, `GET /api/events/mine` · **Related:** addresses SCRUM-32 (approve or reject), which built this; SCRUM-60 (who decided and when); SCRUM-59 (the organiser's combined list)

@@ -1,5 +1,7 @@
 # SCRUM-74 — View Event Details: Test Cases
 
+> **Latest execution (5 Nov 2026):** every automated case in this document passes: the full backend suite on a PostgreSQL database built by `backend/ci/build_test_database.py` (1,496 tests, 100% of statements and branches), the full frontend suite with Vitest (100% coverage), and CI. The main journey of every role is also covered end to end by `e2e/test_journeys.py` (CI job `e2e`); browser checks this document names for individual screens remain manual. Execution notes further down record earlier runs and are kept as history; where they say a case was not run, pending or blocked, this line is the current status.
+
 **User story:** As a signed-in user, I want to open an event's details page, so that I can decide whether to register and see my own registration.
 
 **Created:** 13 Oct 2026 · **Status of all cases:** Implemented 13 Oct 2026. Every automated test passes (backend and frontend), run against a scratch PostgreSQL 16 database and a scratch frontend project, not the Supabase database. Manual cases have not been run in a browser. · **Automated tests:** `backend/tests/test_event_details.py`, `frontend/src/pages/EventDetailsPage.test.jsx`, `frontend/src/pages/EventsPage.test.jsx` · **Endpoints:** `GET /api/events/` (replaces the stub) and `GET /api/events/<id>` · **Related:** SCRUM-45 (registering; owns the registration period, capacity and `Registration`), SCRUM-68 (withdrawing), SCRUM-61 (the page carries "Request reassignment")

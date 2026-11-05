@@ -1,5 +1,7 @@
 # SCRUM-86 — Tentative Venue Holds Expire: Test Cases
 
+> **Latest execution (5 Nov 2026):** every automated case in this document passes: the full backend suite on a PostgreSQL database built by `backend/ci/build_test_database.py` (1,496 tests, 100% of statements and branches), the full frontend suite with Vitest (100% coverage), and CI. The main journey of every role is also covered end to end by `e2e/test_journeys.py` (CI job `e2e`); browser checks this document names for individual screens remain manual. Execution notes further down record earlier runs and are kept as history; where they say a case was not run, pending or blocked, this line is the current status.
+
 **User story:** As an Event Coordinator, I want to confirm a tentative hold before it expires, or be told when it expires, so that venues are not blocked by plans that never get confirmed.
 
 **Created:** 29 Oct 2026 · **Status of all cases:** Automated cases pass (29 Oct 2026, local PostgreSQL built from the models, with db/venue_hold_expiry.sql's column + Vitest); frontend cases 32–34 also to be checked manually in the browser; the beat schedule checked under Docker on 29 Oct 2026 (TC-86-36) · **Automated tests:** `backend/tests/test_venue_hold_expiry.py`, `frontend/src/pages/VenueBookingRequestPage.test.jsx` · **Related:** Week 7 customer change 4 (tentative venue holds expire), SCRUM-87 (placing a hold), SCRUM-40 (approving a request), SCRUM-41 (conflict checks), SCRUM-85 (several venues for one event), SCRUM-94 (cancelling a booking), SCRUM-64 (calendar rules)

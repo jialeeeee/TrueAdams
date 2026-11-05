@@ -1,5 +1,7 @@
 # SCRUM-63 — Maintain the Venue Catalogue: Test Cases
 
+> **Latest execution (5 Nov 2026):** every automated case in this document passes: the full backend suite on a PostgreSQL database built by `backend/ci/build_test_database.py` (1,496 tests, 100% of statements and branches), the full frontend suite with Vitest (100% coverage), and CI. The main journey of every role is also covered end to end by `e2e/test_journeys.py` (CI job `e2e`); browser checks this document names for individual screens remain manual. Execution notes further down record earlier runs and are kept as history; where they say a case was not run, pending or blocked, this line is the current status.
+
 **User story:** As Venue Staff, I want to add and edit venues in the catalogue, so that coordinators always see accurate venue information.
 
 **Created:** 20 Oct 2026 · **Source of the cases:** the "Sprint 3 test cases" tab of the ConnectSphere Backlog to Feature Map sheet (IS212-US63-TC1 to TC16; TC17 to TC27 for the AC9 reopen are on the "Sprint 4 test cases" tab) · **Automated tests:** `backend/tests/test_venue_catalogue.py`, `frontend/src/pages/VenueFormPage.test.jsx` · **Status:** TC1-TC16 pass locally (20 Oct 2026); TC17-TC27 (AC9) written test-first on 31 Oct 2026; TC13's "stop the database" variant and the browser walk-through are still to be run by hand.

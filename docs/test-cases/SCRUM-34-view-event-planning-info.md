@@ -1,8 +1,10 @@
 # SCRUM-34 — View Event Planning Information: Test Cases
 
+> **Latest execution (5 Nov 2026):** every automated case in this document passes: the full backend suite on a PostgreSQL database built by `backend/ci/build_test_database.py` (1,496 tests, 100% of statements and branches), the full frontend suite with Vitest (100% coverage), and CI. Execution notes further down record earlier runs and are kept as history; where they say a case was not run, pending or blocked, this line is the current status.
+
 **User story:** As an Event Coordinator, I want to view the planning information for events I am authorised to manage so that I have an accurate picture of arrangements as they develop.
 
-**Created:** 27 Sep 2026 · **Status of all cases:** Not run (feature not yet built) · **Automated tests:** `backend/tests/test_event_planning_info.py` (30 tests; all fail until the endpoint exists)
+**Created:** 27 Sep 2026 · **Status of all cases:** written test-first on 27 Sep 2026, before the feature was built (all failing then); the feature has since been built and every case passes (see the latest execution above) · **Automated tests:** `backend/tests/test_event_planning_info.py`
 
 **Changed 4 Nov 2026 (CF11):** the planning view also returns `requirements` (the event's required facilities, accessibility features and layouts, SCRUM-38), shown and edited in the page's Event requirements section. `test_assigned_coordinator_sees_the_events_planning_information` now expects it; its other expectations are unchanged.
 

@@ -1,5 +1,7 @@
 # SCRUM-54 — Event Organiser Views Registration Information: Test Cases
 
+> **Latest execution (5 Nov 2026):** every automated case in this document passes: the full backend suite on a PostgreSQL database built by `backend/ci/build_test_database.py` (1,496 tests, 100% of statements and branches), the full frontend suite with Vitest (100% coverage), and CI. Execution notes further down record earlier runs and are kept as history; where they say a case was not run, pending or blocked, this line is the current status.
+
 **User story:** As an Event Organiser, I want to view registration information for the events I manage so that I can track attendance and make decisions about my events.
 
 **Created:** 24 Oct 2026 (story reopened with new acceptance criteria) · **Status of all cases:** Automated cases pass (24 Oct 2026, Supabase + Vitest). · **Automated tests:** `backend/tests/test_organiser_registrations.py`, `frontend/src/pages/OrganisedEventsPage.test.jsx`, `frontend/src/pages/EventRegistrationsPage.test.jsx` · **Endpoints:** `GET /api/events/organised` (new), `GET /api/events/<id>/registrations` (new) · **Related:** SCRUM-45 (registering, places and registration period), SCRUM-68 (withdrawing), SCRUM-62 (the coordinator's managed-events list, same shape), SCRUM-74 (registration numbers on the event page)

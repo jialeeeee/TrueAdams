@@ -1,5 +1,7 @@
 # SCRUM-92 — Safety Officer Rejects an Event or Requests Changes
 
+> **Latest execution (5 Nov 2026):** every automated case in this document passes: the full backend suite on a PostgreSQL database built by `backend/ci/build_test_database.py` (1,496 tests, 100% of statements and branches), the full frontend suite with Vitest (100% coverage), and CI. Execution notes further down record earlier runs and are kept as history; where they say a case was not run, pending or blocked, this line is the current status.
+
 **User story:** As a Safety Officer, I want to reject an event's safety arrangements or request specific changes, with a comment, so that the coordinator can fix the problems before the event is confirmed.
 
 **Story:** SCRUM-92 · **Related:** [SCRUM-90](SCRUM-90-safety-check-queue.md), [SCRUM-91](SCRUM-91-safety-approval.md), [SCRUM-93](SCRUM-93-confirm-event.md).

@@ -1,5 +1,7 @@
 # SCRUM-31 — Review and Request Clarification on an Event Request: Test Cases
 
+> **Latest execution (5 Nov 2026):** every automated case in this document passes: the full backend suite on a PostgreSQL database built by `backend/ci/build_test_database.py` (1,496 tests, 100% of statements and branches), the full frontend suite with Vitest (100% coverage), and CI. The main journey of every role is also covered end to end by `e2e/test_journeys.py` (CI job `e2e`); browser checks this document names for individual screens remain manual. Execution notes further down record earlier runs and are kept as history; where they say a case was not run, pending or blocked, this line is the current status.
+
 **User story:** As an Event Coordinator, I want to review and send clarification questions to an Event Organiser about their submitted event request so that I can obtain the information needed to continue planning the event.
 
 **Created:** 28 Sep 2026 · **Reopened:** 26 Oct 2026 with AC7–AC10 (starting a review) · **Status of all cases:** TC-31-01 to 25 pass (28 Sep 2026, local PostgreSQL + Vitest); TC-31-14, 15, 18, 21 also to be checked manually in the browser. TC-31-26 to 42 pass (26 Oct 2026, local PostgreSQL built by `ci/build_test_database.py` with `db/event_review_start.sql` applied + Vitest); TC-31-40 to 42 also to be checked manually in the browser · **Automated tests:** `backend/tests/test_event_clarifications.py`, `backend/tests/test_event_review_start.py`, `frontend/src/pages/ClarificationPage.test.jsx`, `frontend/src/pages/ReviewRequestPage.test.jsx`

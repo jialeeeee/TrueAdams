@@ -1,5 +1,7 @@
 # CF09 — One calendar showing all events, for planning: Test Cases
 
+> **Latest execution (5 Nov 2026):** every automated case in this document passes: the full backend suite on a PostgreSQL database built by `backend/ci/build_test_database.py` (1,496 tests, 100% of statements and branches), the full frontend suite with Vitest (100% coverage), and CI. Execution notes further down record earlier runs and are kept as history; where they say a case was not run, pending or blocked, this line is the current status.
+
 **Requirement:** CF09 Venue availability calendar: "Coordinators and Venue and Technical Support Staff also need one calendar showing all events, for planning." SCRUM-36/64 cover each venue's availability calendar; this covers the calendar of all events. *No Jira story exists for it yet; add one to the backlog (for example "Staff see one calendar of all events") before marking it Done.*
 
 **Created:** 4 Nov 2026 · **Status of all cases:** automated cases pass (4 Nov 2026, local PostgreSQL as in CI + Vitest) · **Automated tests:** `backend/tests/test_events_calendar.py`, `frontend/src/pages/EventsCalendarPage.test.jsx` (+ the nav link in `App.test.jsx`) · **Endpoint:** `GET /api/venues/calendar?from=YYYY-MM-DD[&to=YYYY-MM-DD]` · **Page:** `/events/calendar`, "Events calendar" in the navigation · **Related:** SCRUM-36/64 (a venue's calendar, whose range rules this shares), SCRUM-85 (several venues per event), SCRUM-34 (only the event's coordinator opens its planning view)

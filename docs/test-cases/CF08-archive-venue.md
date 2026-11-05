@@ -1,5 +1,7 @@
 # CF08 — Venue Staff delete (archive) a venue record: Test Cases
 
+> **Latest execution (5 Nov 2026):** every automated case in this document passes: the full backend suite on a PostgreSQL database built by `backend/ci/build_test_database.py` (1,496 tests, 100% of statements and branches), the full frontend suite with Vitest (100% coverage), and CI. Execution notes further down record earlier runs and are kept as history; where they say a case was not run, pending or blocked, this line is the current status.
+
 **Requirement:** CF08 Venue catalogue: "Venue Staff can create, edit and delete venue records." (G4 clarification #15). SCRUM-63 covers adding and editing; **SCRUM-101 "Venue Staff delete a venue"** covers deleting.
 
 **Created:** 4 Nov 2026 · **Status of all cases:** automated cases pass (4 Nov 2026, local PostgreSQL as in CI + Vitest) · **Automated tests:** `backend/tests/test_venue_archive.py`, `frontend/src/pages/VenueArchive.test.jsx` · **Endpoints:** `POST /api/venues/<id>/archive`, `POST /api/venues/<id>/restore`, and `GET /api/venues/?archived=include` · **Related:** SCRUM-63 (catalogue and its change history), SCRUM-37 (search), SCRUM-39 (venue requests), SCRUM-88 (recording a venue as unavailable)

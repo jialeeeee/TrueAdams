@@ -1,5 +1,7 @@
 # SCRUM-45 — Register for an Event: Test Cases
 
+> **Latest execution (5 Nov 2026):** every automated case in this document passes: the full backend suite on a PostgreSQL database built by `backend/ci/build_test_database.py` (1,496 tests, 100% of statements and branches), the full frontend suite with Vitest (100% coverage), and CI. Execution notes further down record earlier runs and are kept as history; where they say a case was not run, pending or blocked, this line is the current status.
+
 **User story:** As an Attendee, I want to register for an event so that I can secure my place.
 
 **Created:** 9 Oct 2026 · **Reopened:** 18 Oct 2026 (an event must be **Approved**, and the waiting list is **removed**; see *What changed on reopening*) · **Status of all cases:** Automated cases pass (18 Oct 2026, local PostgreSQL 17 with db/remove_waitlist.sql applied + Vitest); TC-45-22 is checked manually. · **Automated tests:** `backend/tests/test_event_registration.py`, `backend/tests/test_registration_settings.py`, `frontend/src/pages/EventRegistrationPage.test.jsx`, `frontend/src/pages/RegistrationSettingsPage.test.jsx`, `frontend/src/pages/EventPlanningPage.test.jsx` · **Endpoints:** `POST /api/registrations/`, `GET`/`PUT /api/events/<id>/registration-settings` · **Related:** SCRUM-29 (`registration_required`), SCRUM-52/53 (which event fields can be edited directly), SCRUM-68 (withdrawal, which promoted from the waiting list), SCRUM-74 (event details, which publishes the same status)

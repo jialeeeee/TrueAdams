@@ -1,5 +1,7 @@
 # SCRUM-99 — Coordinator is reminded about incomplete arrangements: Test Cases
 
+> **Latest execution (5 Nov 2026):** every automated case in this document passes: the full backend suite on a PostgreSQL database built by `backend/ci/build_test_database.py` (1,496 tests, 100% of statements and branches), the full frontend suite with Vitest (100% coverage), and CI. Execution notes further down record earlier runs and are kept as history; where they say a case was not run, pending or blocked, this line is the current status.
+
 **User story:** As an Event Coordinator, I want to be reminded about my approved events that still have incomplete arrangements so that nothing is left unfinished before the event.
 
 **Created:** 4 Nov 2026 · **Status of all cases:** automated cases pass (4 Nov 2026, local PostgreSQL as in CI) · **Automated tests:** `backend/tests/test_incomplete_arrangement_reminders.py` · **Background job:** `tasks.remind_incomplete_arrangements` (Celery beat `remind-incomplete-arrangements`), in `backend/app/events/reminders.py` · **Related:** SCRUM-93 (confirmation's checks, reused), SCRUM-86 (the hold expiry job, the same pattern), CF20

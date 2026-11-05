@@ -1,5 +1,7 @@
 # SCRUM-64 — Define Availability Rules on the Venue Calendar (addressing SCRUM-36): Test Cases
 
+> **Latest execution (5 Nov 2026):** every automated case in this document passes: the full backend suite on a PostgreSQL database built by `backend/ci/build_test_database.py` (1,496 tests, 100% of statements and branches), the full frontend suite with Vitest (100% coverage), and CI. The main journey of every role is also covered end to end by `e2e/test_journeys.py` (CI job `e2e`); browser checks this document names for individual screens remain manual. Execution notes further down record earlier runs and are kept as history; where they say a case was not run, pending or blocked, this line is the current status.
+
 **User story:** As an Event Coordinator, I want the venue calendar to follow clear availability rules so that I can trust which times a venue can be requested.
 
 **Created:** 17 Oct 2026 · **Status of all cases:** Automated cases pass (17 Oct 2026, local PostgreSQL + Vitest; no schema change); TC-64-16 and 17 also to be checked manually in the browser · **Automated tests:** `backend/tests/test_venue_availability_rules.py`, `backend/tests/test_scrum36_venue_availability.py` (updated expectations), `frontend/src/pages/VenueAvailabilityPage.test.jsx` · **Addresses:** SCRUM-36 (venue availability calendar), whose assumption A3 and expected calendars this story replaces · **Endpoint:** `GET /api/venues/<id>/availability` (SCRUM-36)

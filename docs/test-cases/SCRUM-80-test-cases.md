@@ -1,5 +1,7 @@
 # SCRUM-80 — Lead sees events waiting for a coordinator
 
+> **Latest execution (5 Nov 2026):** every automated case in this document passes: the full backend suite on a PostgreSQL database built by `backend/ci/build_test_database.py` (1,496 tests, 100% of statements and branches), the full frontend suite with Vitest (100% coverage), and CI. Execution notes further down record earlier runs and are kept as history; where they say a case was not run, pending or blocked, this line is the current status.
+
 **User Story** : As an Event Coordinator Lead, I want to see submitted event requests that have no coordinator, so that I know which events need one.
 
 **Executed:** 20 Oct 2026; frontend race correction rechecked 21 Oct 2026 · **Final status:** Pass · **Related:** [SCRUM-81 queue cases](SCRUM-81-unassigned-queue.md), [SCRUM-81 assignment cases](SCRUM-81-lead-assigns-coordinator.md).

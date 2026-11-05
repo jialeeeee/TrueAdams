@@ -1,5 +1,7 @@
 # SCRUM-41 — Prevent Conflicting Venue Bookings: Test Cases
 
+> **Latest execution (5 Nov 2026):** every automated case in this document passes: the full backend suite on a PostgreSQL database built by `backend/ci/build_test_database.py` (1,496 tests, 100% of statements and branches), the full frontend suite with Vitest (100% coverage), and CI. The main journey of every role is also covered end to end by `e2e/test_journeys.py` (CI job `e2e`); browser checks this document names for individual screens remain manual. Execution notes further down record earlier runs and are kept as history; where they say a case was not run, pending or blocked, this line is the current status.
+
 **User story:** As a Venue Staff member, I want conflicts to be identified before a venue booking is confirmed so that the venue is not committed to incompatible events.
 
 **Created:** 16 Oct 2026 · **Reopened:** 26 Oct 2026, AC1 now includes unexpired tentative holds (see the section on the reopening) · **Status of all cases:** Automated cases pass (16 Oct 2026, local PostgreSQL with db/venue_booking_conflicts.sql applied + Vitest; TC-41-18 and 19 on 26 Oct 2026); frontend cases 06, 07 and 17 also to be checked manually in the browser · **Automated tests:** `backend/tests/test_venue_booking_conflicts.py`, `frontend/src/pages/VenueBookingRequestsPage.test.jsx` · **Builds on:** SCRUM-40 (approval and its conflict check), SCRUM-39 (venue requests and Venue Staff's list), SCRUM-36 (availability rule)

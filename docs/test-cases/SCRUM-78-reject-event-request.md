@@ -1,5 +1,7 @@
 # SCRUM-78 — Reject Event Request: Test Cases
 
+> **Latest execution (5 Nov 2026):** every automated case in this document passes: the full backend suite on a PostgreSQL database built by `backend/ci/build_test_database.py` (1,496 tests, 100% of statements and branches), the full frontend suite with Vitest (100% coverage), and CI. Execution notes further down record earlier runs and are kept as history; where they say a case was not run, pending or blocked, this line is the current status.
+
 **User story:** As an Event Coordinator, I want to reject a submitted event request with a reason so that the Event Organiser understands why the event cannot proceed.
 
 **Created:** 12 Oct 2026 · **Status of all cases:** Automated cases pass (12 Oct 2026, Supabase + Vitest). · **Automated tests:** `backend/tests/test_reject_event_request.py` (new), plus the existing SCRUM-32/59/60 tests listed below · **Endpoints:** `POST /api/events/<id>/decision`, `GET /api/events/<id>/review`, `GET /api/events/requests`, `GET /api/events/mine` · **Related:** addresses SCRUM-32 (approve or reject), which built this; SCRUM-60 (blank reasons, who decided and when); SCRUM-59 (the organiser's combined list); SCRUM-77 (approve, the same checks for approving)

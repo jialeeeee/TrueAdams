@@ -1,8 +1,10 @@
 # SCRUM-37 — Search for Available Venues: Test Cases
 
+> **Latest execution (5 Nov 2026):** every automated case in this document passes: the full backend suite on a PostgreSQL database built by `backend/ci/build_test_database.py` (1,496 tests, 100% of statements and branches), the full frontend suite with Vitest (100% coverage), and CI. TC-37-16 stays skipped until the customer answers Q5. Execution notes further down record earlier runs and are kept as history; where they say a case was not run, pending or blocked, this line is the current status.
+
 **User story:** As an Event Coordinator, I want to search for available venues using my event's requirements so that I can identify suitable booking options.
 
-**Created:** 27 Sep 2026 · **Status of all cases:** Not run (feature not yet built)
+**Created:** 27 Sep 2026 · **Status of all cases:** written test-first on 27 Sep 2026, before the feature was built; the feature has since been built and every case passes except TC-37-16, skipped until Q5 is answered (see the latest execution above) · **Automated tests:** `backend/tests/test_scrum37_venue_search.py`, `frontend/src/pages/VenueSearchPage.test.jsx`
 
 ## Acceptance criteria
 

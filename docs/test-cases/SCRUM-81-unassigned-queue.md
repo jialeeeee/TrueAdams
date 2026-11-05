@@ -1,10 +1,12 @@
 # SCRUM-81 — Submitted Event Requests Wait in the Lead's Unassigned Queue: Test Cases
 
+> **Latest execution (5 Nov 2026):** every automated case in this document passes: the full backend suite on a PostgreSQL database built by `backend/ci/build_test_database.py` (1,496 tests, 100% of statements and branches), the full frontend suite with Vitest (100% coverage), and CI. Execution notes further down record earlier runs and are kept as history; where they say a case was not run, pending or blocked, this line is the current status.
+
 Part of SCRUM-81, continuing the numbering of [SCRUM-81-lead-assigns-coordinator.md](SCRUM-81-lead-assigns-coordinator.md): AC6–AC10, A9–A15, Q5–Q9 and TC-81-23 onwards.
 
 **User story (derived from Week 7 customer change 5; to be confirmed):** As an Event Coordinator Lead, I want newly submitted event requests to wait in an unassigned queue that I can view, so that I can review each one and assign a suitable coordinator.
 
-**Created:** 17 Oct 2026 · **Status of all cases:** Automated cases pass (17 Oct 2026, local Postgres + Vitest; Supabase run pending). · **Automated tests:** `backend/tests/test_unassigned_queue.py`, `backend/tests/test_event_submission.py` (TC-28-09/10, updated), `frontend/src/pages/UnassignedQueuePage.test.jsx` · **Endpoints:** `POST /api/events/drafts/<id>/submit` (SCRUM-28, changed), `GET /api/events/queue` (new) · **Related:** SCRUM-81 (assigning a waiting event), SCRUM-83 (the Lead's assigned events), SCRUM-28/29 (submission), SCRUM-55 (review)
+**Created:** 17 Oct 2026 · **Status of all cases:** Automated cases pass (17 Oct 2026, local Postgres + Vitest; the Supabase schema check passes in CI). · **Automated tests:** `backend/tests/test_unassigned_queue.py`, `backend/tests/test_event_submission.py` (TC-28-09/10, updated), `frontend/src/pages/UnassignedQueuePage.test.jsx` · **Endpoints:** `POST /api/events/drafts/<id>/submit` (SCRUM-28, changed), `GET /api/events/queue` (new) · **Related:** SCRUM-81 (assigning a waiting event), SCRUM-83 (the Lead's assigned events), SCRUM-28/29 (submission), SCRUM-55 (review)
 
 ## Acceptance criteria
 

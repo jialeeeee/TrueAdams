@@ -1,5 +1,7 @@
 # SCRUM-69 — Reject a Pending Venue Booking Request: Audit and Test Cases
 
+> **Latest execution (5 Nov 2026):** every automated case in this document passes: the full backend suite on a PostgreSQL database built by `backend/ci/build_test_database.py` (1,496 tests, 100% of statements and branches), the full frontend suite with Vitest (100% coverage), and CI. Variants marked Planned / Not run below were not automated and remain so. Execution notes further down record earlier runs and are kept as history; where they say a case was not run, pending or blocked, this line is the current status.
+
 **Title:** Reject a pending venue booking request
 
 As a Venue Staff member,

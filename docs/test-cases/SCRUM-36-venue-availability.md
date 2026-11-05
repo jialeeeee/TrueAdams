@@ -1,5 +1,7 @@
 # SCRUM-36 — View Venue Availability by Date and Time: Test Cases
 
+> **Latest execution (5 Nov 2026):** every automated case in this document passes: the full backend suite on a PostgreSQL database built by `backend/ci/build_test_database.py` (1,496 tests, 100% of statements and branches), the full frontend suite with Vitest (100% coverage), and CI. TC-36-10 and TC-36-21 stay skipped until the customer answers Q5 and Q4. Execution notes further down record earlier runs and are kept as history; where they say a case was not run, pending or blocked, this line is the current status.
+
 **User story:** As an authorised internal user, I want to view a venue's availability for a selected period so that I can identify possible event times.
 
 **Created:** 27 Sep 2026 · **Status of all cases:** Automated in `backend/tests/test_scrum36_venue_availability.py` and `frontend/src/pages/VenueAvailabilityPage.test.jsx`; TC-36-10 and TC-36-21 are skipped until Q5 and Q4 are answered

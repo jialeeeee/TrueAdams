@@ -1,5 +1,7 @@
 # SCRUM-90 — Safety Officer Sees Events Awaiting a Safety Check: Test Cases
 
+> **Latest execution (5 Nov 2026):** every automated case in this document passes: the full backend suite on a PostgreSQL database built by `backend/ci/build_test_database.py` (1,496 tests, 100% of statements and branches), the full frontend suite with Vitest (100% coverage), and CI. Execution notes further down record earlier runs and are kept as history; where they say a case was not run, pending or blocked, this line is the current status.
+
 **User story:** As a Safety Officer, I want to see the events waiting for my safety check, so that I know which events I must review.
 
 **Created:** 27 Oct 2026 · **Status:** latest minimal PR corrections verified: normal focused backend discovery runs 5 tests (including PostgreSQL), with no skips/errors; 4 frontend tests pass. Original RED/GREEN evidence is retained below.
