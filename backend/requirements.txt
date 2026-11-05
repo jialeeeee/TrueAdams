@@ -5,6 +5,10 @@ SQLAlchemy==2.0.54
 Flask-CORS==4.0.1
 Flask-JWT-Extended==4.6.0
 celery==5.4.0
+# Pinned: kombu 5.7 (allowed by celery 5.4) needs redis-py 6.1 or later for Redis, so
+# with redis 5.0.7 the worker and beat could not connect and no email, hold expiry or
+# reminder ran. Tests never see it: they run Celery eagerly with an in-memory broker.
+kombu==5.4.2
 redis==5.0.7
 psycopg2-binary==2.9.9
 python-dotenv==1.0.1
