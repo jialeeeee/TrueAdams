@@ -1,5 +1,7 @@
 # SCRUM-46 — Submit Change Request for a Submitted Event: Test Cases
 
+> **Latest execution (5 Nov 2026):** every automated case in this document passes: the full backend suite on a PostgreSQL database built by `backend/ci/build_test_database.py` (1,496 tests, 100% of statements and branches), the full frontend suite with Vitest (100% coverage), and CI. Execution notes further down record earlier runs and are kept as history; where they say a case was not run, pending or blocked, this line is the current status.
+
 **User story:** As an Event Organiser, I want to request a change to an event I have submitted so that ConnectSphere can assess my updated needs before existing arrangements are altered.
 
 **Created:** 26 Oct 2026 · **Status of all cases:** automated cases pass (27 Oct 2026, local PostgreSQL as in CI + Vitest; and the schema check + API tests on Supabase); end-to-end check passed in the browser, see [the DoD evidence](../evidence/SCRUM-46-dod-evidence.md) · **Automated tests:** `backend/tests/test_change_requests.py` (through the API), `backend/tests/test_change_requests_unit.py` (the rules, no database), `frontend/src/pages/ChangeRequestPage.test.jsx` (+ the link in `MyEventRequestsPage.test.jsx`) · **Endpoints:** `GET` and `POST /api/events/<id>/change-requests` · **Related:** SCRUM-52 (restricted fields; its `requires_review.next_step` points here), SCRUM-29 (the organiser's request fields and their rules), SCRUM-42/44 (equipment; an *accepted* change goes through SCRUM-44's release rule, not built here)

@@ -1,5 +1,7 @@
 # SCRUM-98 — Coordinator cancels an event: Test Cases
 
+> **Latest execution (5 Nov 2026):** every automated case in this document passes: the full backend suite on a PostgreSQL database built by `backend/ci/build_test_database.py` (1,496 tests, 100% of statements and branches), the full frontend suite with Vitest (100% coverage), and CI. Execution notes further down record earlier runs and are kept as history; where they say a case was not run, pending or blocked, this line is the current status.
+
 **User story:** As an Event Coordinator, I want to cancel an event at its organiser's request so that its venues, equipment and attendee places are released and everyone affected is told.
 
 **Created:** 4 Nov 2026 · **Status of all cases:** automated cases pass (4 Nov 2026, local PostgreSQL as in CI + Vitest) · **Automated tests:** `backend/tests/test_cancel_event.py`, `frontend/src/pages/EventPlanningPage.cancel.test.jsx` · **Endpoint:** `POST /api/events/<id>/cancel` · **Related:** SCRUM-94 (cancelling one venue booking, and its notice to Venue Staff), SCRUM-44 A10 (equipment is released when an event is cancelled), SCRUM-68 (registration statuses), SCRUM-53 (a cancelled event can't be edited), CF06

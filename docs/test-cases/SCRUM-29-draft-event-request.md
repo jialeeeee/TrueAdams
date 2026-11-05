@@ -1,5 +1,7 @@
 # SCRUM-29 — Save and Resume a Draft Event Request: Test Cases
 
+> **Latest execution (5 Nov 2026):** every automated case in this document passes: the full backend suite on a PostgreSQL database built by `backend/ci/build_test_database.py` (1,496 tests, 100% of statements and branches), the full frontend suite with Vitest (100% coverage), and CI. The main journey of every role is also covered end to end by `e2e/test_journeys.py` (CI job `e2e`); browser checks this document names for individual screens remain manual. Execution notes further down record earlier runs and are kept as history; where they say a case was not run, pending or blocked, this line is the current status.
+
 **User story:** As an Event Organiser, I want to save an unfinished event request and resume it later so that I can prepare the request without losing my progress.
 
 **Changed 4 Nov 2026 (CF02):** accessibility needs, equipment requirements and room layout are now needed to submit, following the customer's answer, G4 clarification #25 (Week 4 answers): "compulsory fields include name, description, purpose, dates/times, attendance, venue, accessibility, equipment, layout, registration etc." (recorded as CF02 and in SCRUM-28's AC2 in the final product backlog). The organiser chooses room layouts from the list venues use, and writes "None" when there are no accessibility or equipment needs. A1, A4 and A7 and TC-29-04, 11 and 26 are updated; TC-29-02a and 26a are new; Q3 is answered.

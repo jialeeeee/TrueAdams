@@ -1,5 +1,7 @@
 # SCRUM-75 — Sign in and sign out
 
+> **Latest execution (5 Nov 2026):** every automated case in this document passes: the full backend suite on a PostgreSQL database built by `backend/ci/build_test_database.py` (1,496 tests, 100% of statements and branches), the full frontend suite with Vitest (100% coverage), and CI. Execution notes further down record earlier runs and are kept as history; where they say a case was not run, pending or blocked, this line is the current status.
+
 **User story:** As a system user, I want to sign in and out securely so that I can use my account and protect it when I leave.
 
 **Created:** 19 Oct 2026. **Related:** [SCRUM-27 authentication and authorization](SCRUM-27-authentication-authorization.md). Execution is recorded below; no manual browser or end-to-end execution is implied.

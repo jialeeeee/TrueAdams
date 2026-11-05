@@ -1,5 +1,7 @@
 # SCRUM-96 — Technical Support Views an Event's Equipment Requirements: Test Cases
 
+> **Latest execution (5 Nov 2026):** every automated case in this document passes: the full backend suite on a PostgreSQL database built by `backend/ci/build_test_database.py` (1,496 tests, 100% of statements and branches), the full frontend suite with Vitest (100% coverage), and CI. Execution notes further down record earlier runs and are kept as history; where they say a case was not run, pending or blocked, this line is the current status.
+
 **User story:** As a Technical Support Staff member, I want to view an event's equipment requirements, so that I can record what is arranged as it is arranged.
 
 **Created:** 29 Oct 2026 · **Status of all cases:** automated cases pass (29 Oct 2026, local PostgreSQL as in CI, Supabase + Vitest); end-to-end check passed in the browser, see [the DoD evidence](../evidence/SCRUM-96-dod-evidence.md) · **Automated tests:** `backend/tests/test_tech_views_equipment.py`, `frontend/src/pages/EquipmentRequirementsPage.test.jsx` (the "SCRUM-96" blocks) · **Endpoint:** `GET /api/events/<id>/equipment-requirements` (built by SCRUM-42) · **Related:** SCRUM-42 (records the requirements and already lets Technical Support view and update them: AC4, TC-42-19 to 23), SCRUM-43 and SCRUM-44 (check and reserve equipment from the same page), SCRUM-59 and SCRUM-74 (a draft is the organiser's own)

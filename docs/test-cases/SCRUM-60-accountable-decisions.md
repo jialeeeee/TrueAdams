@@ -1,5 +1,7 @@
 # SCRUM-60 — Record Who Decided and When: Test Cases
 
+> **Latest execution (5 Nov 2026):** every automated case in this document passes: the full backend suite on a PostgreSQL database built by `backend/ci/build_test_database.py` (1,496 tests, 100% of statements and branches), the full frontend suite with Vitest (100% coverage), and CI. The main journey of every role is also covered end to end by `e2e/test_journeys.py` (CI job `e2e`); browser checks this document names for individual screens remain manual. Execution notes further down record earlier runs and are kept as history; where they say a case was not run, pending or blocked, this line is the current status.
+
 **User story:** As an Event Coordinator, I want my approval or rejection to be recorded reliably, with who decided and when, so that the decision is accountable and the Event Organiser gets an accurate outcome.
 
 **Created:** 10 Oct 2026 · **Status of all cases:** Automated cases pass (10 Oct 2026, Supabase + Vitest); frontend cases 11–15 also to be checked manually in the browser · **Automated tests:** `backend/tests/test_decision_accountability.py`, `frontend/src/pages/ReviewRequestPage.test.jsx`, `frontend/src/pages/MyRequestsPage.test.jsx`, `frontend/src/pages/MyEventRequestsPage.test.jsx` · **Endpoints:** `POST /api/events/<id>/decision`, `GET /api/events/<id>/review`, `GET /api/events/requests`, `GET /api/events/mine` · **Related:** SCRUM-32 (approve or reject, which this story hardens), SCRUM-33 (coordinator assignment), SCRUM-59 (the organiser's combined list)

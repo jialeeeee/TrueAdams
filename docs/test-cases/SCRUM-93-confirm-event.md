@@ -1,5 +1,7 @@
 # SCRUM-93 — Coordinator Marks an Event Confirmed: Test Cases
 
+> **Latest execution (5 Nov 2026):** every automated case in this document passes: the full backend suite on a PostgreSQL database built by `backend/ci/build_test_database.py` (1,496 tests, 100% of statements and branches), the full frontend suite with Vitest (100% coverage), and CI. Execution notes further down record earlier runs and are kept as history; where they say a case was not run, pending or blocked, this line is the current status.
+
 **User story (verbatim):** As an Event Coordinator, I want to mark an event Confirmed once its arrangements are approved, so that the event can proceed to preparation
 
 **Created:** 29 Oct 2026 (Singapore) · **Branch:** `feature/SCRUM-93-coordinator-confirm-event` · **Phase:** scoped GREEN and final frontend blocker fix complete · **Verdict:** READY FOR PR; focused tests, including local PostgreSQL persistence/rollback and the stale-confirmation regression, pass. Shared schema application remains a project-owner coordination step.

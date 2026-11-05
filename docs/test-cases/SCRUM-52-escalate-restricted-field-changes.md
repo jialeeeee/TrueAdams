@@ -1,5 +1,7 @@
 # SCRUM-52 — Escalate Restricted-Field Changes for Review: Test Cases
 
+> **Latest execution (5 Nov 2026):** every automated case in this document passes: the full backend suite on a PostgreSQL database built by `backend/ci/build_test_database.py` (1,496 tests, 100% of statements and branches), the full frontend suite with Vitest (100% coverage), and CI. Execution notes further down record earlier runs and are kept as history; where they say a case was not run, pending or blocked, this line is the current status.
+
 **User story:** As an Event Coordinator, I want to be stopped from silently saving changes to fields that affect existing arrangements so that important changes go through the agreed review process instead of taking effect unreviewed.
 
 **Created:** 29 Sep 2026 · **Automated tests:** `backend/tests/test_escalate_restricted_field_changes.py` · **Endpoint:** `PATCH /api/events/<id>` (the SCRUM-53 normal-edit flow) · **Related:** SCRUM-53 (normal edits), SCRUM-46 (the review process), SCRUM-34 (view)

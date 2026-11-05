@@ -1,5 +1,7 @@
 # SCRUM-59 — See Drafts Separately from Submitted Requests: Test Cases
 
+> **Latest execution (5 Nov 2026):** every automated case in this document passes: the full backend suite on a PostgreSQL database built by `backend/ci/build_test_database.py` (1,496 tests, 100% of statements and branches), the full frontend suite with Vitest (100% coverage), and CI. Execution notes further down record earlier runs and are kept as history; where they say a case was not run, pending or blocked, this line is the current status.
+
 **User story:** As an Event Organiser, I want to see my draft requests clearly separated from my submitted ones so that I can find and finish the requests I haven't submitted yet.
 
 **Created:** 9 Oct 2026 · **Status of all cases:** Automated cases pass (9 Oct 2026, Supabase + Vitest). · **Automated tests:** `backend/tests/test_my_event_requests.py`, `frontend/src/pages/MyEventRequestsPage.test.jsx` · **Endpoint:** `GET /api/events/mine` · **Related:** SCRUM-29 (drafts, the draft editor), SCRUM-32 (decisions on submitted requests)

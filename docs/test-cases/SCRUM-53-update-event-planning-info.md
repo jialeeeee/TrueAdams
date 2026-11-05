@@ -1,5 +1,7 @@
 # SCRUM-53 — Update Event Planning Information (Normal Fields): Test Cases
 
+> **Latest execution (5 Nov 2026):** every automated case in this document passes: the full backend suite on a PostgreSQL database built by `backend/ci/build_test_database.py` (1,496 tests, 100% of statements and branches), the full frontend suite with Vitest (100% coverage), and CI. Execution notes further down record earlier runs and are kept as history; where they say a case was not run, pending or blocked, this line is the current status.
+
 **User story:** As an Event Coordinator, I want to edit the fields I'm permitted to update under the agreed editing rules so that non-critical event information stays current as arrangements develop.
 
 **Created:** 28 Sep 2026 · **Automated tests:** `backend/tests/test_update_event_planning_info.py` · **Endpoint:** `PATCH /api/events/<id>` · **Related:** SCRUM-34 (view), SCRUM-52 (restricted fields), SCRUM-46 (change review)

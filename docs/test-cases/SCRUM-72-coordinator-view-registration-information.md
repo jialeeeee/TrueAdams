@@ -1,5 +1,7 @@
 # SCRUM-72 — Event Coordinator Views Registration Information: Test Cases
 
+> **Latest execution (5 Nov 2026):** every automated case in this document passes: the full backend suite on a PostgreSQL database built by `backend/ci/build_test_database.py` (1,496 tests, 100% of statements and branches), the full frontend suite with Vitest (100% coverage), and CI. Execution notes further down record earlier runs and are kept as history; where they say a case was not run, pending or blocked, this line is the current status.
+
 **User story:** As an Event Coordinator, I want to view registration information for the events I coordinate so that I can plan venue and logistics arrangements around the expected attendance.
 
 **Created:** 25 Oct 2026 · **Status of all cases:** Automated cases pass (25 Oct 2026, Supabase + Vitest). · **Automated tests:** `backend/tests/test_coordinator_registrations.py`, `frontend/src/pages/ManagedRegistrationsPage.test.jsx`, `frontend/src/pages/RegistrationOverviewPage.test.jsx` · **Endpoints:** `GET /api/events/managed/registrations` (new), `GET /api/events/<id>/registration-overview` (new) · **Related:** SCRUM-62 (the coordinator's managed events; the same events are listed here), SCRUM-54 (the organiser's view of the same registrations, with attendee details), SCRUM-45 (places and registration period), SCRUM-68 (withdrawing), SCRUM-82 (a Lead reassigns an event)

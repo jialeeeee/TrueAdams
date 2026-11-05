@@ -1,5 +1,7 @@
 # SCRUM-81 — Event Coordinator Lead Assigns a Coordinator to a Waiting Event: Test Cases
 
+> **Latest execution (5 Nov 2026):** every automated case in this document passes: the full backend suite on a PostgreSQL database built by `backend/ci/build_test_database.py` (1,496 tests, 100% of statements and branches), the full frontend suite with Vitest (100% coverage), and CI. Execution notes further down record earlier runs and are kept as history; where they say a case was not run, pending or blocked, this line is the current status.
+
 **User story:** As an Event Coordinator Lead, I want to assign a coordinator to an event in the queue, so that the event has one responsible coordinator.
 
 **Created:** 17 Oct 2026 · **Status of all cases:** Automated cases pass (17 Oct 2026, local Postgres, Supabase and Vitest). · **Automated tests:** `backend/tests/test_lead_assign_coordinator.py`, `frontend/src/pages/AssignCoordinatorPage.test.jsx` · **Endpoints:** `GET /api/events/<id>/assignment`, `POST /api/events/<id>/assignment` (new) · **Related:** Week 7 customer change 5 (Event Coordinator Lead role), SCRUM-83 (the Lead's assigned events), SCRUM-27/33 (reassigning a coordinator), SCRUM-28 (submission)

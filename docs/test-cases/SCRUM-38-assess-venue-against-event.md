@@ -1,5 +1,7 @@
 # SCRUM-38 — Assess a Venue Against Event Requirements: Test Cases
 
+> **Latest execution (5 Nov 2026):** every automated case in this document passes: the full backend suite on a PostgreSQL database built by `backend/ci/build_test_database.py` (1,496 tests, 100% of statements and branches), the full frontend suite with Vitest (100% coverage), and CI. The main journey of every role is also covered end to end by `e2e/test_journeys.py` (CI job `e2e`); browser checks this document names for individual screens remain manual. Execution notes further down record earlier runs and are kept as history; where they say a case was not run, pending or blocked, this line is the current status.
+
 **User story:** As an Event Coordinator, I want to check a venue against an event's requirements, so that I can tell whether it is suitable before requesting it.
 
 **Created:** 20 Oct 2026 · **Source of the cases:** the "Sprint 3 test cases" tab of the ConnectSphere Backlog to Feature Map sheet (IS212-US38-TC1 to TC14) · **Automated tests:** `backend/tests/test_venue_suitability.py`, `frontend/src/pages/VenueSuitabilityPage.test.jsx` (+ the link in `EventPlanningPage.test.jsx`) · **Status:** automated cases pass locally (20 Oct 2026); browser walk-through still to be done by hand · **Related:** SCRUM-63 (defined facility/accessibility/layout lists), SCRUM-53 (planning edits)

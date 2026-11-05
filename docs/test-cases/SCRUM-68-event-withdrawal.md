@@ -1,5 +1,7 @@
 # SCRUM-68 — Event Withdrawal: Test Cases
 
+> **Latest execution (5 Nov 2026):** every automated case in this document passes: the full backend suite on a PostgreSQL database built by `backend/ci/build_test_database.py` (1,496 tests, 100% of statements and branches), the full frontend suite with Vitest (100% coverage), and CI. The main journey of every role is also covered end to end by `e2e/test_journeys.py` (CI job `e2e`); browser checks this document names for individual screens remain manual. Execution notes further down record earlier runs and are kept as history; where they say a case was not run, pending or blocked, this line is the current status.
+
 **User story:** As an Attendee, I want to withdraw from an event I registered for, so that I can free my place when I can no longer attend.
 
 **Created:** 13 Oct 2026 · **Status of all cases:** Implemented 13 Oct 2026. Every automated test passes (backend and frontend), run against a scratch PostgreSQL 16 database and a scratch frontend project, not the Supabase database. Manual cases have not been run in a browser. · **Automated tests:** `backend/tests/test_event_withdrawal.py`, `frontend/src/pages/MyRegistrationsPage.test.jsx` · **Endpoints:** `GET /api/registrations/` (replaces the stub) and `POST /api/registrations/<id>/withdraw` · **Related:** SCRUM-45 (registering; owns `Registration`), SCRUM-74 (slots remaining on the event page)

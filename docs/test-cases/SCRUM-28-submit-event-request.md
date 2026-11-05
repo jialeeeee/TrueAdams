@@ -1,5 +1,7 @@
 # SCRUM-28 — Submit an Event Request: Test Cases
 
+> **Latest execution (5 Nov 2026):** every automated case in this document passes: the full backend suite on a PostgreSQL database built by `backend/ci/build_test_database.py` (1,496 tests, 100% of statements and branches), the full frontend suite with Vitest (100% coverage), and CI. Execution notes further down record earlier runs and are kept as history; where they say a case was not run, pending or blocked, this line is the current status.
+
 **User story:** As an Event Organiser, I want to submit an event request containing the information needed for review so that ConnectSphere can assess my proposed event.
 
 **Documentation reviewed:** 19 Oct 2026 against checked-out baseline `9d188f9`. **Current execution status:** not executed in this documentation update. Historical results below are reports from their stated date/build, not fresh verification.

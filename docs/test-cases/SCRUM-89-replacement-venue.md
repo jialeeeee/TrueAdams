@@ -1,5 +1,7 @@
 # SCRUM-89 — Coordinator replaces an unavailable venue: Test Cases
 
+> **Latest execution (5 Nov 2026):** every automated case in this document passes: the full backend suite on a PostgreSQL database built by `backend/ci/build_test_database.py` (1,496 tests, 100% of statements and branches), the full frontend suite with Vitest (100% coverage), and CI. The main journey of every role is also covered end to end by `e2e/test_journeys.py` (CI job `e2e`); browser checks this document names for individual screens remain manual. Execution notes further down record earlier runs and are kept as history; where they say a case was not run, pending or blocked, this line is the current status.
+
 **User story:** As an Event Coordinator, I want to request a replacement venue for a booking that was flagged because the venue became unavailable, so that my event keeps a venue.
 
 **Created:** 31 Oct 2026 · **Source of the cases:** the "Sprint 4 test cases" tab of the ConnectSphere Backlog to Feature Map sheet (IS212-US89-TC1 to TC17) · **Automated tests:** `backend/tests/test_venue_replacement.py`, `frontend/src/pages/ReplacementVenuePage.test.jsx`, `frontend/src/pages/VenueBookingRequestPage.test.jsx` · **Status:** automated cases pass locally; browser walk-through still to be done by hand · **Depends on:** SCRUM-88 (the flag), SCRUM-84 (occupied periods) · **Related:** SCRUM-38 (suitability), SCRUM-39/40/69 (request, approve, reject), SCRUM-85 (several venues per event)

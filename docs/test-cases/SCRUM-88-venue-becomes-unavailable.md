@@ -1,5 +1,7 @@
 # SCRUM-88 — Venue becomes unavailable after booking: Test Cases
 
+> **Latest execution (5 Nov 2026):** every automated case in this document passes: the full backend suite on a PostgreSQL database built by `backend/ci/build_test_database.py` (1,496 tests, 100% of statements and branches), the full frontend suite with Vitest (100% coverage), and CI. The main journey of every role is also covered end to end by `e2e/test_journeys.py` (CI job `e2e`); browser checks this document names for individual screens remain manual. Execution notes further down record earlier runs and are kept as history; where they say a case was not run, pending or blocked, this line is the current status.
+
 **User story:** As Venue Staff, I want to mark a venue unavailable for a period even when it already has future bookings.
 
 **Created:** 31 Oct 2026 · **Source of the cases:** the "Sprint 4 test cases" tab of the ConnectSphere Backlog to Feature Map sheet (IS212-US88-TC1 to TC29) · **Automated tests:** `backend/tests/test_venue_unavailable.py`, `frontend/src/pages/VenueUnavailablePage.test.jsx`, `frontend/src/pages/ReplacementNeededPage.test.jsx`, `frontend/src/pages/EventPlanningPage.test.jsx` · **Status:** automated cases pass locally; browser walk-through still to be done by hand · **Related:** SCRUM-36/64 (calendar), SCRUM-39/41 (request, conflicts), SCRUM-93 (confirm event), SCRUM-89 (replacement venue)

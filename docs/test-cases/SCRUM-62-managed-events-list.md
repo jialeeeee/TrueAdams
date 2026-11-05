@@ -1,5 +1,7 @@
 # SCRUM-62 — Identify My Managed Events: Test Cases
 
+> **Latest execution (5 Nov 2026):** every automated case in this document passes: the full backend suite on a PostgreSQL database built by `backend/ci/build_test_database.py` (1,496 tests, 100% of statements and branches), the full frontend suite with Vitest (100% coverage), and CI. Execution notes further down record earlier runs and are kept as history; where they say a case was not run, pending or blocked, this line is the current status.
+
 **User story:** As an Event Coordinator, I want a list of the events I manage, with each event's status, so that I can quickly find the event I need and see what stage it is at.
 
 **Created:** 11 Oct 2026 · **Status of all cases:** Automated cases pass (11 Oct 2026, Supabase + Vitest). · **Automated tests:** `backend/tests/test_managed_events.py`, `frontend/src/pages/ManagedEventsPage.test.jsx`, `frontend/src/pages/EventPlanningPage.test.jsx` · **Endpoints:** `GET /api/events/managed` (new), `GET /api/events/<id>/planning` (SCRUM-34) · **Related:** SCRUM-34 (planning view), SCRUM-33 (coordinator assignment)

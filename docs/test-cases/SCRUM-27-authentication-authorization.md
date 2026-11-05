@@ -1,5 +1,7 @@
 # SCRUM-27 — Access Authorised Event Information and Functions: Test Cases
 
+> **Latest execution (5 Nov 2026):** every automated case in this document passes: the full backend suite on a PostgreSQL database built by `backend/ci/build_test_database.py` (1,496 tests, 100% of statements and branches), the full frontend suite with Vitest (100% coverage), and CI. Execution notes further down record earlier runs and are kept as history; where they say a case was not run, pending or blocked, this line is the current status.
+
 **User story:** As a system user, I want to sign in and access information and functions permitted for my role and involvement in an event so that I can carry out my activities while other users’ information remains protected.
 
 **Documentation reviewed:** 19 Oct 2026, checked-out baseline `9d188f9`. **Execution status:** not executed during this documentation update. Existing test assertions were inspected, not imported or run.

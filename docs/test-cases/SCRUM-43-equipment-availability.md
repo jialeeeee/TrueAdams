@@ -1,5 +1,7 @@
 # SCRUM-43 — Check Equipment Availability for an Event: Test Cases
 
+> **Latest execution (5 Nov 2026):** every automated case in this document passes: the full backend suite on a PostgreSQL database built by `backend/ci/build_test_database.py` (1,496 tests, 100% of statements and branches), the full frontend suite with Vitest (100% coverage), and CI. Execution notes further down record earlier runs and are kept as history; where they say a case was not run, pending or blocked, this line is the current status.
+
 **User story:** As a Technical Support Staff member, I want to view all available equipment so that I can determine whether an event's equipment requirements can be fulfilled.
 
 **Created:** 21 Oct 2026 · **Status of all cases:** automated cases pass (21 Oct 2026, Supabase + Vitest); end-to-end check passed in the browser, see [the DoD evidence](../evidence/SCRUM-43-dod-evidence.md) · **Automated tests:** `backend/tests/test_equipment_availability.py` (through the API), `backend/tests/test_equipment_availability_unit.py` (the rules, no database), `frontend/src/pages/EquipmentAvailabilityPage.test.jsx` (+ the link in `EquipmentRequirementsPage.test.jsx`) · **Endpoint:** `GET /api/events/<id>/equipment-availability` · **Related:** SCRUM-42 (the requirements checked here), SCRUM-44 (reserving; it will deduct reservations from the same check), SCRUM-84 (setup and turnaround time, venues only)

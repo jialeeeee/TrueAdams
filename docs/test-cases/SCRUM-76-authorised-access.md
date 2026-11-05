@@ -1,5 +1,7 @@
 # SCRUM-76 - Access Only Authorised Information and Functions: Test Cases
 
+> **Latest execution (5 Nov 2026):** every automated case in this document passes: the full backend suite on a PostgreSQL database built by `backend/ci/build_test_database.py` (1,496 tests, 100% of statements and branches), the full frontend suite with Vitest (100% coverage), and CI. TC-76-05 still waits on Q4 (no expected result is agreed); TC-76-06's refusal rendering is covered by the frontend tests named in R4, which pass. Execution notes further down record earlier runs and are kept as history; where they say a case was not run, pending or blocked, this line is the current status.
+
 **Phase:** focused GREEN verification complete, 21 Oct 2026 (Singapore), branch `feature/SCRUM-76-authorised-access`, baseline `536a537`. **Result: READY FOR PR** for the confirmed compatibility scope: 25 GREEN methods passed, 0 failures/errors/skips. Earlier RED: 9 methods passed without a demonstrated defect. Production code is unchanged. This document uses the user's confirmed sprint boundary.
 
 **Changed 4 Nov 2026 (CF01):** the customer answered G4 clarification #22, "Can one person hold two roles?", with "Yes, multiple roles possible." A user now has a main role (`users.role`) and may hold others (`users.additional_roles`, `db/multiple_roles.sql`). Every role check goes through `app/roles.py`. New cases TC-76-08 to 14 are in [Several roles for one user](#several-roles-for-one-user-cf01) below; the original cases and results are unchanged.

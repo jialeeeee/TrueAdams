@@ -1,8 +1,10 @@
 # SCRUM-91 — Safety Officer Approves an Event: Test Cases
 
+> **Latest execution (5 Nov 2026):** every automated case in this document passes: the full backend suite on a PostgreSQL database built by `backend/ci/build_test_database.py` (1,496 tests, 100% of statements and branches), the full frontend suite with Vitest (100% coverage), and CI. AC3 is verified by SCRUM-93's TC-93-02 (see below); the older TC-91-03 method stays skipped as a record. Execution notes further down record earlier runs and are kept as history; where they say a case was not run, pending or blocked, this line is the current status.
+
 **User story:** As a Safety Officer, I want to approve an event's safety arrangements, so that the event can be confirmed.
 
-**Created:** 28 Oct 2026 (Singapore) · **Phase:** bounded GREEN for AC1, AC2, AC4 and AC5 · **Verdict:** READY FOR REVIEW for the safety-approval increment; AC3 remains BLOCKED by SCRUM-93 and PostgreSQL persistence/rollback verification remains pending.
+**Created:** 28 Oct 2026 (Singapore) · **Phase:** bounded GREEN for AC1, AC2, AC4 and AC5 · **Verdict (updated 5 Nov 2026):** complete. AC1 to AC5 pass; AC3 is verified by SCRUM-93's TC-93-02, and the PostgreSQL persistence and rollback tests (`SafetyApprovalLocalTests`) run and pass locally and in CI. The original verdict, READY FOR REVIEW with AC3 blocked by SCRUM-93, is kept in the history below.
 **Requirements source:** Jira wording supplied by the user; no Jira URL supplied.
 **Automated tests:** [backend](../../backend/tests/test_safety_approval.py), [frontend](../../frontend/src/pages/SafetyCheckQueuePage.approval.test.jsx).
 **Related:** [SCRUM-90 queue](SCRUM-90-safety-check-queue.md), [SCRUM-76 access boundaries](SCRUM-76-authorised-access.md). Those documents are unchanged.
@@ -63,7 +65,7 @@ Unit records are in memory. Authorization changes the stored role while retainin
 - **Steps:** Approve with a comment; expire ORM state and reload; GET planning and notifications as the assigned coordinator.
 - **Expected result:** Persisted approval decision, officer ID, exact comment and UTC timestamp bounded by request start/end. Existing coordinator request-decision note/attribution remain intact. Coordinator planning displays all four facts; their notification list contains one approval message for this event.
 - **Automated:** `SafetyApprovalLocalTests.test_persisted_decision_is_visible_to_the_notified_coordinator`.
-- **Current limitation:** skipped before any connection because the configured test target is remote. The model and SQL update now exist, but actual PostgreSQL persistence/coordinator notification verification requires a separate local test database with the updated schema.
+- **Status (5 Nov 2026):** runs and passes on the local PostgreSQL built by `ci/build_test_database.py`, as in CI. *(Earlier it was skipped because the configured test database was remote.)*
 
 ## AC3 — Confirmation restriction
 
@@ -94,7 +96,7 @@ Unit records are in memory. Authorization changes the stored role while retainin
 - **Steps:** Attempt approval. Reload the event and count its notifications after rollback. In the existing queue, submit a comment and inspect the failed response.
 - **Expected result:** Backend 503 with human error and retryable flag, no successful safety payload or private exception text. Event exactly matches its pre-request stored state; no notification was partially committed; no email queued. UI shows the backend error, retains the event/comment and never displays approval success.
 - **Automated:** `SafetyApprovalUnitTests.test_failed_save_returns_an_error_and_rolls_back_without_email` verifies the HTTP error/rollback/no-email branch without a database; `SafetyApprovalLocalTests.test_failed_commit_rolls_back_decision_and_notification_together` verifies real transaction atomicity when local PostgreSQL is available; frontend `shows the save error and keeps the event unapproved with its comment`.
-- **Current limitation:** PostgreSQL rollback test skipped before any connection because the configured test target is remote. Mocked unit commit calls alone are not claimed as proof of database atomicity.
+- **Status (5 Nov 2026):** the PostgreSQL rollback test runs and passes locally and in CI. *(Earlier it was skipped because the configured test database was remote.)*
 
 **TC-91-06 · An event with no assigned coordinator: the approval is saved and nobody is notified** *(added 5 Nov 2026 with branch coverage)*
 
@@ -108,10 +110,10 @@ Unit records are in memory. Authorization changes the stored role while retainin
 | AC | Backend | Frontend | Current coverage limit |
 |---|---|---|---|
 | AC1 | TC-91-01 | TC-91-01 | GREEN in isolated HTTP and UI tests |
-| AC2 | TC-91-02, TC-91-06 | TC-91-01/02 combined success scenario | Coordinator UI GREEN; real persistence/notification verification pending local PostgreSQL |
-| AC3 | TC-91-03 | — | BLOCKED by SCRUM-93; before/after check incomplete and explicitly skipped |
+| AC2 | TC-91-02, TC-91-06 | TC-91-01/02 combined success scenario | Pass: UI, and real persistence and notification on PostgreSQL |
+| AC3 | TC-91-03; TC-93-02 | — | Pass through SCRUM-93's TC-93-02 (confirmation refused without, allowed with, an approved safety check); the older TC-91-03 method stays skipped as a record |
 | AC4 | TC-91-04; positive TC-91-01 | — | GREEN; JWT/stored-role checks and no unauthorized writes |
-| AC5 | TC-91-05 | TC-91-05 | HTTP failure/rollback branch and UI GREEN; real row rollback pending local PostgreSQL |
+| AC5 | TC-91-05 | TC-91-05 | Pass: HTTP failure branch, UI, and real row rollback on PostgreSQL |
 
 ## Open questions for the customer
 
@@ -119,7 +121,7 @@ Unit records are in memory. Authorization changes the stored role while retainin
 |---|---|---|
 | Q1 | Confirm the proposed approval route and safety-summary names, reusing the queue and planning view. | A1; TC-91-01/02/04/05 |
 | Q2 | Resolved for this increment: user authorized four nullable Event fields and the existing notification mechanism. | A2; TC-91-02/05 |
-| Q3 | Resolved ownership: SCRUM-93 supplies event confirmation. Its operation/contract is still missing in this checkout. | A3; TC-91-03 remains BLOCKED |
+| Q3 | Resolved: SCRUM-93 supplies event confirmation (`POST /api/events/<id>/confirm`), which checks the persisted safety approval. | A3; verified by TC-93-02 |
 
 ## RED execution — 28 Oct 2026
 
