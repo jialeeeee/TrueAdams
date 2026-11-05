@@ -166,6 +166,22 @@ describe("SCRUM-46 request a change", () => {
   });
 });
 
+// SCRUM-46 (TC-46-33): a confirmed event can take a change request too (AC1).
+describe("SCRUM-46 request a change to a confirmed event", () => {
+  it("offers a change request for a confirmed event", async () => {
+    apiClient.get.mockResolvedValue(loaded(DRAFTS, [
+      { id: 15, title: "Harbour Gala", status: "confirmed", submitted_at: "2026-09-23T09:00:00",
+        decided_at: "2026-09-24T09:00:00", decision_note: null },
+      ...SUBMITTED,
+    ]));
+    renderPage();
+
+    const links = await screen.findAllByRole("link", { name: "Request a change" });
+    expect(links.map((a) => a.getAttribute("href")))
+      .toEqual(["/events/15/change-request", "/events/13/change-request"]);
+  });
+});
+
 // Frontend case TC-60-15 in docs/test-cases/SCRUM-60-accountable-decisions.md; the
 // API side is backend/tests/test_decision_accountability.py (TC-60-03).
 describe("SCRUM-60 who decided", () => {

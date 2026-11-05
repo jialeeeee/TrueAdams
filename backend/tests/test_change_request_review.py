@@ -35,6 +35,7 @@ from sqlalchemy import event as sa_event
 from sqlalchemy.exc import OperationalError
 
 from app import tasks
+from app.events import routes as event_routes
 from app.models import (
     EquipmentRequirement,
     EquipmentReservation,
@@ -50,6 +51,7 @@ SESSION_EXPIRED = "Your session is no longer valid. Please log in again."
 NOT_SAVED = ("The decision was not saved, so the change request and the event are unchanged. "
              "Please try again.")
 LIST_URL = "/api/events/change-requests"
+NOW = datetime(2026, 10, 28, 12, 0)
 
 # CV-SEED events. `organiser` and `coordinator` refer to seed_data USERS keys.
 EVENTS = [
@@ -106,6 +108,11 @@ class ReviewTestCase(AppTestCase):
         patcher = mock.patch.object(tasks.send_notification_email, "delay")
         self.email = patcher.start()
         self.addCleanup(patcher.stop)
+        # "Now" is fixed before CV-SEED's events and B2's hold expiry (A3, SCRUM-46 A11),
+        # whatever the date the suite runs.
+        clock = mock.patch.object(event_routes, "singapore_now", return_value=NOW)
+        clock.start()
+        self.addCleanup(clock.stop)
 
     def _seed_arrangements(self):
         v1, v2, alice, hana = (self.events["V1"], self.events["V2"], self.users["alice"],
@@ -819,3 +826,363 @@ class AttendeeNotificationTests(ReviewTestCase):
             self.assertEqual(self.notifications(user), [])
             self.assertNotIn(self.users[user].email, self.emailed())
         self.assertEqual(accepted["notification"]["attendees_notified"], 0)
+
+
+# ---------- AC11: accepting a significant change clears the safety decision ----------
+
+SAFETY_CHECK_CLEARED = ("Its safety check was cleared, so it needs a new safety check before "
+                        "it can be confirmed.")
+SAFETY_FIELDS = ("safety_decision", "safety_decided_by_id", "safety_comment",
+                 "safety_decided_at")
+
+
+class SafetyTestCase(ReviewTestCase):
+    def setUp(self):
+        super().setUp()
+        self.officer = self.make_user(role="safety_officer")
+
+    def decide_safety(self, decision="approved", key="V1"):
+        event = self.events[key]
+        event.safety_decision = decision
+        event.safety_decided_by_id = self.officer.id
+        event.safety_comment = "Exits and crowd flow checked."
+        event.safety_decided_at = datetime(2026, 11, 1, 2, 0)
+        self.db.session.commit()
+
+    def safety_of(self, key="V1"):
+        self.db.session.expire_all()
+        row = self.db.session.get(Event, self.events[key].id)
+        return tuple(getattr(row, name) for name in SAFETY_FIELDS)
+
+
+
+class SafetyCheckTests(SafetyTestCase):
+    # TC-70-33 · AC11, AC2
+    def test_tc_70_33_the_review_says_accepting_clears_the_safety_check(self):
+        self.seed_request("N1")
+        self.assertNotIn("safety_check", self.review("N1")["impact"])
+
+        self.decide_safety("approved")
+        approved = self.review("N1")["impact"]
+        self.assertEqual(approved["safety_check"]["decision"], "approved")
+        [reason] = approved["safety_check"]["reasons"]
+        self.assertIn("new safety check before it can be confirmed", reason)
+        self.assertIs(approved["affected"], True)
+
+        self.decide_safety("changes_requested")
+        requested = self.review("N1")["impact"]
+        self.assertEqual(requested["safety_check"]["decision"], "changes_requested")
+        self.assertIn("back on the safety check list", requested["safety_check"]["reasons"][0])
+
+    # TC-70-34 · AC11
+    def test_tc_70_34_accepting_clears_an_approved_safety_check(self):
+        self.decide_safety("approved")
+        self.seed_request("N1")
+
+        body = self.decided("N1", "accept")
+
+        self.assertEqual(self.safety_of(), (None, None, None, None))
+        self.assertEqual(self.saved_event()["status"], "approved")
+        self.assertIn(SAFETY_CHECK_CLEARED, body["message"])
+        confirm = self.client.post(f"/api/events/{self.events['V1'].id}/confirm",
+                                   headers=self.headers("alice"))
+        self.assertEqual(confirm.status_code, 409, confirm.get_json())
+        self.assertIn("Approved safety check", confirm.get_json()["missing"])
+
+    # TC-70-35 · AC11, A11
+    def test_tc_70_35_accepting_clears_a_negative_safety_decision_too(self):
+        self.decide_safety("changes_requested")
+        self.seed_request("S1")
+
+        body = self.decided("S1", "accept")
+
+        self.assertEqual(self.safety_of(), (None, None, None, None))
+        self.assertIn(SAFETY_CHECK_CLEARED, body["message"])
+
+    # TC-70-36 · AC11
+    def test_tc_70_36_rejecting_keeps_the_safety_decision(self):
+        self.decide_safety("approved")
+        before = self.safety_of()
+        self.seed_request("T1")
+
+        body = self.decided("T1", "reject", REASON)
+
+        self.assertEqual(self.safety_of(), before)
+        self.assertNotIn(SAFETY_CHECK_CLEARED, body["message"])
+
+    # TC-70-36 · AC11
+    def test_tc_70_36_accepting_with_no_safety_decision_says_nothing_about_it(self):
+        self.seed_request("N1")
+
+        body = self.decided("N1", "accept")
+
+        self.assertEqual(self.safety_of(), (None, None, None, None))
+        self.assertNotIn("safety check", body["message"])
+
+    # TC-70-36 · AC11
+    def test_tc_70_36_a_failed_save_keeps_the_safety_decision(self):
+        self.decide_safety("approved")
+        before = self.safety_of()
+        self.seed_request("N1")
+
+        def fail(conn, cursor, statement, parameters, context, executemany):
+            if statement.startswith("UPDATE events"):
+                raise OperationalError(statement, parameters, Exception("simulated outage"))
+
+        self.db.session.expire_all()
+        sa_event.listen(self.db.engine, "before_cursor_execute", fail)
+        try:
+            response = self.decide("N1", "accept")
+        finally:
+            sa_event.remove(self.db.engine, "before_cursor_execute", fail)
+
+        self.assertEqual(response.status_code, 503, response.get_json())
+        self.assertEqual(self.safety_of(), before)
+
+
+# ---------- AC1, AC11: a change to a confirmed event ----------
+
+
+class ConfirmedEventTests(SafetyTestCase):
+    def setUp(self):
+        super().setUp()
+        self.decide_safety("approved")
+        self.events["V1"].status = "confirmed"
+        self.events["V1"].confirmed_by_id = self.users["alice"].id
+        self.events["V1"].confirmed_at = datetime(2026, 11, 2, 2, 0)
+        self.db.session.commit()
+
+    # TC-70-37 · AC1, AC11
+    def test_tc_70_37_accepting_returns_a_confirmed_event_to_approved(self):
+        self.seed_request("N1")
+        self.assertIs(self.review("N1")["can_decide"], True)
+
+        body = self.decided("N1", "accept")
+
+        self.db.session.expire_all()
+        event = self.db.session.get(Event, self.events["V1"].id)
+        self.assertEqual((event.status, event.expected_attendance), ("approved", 250))
+        self.assertEqual(self.safety_of(), (None, None, None, None))
+        # The record that it was confirmed once is kept.
+        self.assertEqual(event.confirmed_by_id, self.users["alice"].id)
+        self.assertIn("no longer confirmed", body["message"])
+        self.assertIn(SAFETY_CHECK_CLEARED, body["message"])
+        [note] = self.notifications("dana", "change_request_accepted")
+        self.assertIn("no longer confirmed", note.message)
+
+    # TC-70-37 · AC11
+    def test_tc_70_37_rejecting_keeps_a_confirmed_event_confirmed(self):
+        self.seed_request("N1")
+
+        body = self.decided("N1", "reject", REASON)
+
+        self.assertEqual(self.saved_event()["status"], "confirmed")
+        self.assertEqual(self.safety_of()[0], "approved")
+        self.assertNotIn("no longer confirmed", body["message"])
+        [note] = self.notifications("dana", "change_request_rejected")
+        self.assertNotIn("no longer confirmed", note.message)
+
+    # TC-70-37 · AC11
+    def test_tc_70_37_an_approved_event_is_not_said_to_be_unconfirmed(self):
+        self.events["V1"].status = "approved"
+        self.db.session.commit()
+        self.seed_request("N1")
+
+        body = self.decided("N1", "accept")
+
+        self.assertNotIn("no longer confirmed", body["message"])
+
+
+# ---------- AC10: accepting flags the affected bookings for the coordinator ----------
+
+MISSING_CHANGE_DECISION = "A decision on the venue bookings an accepted change affects"
+CHANGE_FLAG = "Affected by an accepted change: keep it, or cancel or rebook it"
+
+
+class BookingFlagTests(ReviewTestCase):
+    def flags(self, status=None):
+        from app.models import VenueBookingChangeFlag
+
+        self.db.session.expire_all()
+        query = VenueBookingChangeFlag.query.filter(VenueBookingChangeFlag.booking_id.in_(
+            [booking.id for booking in self.bookings.values()]))
+        rows = query.filter_by(status=status).all() if status else query.all()
+        keys = {booking.id: key for key, booking in self.bookings.items()}
+        return {keys[row.booking_id]: row for row in rows}
+
+    def planning_bookings(self):
+        response = self.client.get(f"/api/events/{self.events['V1'].id}/planning",
+                                   headers=self.headers("alice"))
+        self.assertEqual(response.status_code, 200, response.get_json())
+        keys = {booking.id: key for key, booking in self.bookings.items()}
+        return {keys[b["id"]]: b for b in response.get_json()["venue_bookings"]}
+
+    def keep(self, key, user="alice", event="V1"):
+        return self.client.post(
+            f"/api/events/{self.events[event].id}/venue-bookings/{self.bookings[key].id}/keep",
+            headers=self.headers(user))
+
+    def missing_for_confirmation(self):
+        response = self.client.post(f"/api/events/{self.events['V1'].id}/confirm",
+                                    headers=self.headers("alice"))
+        self.assertEqual(response.status_code, 409, response.get_json())
+        return response.get_json()["missing"]
+
+    # TC-70-38 · AC10
+    def test_tc_70_38_accepting_new_times_flags_every_live_booking(self):
+        self.seed_request("T1")
+        review = self.review("T1")["impact"]["venue_bookings"]
+
+        body = self.decided("T1", "accept")
+
+        flags = self.flags()
+        self.assertEqual(sorted(flags), ["B1", "B2", "B3"])
+        for key, item in zip(("B1", "B2", "B3"), review):
+            with self.subTest(booking=key):
+                self.assertEqual(flags[key].status, "flagged")
+                self.assertEqual(flags[key].reasons, item["reasons"])
+                self.assertEqual(flags[key].change_request_id, self.requests["T1"].id)
+                self.assertEqual(flags[key].flagged_by_id, self.users["alice"].id)
+        self.assertIn("3 venue bookings were flagged for you to decide on", body["message"])
+        planning = self.planning_bookings()
+        self.assertEqual(planning["B1"]["change_flag"]["label"], CHANGE_FLAG)
+        self.assertEqual(planning["B1"]["change_flag"]["reasons"], flags["B1"].reasons)
+        for key in ("B4", "B5"):
+            self.assertNotIn("change_flag", planning[key])
+
+    # TC-70-39 · AC10
+    def test_tc_70_39_only_the_bookings_the_change_affects_are_flagged(self):
+        self.seed_request("N1")
+        body = self.decided("N1", "accept")
+        # 250 people: the ballroom (220) and the garden room (120) are too small; the
+        # rooftop's capacity isn't recorded.
+        self.assertEqual(sorted(self.flags()), ["B1", "B2"])
+        self.assertIn("2 venue bookings were flagged", body["message"])
+
+    # TC-70-39 · AC10
+    def test_tc_70_39_rejecting_flags_nothing(self):
+        self.seed_request("T1")
+
+        body = self.decided("T1", "reject", REASON)
+
+        self.assertEqual(self.flags(), {})
+        self.assertNotIn("flagged", body["message"])
+
+    # TC-70-39 · AC10
+    def test_tc_70_39_one_booking_is_counted_as_one(self):
+        for key in ("B2", "B3"):
+            self.bookings[key].status = "cancelled"
+        self.db.session.commit()
+        self.seed_request("S1")
+
+        body = self.decided("S1", "accept")
+
+        self.assertEqual(sorted(self.flags()), ["B1"])
+        self.assertIn("1 venue booking was flagged", body["message"])
+
+    # TC-70-40 · AC10
+    def test_tc_70_40_a_later_change_updates_the_open_flag(self):
+        self.seed_request("N1")
+        self.decided("N1", "accept")
+        self.seed_request("S1")
+
+        self.decided("S1", "accept")
+
+        flags = self.flags()
+        self.assertEqual(sorted(flags), ["B1", "B2", "B3"])
+        self.assertEqual(flags["B1"].change_request_id, self.requests["S1"].id)
+        self.assertIn("venue requirements", flags["B1"].reasons[0])
+
+    # TC-70-41 · AC10
+    def test_tc_70_41_the_coordinator_keeps_a_flagged_booking(self):
+        self.seed_request("T1")
+        self.decided("T1", "accept")
+
+        response = self.keep("B1")
+
+        self.assertEqual(response.status_code, 200, response.get_json())
+        self.assertEqual(response.get_json()["message"],
+                         "You kept the booking at Grand Ballroom. It is no longer flagged.")
+        kept = self.flags()["B1"]
+        self.assertEqual((kept.status, kept.decided_by_id), ("kept", self.users["alice"].id))
+        self.assertIsNotNone(kept.decided_at)
+        self.assertNotIn("change_flag", self.planning_bookings()["B1"])
+        self.assertIn("change_flag", self.planning_bookings()["B2"])
+        again = self.assert_error(self.keep("B1"), 409)
+        self.assertEqual(again["reason"], "not_flagged")
+        self.db.session.expire_all()
+        self.assertEqual(self.db.session.get(VenueBooking, self.bookings["B1"].id).status,
+                         "confirmed")
+
+    # TC-70-41 · AC10
+    def test_tc_70_41_who_may_keep_a_booking_and_in_what_order(self):
+        self.seed_request("T1")
+        self.decided("T1", "accept")
+        ghost = self.make_user(role="coordinator")
+        ghost_headers = self.auth_headers(ghost)
+        self.db.session.delete(ghost)
+        self.db.session.commit()
+        url = f"/api/events/{self.events['V1'].id}/venue-bookings/{self.bookings['B1'].id}/keep"
+
+        self.assertEqual(self.client.post(url).status_code, 401)
+        self.assertEqual(self.assert_error(self.client.post(url, headers=ghost_headers),
+                                           401)["error"], SESSION_EXPIRED)
+        missing = f"/api/events/{self.missing_id(Event)}/venue-bookings/{self.bookings['B1'].id}/keep"
+        self.assert_error(self.client.post(missing, headers=self.headers("alice")), 404)
+        no_booking = (f"/api/events/{self.events['V1'].id}/venue-bookings/"
+                      f"{self.missing_id(VenueBooking)}/keep")
+        self.assert_error(self.client.post(no_booking, headers=self.headers("alice")), 404)
+        self.assert_error(self.keep("B1", user="ben", event="V2"), 404)
+        for user in ("ben", "dana", "gus", "admin"):
+            with self.subTest(user=user):
+                self.assert_error(self.keep("B1", user=user), 403)
+        self.assertEqual(self.flags()["B1"].status, "flagged")
+
+    # TC-70-41 · AC10
+    def test_tc_70_41_a_flag_on_a_booking_no_longer_live_needs_no_decision(self):
+        self.seed_request("T1")
+        self.decided("T1", "accept")
+        self.bookings["B3"].status = "cancelled"
+        self.db.session.commit()
+
+        self.assertNotIn("change_flag", self.planning_bookings()["B3"])
+        self.assertEqual(self.assert_error(self.keep("B3"), 409)["reason"], "not_flagged")
+        # B2's hold lapses on 2026-11-30 12:00.
+        with mock.patch.object(event_routes, "singapore_now",
+                               return_value=datetime(2026, 11, 30, 12, 0)):
+            self.assertNotIn("change_flag", self.planning_bookings()["B2"])
+            self.assertEqual(self.assert_error(self.keep("B2"), 409)["reason"], "not_flagged")
+
+    # TC-70-41 · AC10, AC6
+    def test_tc_70_41_a_failed_save_keeps_the_flag(self):
+        self.seed_request("T1")
+        self.decided("T1", "accept")
+
+        def fail(conn, cursor, statement, parameters, context, executemany):
+            if statement.startswith("UPDATE venue_booking_change_flags"):
+                raise OperationalError(statement, parameters, Exception("simulated outage"))
+
+        self.db.session.expire_all()
+        sa_event.listen(self.db.engine, "before_cursor_execute", fail)
+        try:
+            response = self.keep("B1")
+        finally:
+            sa_event.remove(self.db.engine, "before_cursor_execute", fail)
+
+        body = self.assert_error(response, 503)
+        self.assertIs(body["retryable"], True)
+        self.assertEqual(self.flags()["B1"].status, "flagged")
+
+    # TC-70-42 · AC10
+    def test_tc_70_42_confirming_waits_for_a_decision_on_every_flagged_booking(self):
+        self.assertNotIn(MISSING_CHANGE_DECISION, self.missing_for_confirmation())
+        self.seed_request("N1")
+        self.decided("N1", "accept")
+        self.assertIn(MISSING_CHANGE_DECISION, self.missing_for_confirmation())
+
+        self.assertEqual(self.keep("B1").status_code, 200)
+        self.assertIn(MISSING_CHANGE_DECISION, self.missing_for_confirmation())
+        self.bookings["B2"].status = "cancelled"
+        self.db.session.commit()
+
+        self.assertNotIn(MISSING_CHANGE_DECISION, self.missing_for_confirmation())

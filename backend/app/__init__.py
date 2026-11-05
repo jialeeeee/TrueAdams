@@ -31,6 +31,12 @@ def create_app(config_class=Config):
                 "task": "tasks.check_hold_expiries",
                 "schedule": HOLD_CHECK_INTERVAL_SECONDS,
             },
+            # SCRUM-99 AC5: reminders about incomplete arrangements, every
+            # REMINDER_INTERVAL_HOURS (24 by default).
+            "remind-incomplete-arrangements": {
+                "task": "tasks.remind_incomplete_arrangements",
+                "schedule": app.config["REMINDER_INTERVAL_HOURS"] * 3600,
+            },
         },
     )
 

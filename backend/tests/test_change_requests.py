@@ -38,6 +38,8 @@ from tests import seed_data
 from tests.base import AppTestCase
 
 SESSION_EXPIRED = "Your session is no longer valid. Please log in again."
+# "Now" for every test: before CR-SEED's events start (A11).
+NOW = datetime(2026, 10, 27, 12, 0)
 NOT_SUBMITTED = "Your change request was not submitted, and the event is unchanged. Please try again."
 
 # CR-SEED. `organiser` and `coordinator` refer to seed_data USERS keys.
@@ -87,6 +89,11 @@ class ChangeRequestTestCase(AppTestCase):
         patcher = mock.patch.object(tasks.send_notification_email, "delay")
         self.email = patcher.start()
         self.addCleanup(patcher.stop)
+        # AC1 (A11): requests close when the event starts, so "now" is fixed before CR-SEED's
+        # December events whatever the date the suite runs.
+        clock = mock.patch.object(event_routes, "singapore_now", return_value=NOW)
+        self.clock = clock.start()
+        self.addCleanup(clock.stop)
 
     def url(self, event="C1"):
         event_id = self.events[event].id if isinstance(event, str) else event
@@ -515,3 +522,52 @@ class NotificationTests(ChangeRequestTestCase):
         self.assertEqual(result["notification"], {"in_app": True, "email_queued": False})
         self.assertEqual(len(self.requests()), 1)
         self.assertEqual(len(self.notifications("alice")), 1)
+
+
+# ---------- AC1 (reopened): confirmed events, until the event starts ----------
+
+
+class ConfirmedAndStartedTests(ChangeRequestTestCase):
+    # TC-46-31 · AC1
+    def test_tc_46_31_a_confirmed_event_can_take_a_request(self):
+        self.events["C1"].status = "confirmed"
+        self.db.session.commit()
+
+        form = self.form()
+        self.assertIs(form["can_request"], True)
+        self.assertIsNone(form["blocked_reason"])
+
+        result = self.submitted({"expected_attendance": 250})
+        self.assertEqual(result["request"]["status"], "pending_review")
+        [row] = self.requests()
+        self.assertEqual(row.changes, {"expected_attendance": {"from": 200, "to": 250}})
+        self.db.session.expire_all()
+        # AC7: the pending request changes nothing, including the confirmation.
+        self.assertEqual(self.db.session.get(Event, self.events["C1"].id).status, "confirmed")
+
+    # TC-46-32 · AC1
+    def test_tc_46_32_no_request_once_the_event_has_started(self):
+        for now in (datetime(2026, 12, 5, 18, 0), datetime(2026, 12, 5, 20, 0)):
+            self.clock.return_value = now
+            with self.subTest(now=now):
+                form = self.form()
+                self.assertIs(form["can_request"], False)
+                self.assertEqual(form["blocked_reason"], "started")
+                self.assertIn("already started", form["message"])
+
+                body = self.assert_error(self.submit({"expected_attendance": 250}), 409)
+                self.assertEqual(body["reason"], "started")
+                self.assert_nothing_requested()
+
+    # TC-46-32 · AC1
+    def test_tc_46_32_a_request_one_minute_before_the_start_is_allowed(self):
+        self.clock.return_value = datetime(2026, 12, 5, 17, 59)
+
+        self.submitted({"expected_attendance": 250})
+
+    # TC-46-32 · AC1
+    def test_tc_46_32_the_status_is_checked_before_the_start(self):
+        self.clock.return_value = datetime(2026, 12, 20, 9, 0)
+
+        self.assertEqual(self.form("C2")["blocked_reason"], "not_approved")
+        self.assertIn("approved or confirmed", self.form("C2")["message"])

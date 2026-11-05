@@ -5,6 +5,27 @@ from dotenv import load_dotenv
 # Load backend/.env before any setting below is read from the environment.
 load_dotenv()
 
+# SCRUM-99 AC5: how often coordinators are reminded about incomplete arrangements, unless
+# REMINDER_INTERVAL_HOURS says otherwise. Release 1 has no administrator role, so whoever
+# deploys the system changes it.
+DEFAULT_REMINDER_INTERVAL_HOURS = 24
+
+
+def reminder_interval_hours(value):
+    """REMINDER_INTERVAL_HOURS as a number of hours: the default when it isn't set. A value
+    that isn't a positive number stops the app starting, rather than running the reminders
+    at some other frequency without anyone noticing."""
+    if value is None or not value.strip():
+        return DEFAULT_REMINDER_INTERVAL_HOURS
+    try:
+        hours = float(value)
+    except ValueError:
+        hours = None
+    if hours is None or not 0 < hours < float("inf"):
+        raise ValueError(f"REMINDER_INTERVAL_HOURS must be a positive number of hours, "
+                         f"not {value!r}.")
+    return hours
+
 
 class Config:
     SECRET_KEY = os.environ.get("SECRET_KEY", "dev")
@@ -20,6 +41,8 @@ class Config:
     SMTP_USER = os.environ.get("SMTP_USER")
     SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD")
     MAIL_FROM = os.environ.get("MAIL_FROM", "no-reply@connectsphere.io")
+
+    REMINDER_INTERVAL_HOURS = reminder_interval_hours(os.environ.get("REMINDER_INTERVAL_HOURS"))
 
 
 class TestConfig(Config):

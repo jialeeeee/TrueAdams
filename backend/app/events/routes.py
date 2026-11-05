@@ -22,6 +22,7 @@ from ..models import (
     User,
     Venue,
     VenueBooking,
+    VenueBookingChangeFlag,
     VenueReplacementFlag,
 )
 from ..registrations.routes import REGISTERED, REGISTRABLE_STATUSES, WITHDRAWN, singapore_now
@@ -32,7 +33,7 @@ from ..roles import has_any_role, has_role, holding
 from ..venues.scheduling import (
     BLOCKING_BOOKING_STATUS, FLAGGED, REPLACEMENT_FLAG, TENTATIVE_STATUS, overlapping)
 from ..venues.routes import LAYOUT_OPTIONS
-from . import change_requests, change_review, equipment, suitability
+from . import change_requests, change_review, equipment, safety, suitability
 from .permissions import (
     COORDINATOR_ROLE,
     can_view_clarifications,
@@ -201,6 +202,50 @@ def _awaiting_safety_correction(event):
         or event.last_saved_at <= event.safety_decided_at)
 
 
+def _flagged_booking_ids(bookings):
+    """SCRUM-88: the IDs of these bookings flagged because their venue became unavailable,
+    until a replacement is approved (SCRUM-89)."""
+    if not bookings:
+        return set()
+    return {flag.booking_id for flag in VenueReplacementFlag.query.filter(
+        VenueReplacementFlag.booking_id.in_([booking.id for booking in bookings]),
+        VenueReplacementFlag.status == FLAGGED).all()}
+
+
+# SCRUM-70 AC10: the planning view's label for a booking an accepted change affects.
+CHANGE_FLAG = "Affected by an accepted change: keep it, or cancel or rebook it"
+CHANGE_FLAGGED = "flagged"
+CHANGE_FLAG_KEPT = "kept"
+# Bookings that hold, or may yet hold, their venue (SCRUM-94 AC1); a hold only until it
+# expires (SCRUM-87). A flag on any other booking no longer needs a decision.
+CHANGE_FLAG_LIVE_STATUSES = {"pending", BLOCKING_BOOKING_STATUS, TENTATIVE_STATUS}
+
+
+def _is_live_booking(booking, now):
+    if booking.status == TENTATIVE_STATUS:
+        return booking.hold_expires_at is not None and booking.hold_expires_at > now
+    return booking.status in CHANGE_FLAG_LIVE_STATUSES
+
+
+def _open_change_flags(bookings, now):
+    """SCRUM-70 AC10: the open change flags of these bookings that still need the
+    coordinator's decision, by booking ID: only bookings that are still live."""
+    live = [booking for booking in bookings if _is_live_booking(booking, now)]
+    if not live:
+        return {}
+    return {flag.booking_id: flag for flag in VenueBookingChangeFlag.query.filter(
+        VenueBookingChangeFlag.booking_id.in_([booking.id for booking in live]),
+        VenueBookingChangeFlag.status == CHANGE_FLAGGED).all()}
+
+
+def _usable_bookings(bookings):
+    """The confirmed bookings that still give the event a venue: a booking flagged because
+    its venue became unavailable doesn't (SCRUM-88 A11), so neither the safety check list nor
+    confirmation counts it until it is replaced."""
+    flagged = _flagged_booking_ids(bookings)
+    return [booking for booking in bookings if booking.id not in flagged]
+
+
 def _safety_schedule_covered(event, bookings):
     """PR #58: confirmed booked periods must cover the current event without gaps.
 
@@ -253,10 +298,11 @@ def _safety_check_items(events):
     if event_ids:
         # Read only confirmed bookings for current candidates and their date range.
         # Use booked times here: setup/turnaround do not cover event activities.
-        bookings = VenueBooking.query.filter_by(status=BLOCKING_BOOKING_STATUS).filter(
+        bookings = _usable_bookings(VenueBooking.query.filter_by(
+            status=BLOCKING_BOOKING_STATUS).filter(
             VenueBooking.event_id.in_(event_ids),
             VenueBooking.start_time < max(event.end_time for event in events),
-            VenueBooking.end_time > min(event.start_time for event in events)).all()
+            VenueBooking.end_time > min(event.start_time for event in events)).all())
         requirements = EquipmentRequirement.query.filter(
             EquipmentRequirement.event_id.in_(event_ids)).all()
         reservations = EquipmentReservation.query.filter_by(status=reserving.RESERVED).filter(
@@ -456,6 +502,51 @@ def record_negative_safety_decision(event_id, decision):
                                      "email_queued": email_queued}})
 
 
+# SCRUM-93 AC2: what confirmation lists as missing.
+MISSING_VENUE_BOOKING = "Confirmed venue booking"
+# SCRUM-88 A11: a flagged booking would have covered the event if its venue were available.
+MISSING_REPLACEMENT_VENUE = "Replacement for an unavailable venue"
+MISSING_EQUIPMENT = "Reserved equipment"
+MISSING_SAFETY_CHECK = "Approved safety check"
+# SCRUM-70 AC10 (A12): the coordinator decides on each booking a change affected first.
+MISSING_CHANGE_DECISION = "A decision on the venue bookings an accepted change affects"
+
+
+def _missing_for_confirmation(event):
+    """What the event still needs before it can be confirmed (SCRUM-93 AC2), in order: its
+    whole period covered by usable confirmed venue bookings, a decision on each booking an
+    accepted change affected, its equipment fully reserved and an approved safety check. An
+    empty list means it can be confirmed."""
+    # The main venue alone cannot establish readiness for multiple venues.
+    bookings = VenueBooking.query.filter_by(
+        event_id=event.id, status=BLOCKING_BOOKING_STATUS).all()
+    usable = _usable_bookings(bookings)
+    requirements = EquipmentRequirement.query.filter_by(event_id=event.id).all()
+    reservations = EquipmentReservation.query.filter_by(
+        event_id=event.id, status=reserving.RESERVED).all()
+    reserved = {}
+    for reservation in reservations:
+        key = (event.id, reservation.requirement_id)
+        reserved[key] = reserved.get(key, 0) + reservation.quantity
+    missing = []
+    if event.start_time is None or event.end_time is None:
+        missing.append(MISSING_VENUE_BOOKING)
+    elif not _safety_schedule_covered(event, usable):
+        flagged_would_cover = (len(usable) < len(bookings)
+                               and _safety_schedule_covered(event, bookings))
+        missing.append(MISSING_REPLACEMENT_VENUE if flagged_would_cover
+                       else MISSING_VENUE_BOOKING)
+    if _open_change_flags(VenueBooking.query.filter_by(event_id=event.id).all(),
+                          singapore_now()):
+        missing.append(MISSING_CHANGE_DECISION)
+    if not _equipment_fully_reserved(event, requirements, reserved):
+        missing.append(MISSING_EQUIPMENT)
+    # SCRUM-91 AC3: enforce the persisted decision, independent of the UI.
+    if event.safety_decision != "approved":
+        missing.append(MISSING_SAFETY_CHECK)
+    return missing
+
+
 def _confirmation_payload(event, coordinator):
     return {"coordinator": _user_summary(coordinator),
             "confirmed_at": _isoformat(event.confirmed_at)}
@@ -477,25 +568,7 @@ def confirm_event(event_id):
         if event.status != CONFIRMABLE_EVENT_STATUS:
             return _error(f"This event is {event.status}, so it cannot be confirmed.", 409)
 
-        # The main venue alone cannot establish readiness for multiple venues.
-        bookings = VenueBooking.query.filter_by(
-            event_id=event.id, status=BLOCKING_BOOKING_STATUS).all()
-        requirements = EquipmentRequirement.query.filter_by(event_id=event.id).all()
-        reservations = EquipmentReservation.query.filter_by(
-            event_id=event.id, status=reserving.RESERVED).all()
-        reserved = {}
-        for reservation in reservations:
-            key = (event.id, reservation.requirement_id)
-            reserved[key] = reserved.get(key, 0) + reservation.quantity
-        missing = []
-        if (event.start_time is None or event.end_time is None
-                or not _safety_schedule_covered(event, bookings)):
-            missing.append("Confirmed venue booking")
-        if not _equipment_fully_reserved(event, requirements, reserved):
-            missing.append("Reserved equipment")
-        # SCRUM-91 AC3: enforce the persisted decision, independent of the UI.
-        if event.safety_decision != "approved":
-            missing.append("Approved safety check")
+        missing = _missing_for_confirmation(event)
         if missing:
             return _error("Cannot confirm. Missing: " + ", ".join(missing) + ".", 409,
                           missing=missing)
@@ -610,6 +683,12 @@ def _planning_payload(event):
     }
 
 
+def _change_flag_payload(flag):
+    return {"label": CHANGE_FLAG, "reasons": flag.reasons,
+            "change_request_id": flag.change_request_id,
+            "flagged_at": _isoformat(flag.flagged_at)}
+
+
 def _planning_venue_bookings(event):
     """Every venue booking of the event, whatever its status, in time order (SCRUM-85 A7).
 
@@ -623,9 +702,9 @@ def _planning_venue_bookings(event):
               if venue_ids else {})
     now = singapore_now()
     # SCRUM-88: confirmed bookings flagged because their venue became unavailable.
-    flagged = ({flag.booking_id for flag in VenueReplacementFlag.query.filter(
-        VenueReplacementFlag.booking_id.in_([b.id for b in bookings]),
-        VenueReplacementFlag.status == FLAGGED).all()} if bookings else set())
+    flagged = _flagged_booking_ids(bookings)
+    # SCRUM-70 AC10: live bookings an accepted change affects, awaiting a decision.
+    change_flags = _open_change_flags(bookings, now)
     listed = []
     for booking in bookings:
         venue = venues[booking.venue_id]
@@ -643,6 +722,9 @@ def _planning_venue_bookings(event):
             "hold_expired": booking.hold_expires_at <= now if held else None,
             **({"flag": REPLACEMENT_FLAG}
                if booking.id in flagged and booking.status == BLOCKING_BOOKING_STATUS else {}),
+            # Only while it awaits a decision, so other bookings keep their payload.
+            **({"change_flag": _change_flag_payload(change_flags[booking.id])}
+               if booking.id in change_flags else {}),
         })
     return listed
 
@@ -3723,6 +3805,14 @@ EQUIPMENT_NOT_RESERVED = ("The equipment was not reserved, and the existing rese
 RESERVED_NOT_RELOADED = ("The equipment was reserved, but the updated page could not be "
                          "loaded. Reload the page to see it.")
 RESERVATIONS_RELEASED = "Its reserved equipment was released."
+# SCRUM-70 AC10.
+BOOKINGS_FLAGGED = ("flagged for you to decide on: keep each one, or cancel or rebook it, "
+                    "from the event's planning page.")
+# SCRUM-70 AC11.
+BACK_TO_PLANNING = ("The event is no longer confirmed: it is back in planning until it is "
+                    "confirmed again.")
+SAFETY_CHECK_CLEARED = ("Its safety check was cleared, so it needs a new safety check before "
+                        "it can be confirmed.")
 RESERVATION_REQUIREMENT_ID = "Choose the equipment requirement to reserve for."
 
 
@@ -3987,10 +4077,13 @@ def reserve_equipment(event_id: int):
                     "notification": notification, **page}), 201
 
 
-# ---------- Request a change to an approved event (SCRUM-46) ----------
+# ---------- Request a change to an approved or confirmed event (SCRUM-46) ----------
 
-# Only approved events can have a change requested (A1, open question Q1).
-CHANGEABLE_STATUS = "approved"
+# AC1 (CF19): from approval until the event starts, including after confirmation (A1).
+CHANGEABLE_STATUSES = {"approved", "confirmed"}
+CONFIRMED_EVENT_STATUS = "confirmed"
+CHANGES_ONLY_BEFORE_START = ("This event has already started, so changes can no longer be "
+                             "requested.")
 CHANGE_REQUEST_NOTIFICATION = "change_requested"
 CHANGE_REQUEST_ORGANISER_ONLY = "You can only request changes to events you organise."
 CHANGE_FORM_NOT_LOADED = "The change request form could not be loaded. Please try again."
@@ -4044,15 +4137,17 @@ def _is_second_pending_request(error):
 
 def _change_request_blocked(event, coordinator, pending):
     """Why no change can be requested for the event now, as (reason, message), or None."""
-    if event.status != CHANGEABLE_STATUS:
+    if event.status not in CHANGEABLE_STATUSES:
         return "not_approved", (
-            "Changes can only be requested for approved events. "
+            "Changes can only be requested for approved or confirmed events. "
             f"This event is {event.status.replace('_', ' ')}.")
     if coordinator is None:
         # AC5: nobody would review it. It waits in the Lead's queue (SCRUM-70 AC5, A9).
         return "no_coordinator", (
             "This event is waiting for a coordinator to be assigned, so there is nobody to "
             "review a change request yet. Please try again once a coordinator is assigned.")
+    if event.start_time is not None and event.start_time <= singapore_now():
+        return "started", CHANGES_ONLY_BEFORE_START  # AC1: until the event starts (A11)
     if pending is not None:
         return "pending", CHANGE_ALREADY_PENDING  # A6, open question Q5
     return None
@@ -4255,9 +4350,9 @@ def _decision_blocked(event, row):
     """Why the request can't be decided now, as (reason, message), or None (A1, A4)."""
     if row.status != change_requests.PENDING_REVIEW:
         return "decided", f"This change request was already {row.status}."
-    if event.status != CHANGEABLE_STATUS:
+    if event.status not in CHANGEABLE_STATUSES:
         return "not_approved", (
-            "A change request can only be decided while its event is approved. "
+            "A change request can only be decided while its event is approved or confirmed. "
             f"This event is {event.status.replace('_', ' ')}.")
     return None
 
@@ -4291,6 +4386,7 @@ def _change_impact(event, row):
         {"registered": registered, "capacity": event.registration_capacity,
          "closes_at": event.registration_closes_at},
         singapore_now(),
+        safety_decision=event.safety_decision,
     )
 
 
@@ -4366,6 +4462,68 @@ def _registered_attendees(event):
             .order_by(User.id).distinct().all())
 
 
+def _flag_affected_bookings(affected, row, user):
+    """SCRUM-70 AC10: flag each booking the accepted change affects, with why, for the
+    coordinator to decide on. A booking already flagged by an earlier change has its flag
+    brought up to date, so it has one open flag (A12). Nothing about a booking changes."""
+    if not affected:
+        return
+    open_flags = {flag.booking_id: flag for flag in VenueBookingChangeFlag.query.filter(
+        VenueBookingChangeFlag.booking_id.in_([item["id"] for item in affected]),
+        VenueBookingChangeFlag.status == CHANGE_FLAGGED).with_for_update().all()}
+    now = datetime.utcnow()
+    for item in affected:
+        flag = open_flags.get(item["id"])
+        if flag is None:
+            db.session.add(VenueBookingChangeFlag(
+                booking_id=item["id"], change_request_id=row.id, reasons=item["reasons"],
+                status=CHANGE_FLAGGED, flagged_by_id=user.id, flagged_at=now))
+        else:
+            flag.change_request_id, flag.reasons = row.id, item["reasons"]
+            flag.flagged_by_id, flag.flagged_at = user.id, now
+
+
+@events_bp.post("/<int:event_id>/venue-bookings/<int:booking_id>/keep")
+@jwt_required()
+def keep_flagged_booking(event_id: int, booking_id: int):
+    """SCRUM-70 AC10: the event's coordinator keeps a venue booking an accepted change
+    affected, which ends its flag (A12). Cancelling it instead is SCRUM-94's
+    POST /api/venues/bookings/<id>/cancel. Checks: 401, 404, 403, 409, 503."""
+    try:
+        user = _current_user()
+        if user is None:
+            raise _Rejected("Your session is no longer valid. Please log in again.", 401)
+        event = db.session.get(Event, event_id) if event_id <= DB_INTEGER_MAX else None
+        booking = (db.session.get(VenueBooking, booking_id)
+                   if event is not None and booking_id <= DB_INTEGER_MAX else None)
+        if event is None or booking is None or booking.event_id != event.id:
+            raise _Rejected("Venue booking not found.", 404)
+        if not _is_current_coordinator(user, event):
+            raise _Rejected("Only the event's coordinator can decide on its venue bookings.",
+                            403)
+        flag = (VenueBookingChangeFlag.query.filter_by(booking_id=booking.id,
+                                                       status=CHANGE_FLAGGED)
+                .with_for_update().first()
+                if _is_live_booking(booking, singapore_now()) else None)
+        if flag is None:
+            raise _Rejected("This booking isn't waiting for a decision. Refresh the page.",
+                            409, reason="not_flagged")
+        flag.status = CHANGE_FLAG_KEPT
+        flag.decided_by_id = user.id
+        flag.decided_at = datetime.utcnow()
+        venue = db.session.get(Venue, booking.venue_id)
+        message = f"You kept the booking at {venue.name}. It is no longer flagged."
+        db.session.commit()
+    except _Rejected as rejected:
+        db.session.rollback()
+        return _error(rejected.message, rejected.status_code, **rejected.extra)
+    except SQLAlchemyError:
+        db.session.rollback()
+        return _error("Your decision was not saved, and the booking is still flagged. "
+                      "Please try again.", 503, retryable=True)
+    return jsonify({"message": message, "booking_id": booking_id})
+
+
 def _change_decision_message(title, status, decider, row):
     """The organiser's notification: the outcome, who decided and when, and the changes
     or the reason (AC7)."""
@@ -4419,11 +4577,24 @@ def decide_change_request(event_id: int, request_id: int):
         row.decided_at = datetime.utcnow()
         row.decided_by_id = user.id
         row.decision_reason = reason
+        safety_cleared = False
+        # SCRUM-70 AC11: accepting a significant change sends a Confirmed event back to
+        # Approved (Planning), so it is confirmed again once its arrangements are ready.
+        unconfirmed = (accepted and event.status == CONFIRMED_EVENT_STATUS
+                       and change_review.is_significant(row.changes))
+        # AC10: the bookings it affects, from the arrangements as they were (A3).
+        affected_bookings = _change_impact(event, row)["venue_bookings"] if accepted else []
         if accepted:
             for name, value in change_review.applied_values(row.changes).items():
                 setattr(event, name, value)
+            _flag_affected_bookings(affected_bookings, row, user)
+            # AC11: the safety decision was made on the old arrangements.
+            if change_review.is_significant(row.changes):
+                safety_cleared = safety.clear_safety_decision(event)
         title = event.title
         message = _change_decision_message(title, status, user, row)
+        if unconfirmed:
+            message += f" {BACK_TO_PLANNING}"
         db.session.add(Notification(recipient_id=organiser.id, event_id=event.id,
                                     kind=CHANGE_DECISION_NOTIFICATIONS[status], message=message))
         emails = [(organiser.email, f"Your change request was {status}: {title}",
@@ -4456,6 +4627,14 @@ def decide_change_request(event_id: int, request_id: int):
                         "the new values.")
         if releases:
             confirmation += f" {RESERVATIONS_RELEASED}"
+        if unconfirmed:
+            confirmation += f" {BACK_TO_PLANNING}"
+        if affected_bookings:
+            count = len(affected_bookings)
+            confirmation += (f" {count} venue booking{' was' if count == 1 else 's were'} "
+                             f"{BOOKINGS_FLAGGED}")
+        if safety_cleared:
+            confirmation += f" {SAFETY_CHECK_CLEARED}"
     else:
         confirmation = f'You rejected the change request for "{title}".'
     confirmation += f" {organiser_email} has been notified"

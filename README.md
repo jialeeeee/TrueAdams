@@ -68,7 +68,7 @@ cd backend
 celery -A celery_worker.celery worker --loglevel=info
 ```
 
-Celery beat, which runs the tentative hold expiry check every 5 minutes (SCRUM-86); the worker above carries out each check:
+Celery beat, which runs the tentative hold expiry check every 5 minutes (SCRUM-86) and the reminders about incomplete arrangements every `REMINDER_INTERVAL_HOURS` hours, 24 by default (SCRUM-99); the worker above carries out each run:
 
 ```bash
 cd backend

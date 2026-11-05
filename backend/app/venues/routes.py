@@ -8,6 +8,7 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from . import hold_expiry, scheduling
 from .. import tasks
 from ..events.permissions import is_current_coordinator
+from ..events.safety import clear_safety_decision
 from ..extensions import db
 from ..local_time import singapore_now
 from ..models import (
@@ -519,9 +520,9 @@ UNAVAILABLE_NOTIFICATION = "venue_unavailable"
 # can no longer be approved or confirmed there, so their coordinators are warned now
 # rather than when that fails (working assumption A10, open question Q1).
 UNAVAILABLE_REQUEST_NOTIFICATION = "venue_unavailable_request"
-CONFIRMED_EVENT_STATUS = "confirmed"
-# Back to Planning for change review is the approved stage (SCRUM-92 A2).
-PLANNING_EVENT_STATUS = "approved"
+# A11 (team assumption): the coordinator is told the event needs a new safety check.
+SAFETY_CHECK_CLEARED = ("Its safety check was cleared, so it needs a new safety check once a "
+                        "replacement venue is confirmed.")
 
 
 def _unavailable_problems(body):
@@ -633,13 +634,13 @@ def record_unavailable_period(venue_id: int):
                 flags.append((flag, booking))
 
         # AC3, AC4: each affected event's coordinator is told once about the period, and a
-        # Confirmed event goes back to Planning (approved) with everything else kept.
+        # Confirmed event goes back to Planning (approved) with everything else kept. A11: its
+        # safety decision was made on the venue it can no longer use, so it is cleared too.
         notified = []
         period = _period_text(start, end)
         for event_id in dict.fromkeys(b.event_id for b in affected if b.event_id):
             event = db.session.get(Event, event_id, with_for_update=True)
-            if event.status == CONFIRMED_EVENT_STATUS:
-                event.status = PLANNING_EVENT_STATUS
+            safety_cleared = clear_safety_decision(event)
             coordinator = db.session.get(User, event.coordinator_id) if event.coordinator_id \
                 else None
             if coordinator is None:
@@ -649,7 +650,8 @@ def record_unavailable_period(venue_id: int):
                 f'Venue unavailable: {venue.name} is unavailable from {period} ({reason}), '
                 f'which affects "{event.title}" ('
                 + "; ".join(_period_text(b.start_time, b.end_time) for b in booked)
-                + "). A replacement venue is needed.")
+                + "). A replacement venue is needed."
+                + (f" {SAFETY_CHECK_CLEARED}" if safety_cleared else ""))
             db.session.add(Notification(recipient_id=coordinator.id, kind=UNAVAILABLE_NOTIFICATION,
                                         message=message, event_id=event.id))
             emails.append((coordinator.email, f"Venue unavailable for {event.title}: {venue.name}",
