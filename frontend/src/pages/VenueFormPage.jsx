@@ -22,6 +22,10 @@ const EMPTY = {
   setup_minutes: "", turnaround_minutes: "",
 };
 const label = (option) => option.charAt(0).toUpperCase() + option.slice(1);
+// SCRUM-63 AC7 and CF08: what each change history action is called.
+const ACTIONS = { added: "Added", archived: "Archived", restored: "Restored" };
+const NOT_ARCHIVED = "The venue was not archived. Check your connection and try again.";
+const NOT_RESTORED = "The venue was not restored. Check your connection and try again.";
 
 export default function VenueFormPage() {
   const { venueId } = useParams();
@@ -34,6 +38,9 @@ export default function VenueFormPage() {
   const [formError, setFormError] = useState("");
   const [confirmation, setConfirmation] = useState("");
   const [saving, setSaving] = useState(false);
+  // CF08: when the venue was archived (null while in use), and the archive step.
+  const [archivedAt, setArchivedAt] = useState(null);
+  const [confirmingArchive, setConfirmingArchive] = useState(false);
 
   const load = async () => {
     setLoadError(null);
@@ -53,6 +60,7 @@ export default function VenueFormPage() {
         setup_minutes: String(venue.setup_minutes ?? ""),
         turnaround_minutes: String(venue.turnaround_minutes ?? ""),
       });
+      setArchivedAt(venue.archived_at ?? null);
       setHistory((await apiClient.get(`/venues/${venueId}/history`)).data.history);
     } catch (failure) {
       setLoadError({ message: explain(failure, NOT_LOADED), retryable: canRetry(failure) });
@@ -89,6 +97,25 @@ export default function VenueFormPage() {
       if (failure.response?.status === 400 && fields) setFieldErrors(fields);
       else setFormError(explain(failure, NOT_SAVED));
     } finally {
+      setSaving(false);
+    }
+  };
+
+  // CF08: archive (delete) or restore the venue; the server refuses while it has bookings
+  // still to come, and says why.
+  const archiveOrRestore = async (action) => {
+    setFormError("");
+    setConfirmation("");
+    setSaving(true);
+    try {
+      const response = await apiClient.post(`/venues/${venueId}/${action}`, {});
+      setArchivedAt(response.data.venue.archived_at ?? null);
+      setConfirmation(response.data.message);
+      setHistory((await apiClient.get(`/venues/${venueId}/history`)).data.history);
+    } catch (failure) {
+      setFormError(explain(failure, action === "archive" ? NOT_ARCHIVED : NOT_RESTORED));
+    } finally {
+      setConfirmingArchive(false);
       setSaving(false);
     }
   };
@@ -147,8 +174,28 @@ export default function VenueFormPage() {
         {text("operating_hours", "Operating hours", { placeholder: "Mon-Fri 08:00-22:00" })}
         {text("setup_minutes", "Setup time (minutes)", { inputMode: "numeric" })}
         {text("turnaround_minutes", "Turnaround time (minutes)", { inputMode: "numeric" })}
-        <button type="submit" disabled={saving}>Save</button>
+        {!archivedAt && <button type="submit" disabled={saving}>Save</button>}
       </form>
+
+      {venueId && archivedAt && (
+        <section aria-label="Archived venue">
+          <p>{`Archived on ${formatSavedAt(archivedAt)}. It isn't offered for new bookings, and its records are kept. Restore it to edit it.`}</p>
+          <button type="button" onClick={() => archiveOrRestore("restore")} disabled={saving}>Restore venue</button>
+        </section>
+      )}
+      {venueId && !archivedAt && !confirmingArchive && (
+        <button type="button" onClick={() => setConfirmingArchive(true)}>Archive venue</button>
+      )}
+      {venueId && !archivedAt && confirmingArchive && (
+        <section aria-label="Archive this venue">
+          <p>
+            Archiving removes the venue from the catalogue, venue search and new bookings. Its
+            bookings and history are kept, and it can be restored.
+          </p>
+          <button type="button" onClick={() => archiveOrRestore("archive")} disabled={saving}>Archive</button>
+          <button type="button" onClick={() => setConfirmingArchive(false)} disabled={saving}>Back</button>
+        </section>
+      )}
 
       {venueId && (
         <>
@@ -156,7 +203,7 @@ export default function VenueFormPage() {
           <ul>
             {history.map((entry, index) => (
               <li key={index}>
-                {`${entry.action === "added" ? "Added" : "Edited"} by ${entry.changed_by.email} on ${formatSavedAt(entry.changed_at)}`}
+                {`${ACTIONS[entry.action] ?? "Edited"} by ${entry.changed_by.email} on ${formatSavedAt(entry.changed_at)}`}
               </li>
             ))}
           </ul>
