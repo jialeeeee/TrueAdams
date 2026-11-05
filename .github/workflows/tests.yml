@@ -83,6 +83,98 @@ jobs:
       - name: Run tests with coverage
         run: npm run coverage
 
+  # End-to-end (Week 9): the critical journeys through the whole running system, in a
+  # real browser, plus genuinely simultaneous requests (e2e/README.md). Everything runs
+  # inside the runner: a throwaway PostgreSQL seeded with the demo data, Redis, the API,
+  # the Celery worker and beat, and the Vite dev server.
+  e2e:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+
+    env:
+      # A database, broker and accounts that exist only for this run, so not secrets.
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+      CELERY_BROKER_URL: redis://localhost:6379/0
+      CELERY_RESULT_BACKEND: redis://localhost:6379/0
+      SECRET_KEY: e2e-only
+      JWT_SECRET_KEY: e2e-only-jwt-secret-key-of-32-bytes
+      DEMO_PASSWORD: e2e-only-demo-password
+      # The hold-expiry check waits for Celery beat (up to 5 minutes), so it runs after
+      # merging rather than on every pull request.
+      E2E_SLOW: ${{ github.event_name == 'push' && '1' || '' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.txt
+            e2e/requirements.txt
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: |
+          pip install -r backend/requirements.txt -r e2e/requirements.txt
+          python -m playwright install --with-deps chromium
+          npm ci --prefix frontend
+
+      - name: Build and seed the database
+        working-directory: backend
+        env:
+          OWNER_DATABASE_URL: ${{ env.DATABASE_URL }}
+          TEST_ROLE_PASSWORD: e2e-only
+        run: |
+          python ci/build_test_database.py
+          python seed_demo.py
+
+      - name: Start the API, the Celery worker and beat, and the front end
+        run: |
+          mkdir -p e2e/output
+          (cd backend && flask --app wsgi run --port 5000 > ../e2e/output/api.log 2>&1 &)
+          (cd backend && celery -A celery_worker.celery worker --loglevel=info > ../e2e/output/worker.log 2>&1 &)
+          (cd backend && celery -A celery_worker.celery beat --loglevel=info > ../e2e/output/beat.log 2>&1 &)
+          (cd frontend && npx vite --port 5173 --strictPort > ../e2e/output/vite.log 2>&1 &)
+          for i in $(seq 1 60); do
+            curl -sf -o /dev/null http://localhost:5173/ && curl -s -o /dev/null http://localhost:5000/api/events/ \
+              && grep -q "ready" e2e/output/worker.log && exit 0
+            sleep 2
+          done
+          echo "The stack did not start"; tail -n 50 e2e/output/*.log; exit 1
+
+      - name: Run the end-to-end tests
+        run: python -m unittest discover -s e2e -v
+
+      - name: Keep the screenshots and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-screenshots
+          path: e2e/output/
+
   # The CI database is built from the models, so it can't notice a model that Supabase
   # doesn't match. This checks the real Supabase tables, and the test role's access to
   # them, so a schema script that hasn't been run still fails CI. A few queries only.

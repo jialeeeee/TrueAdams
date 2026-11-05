@@ -19,3 +19,6 @@ dist/
 # Tests
 .coverage
 htmlcov/
+
+# End-to-end screenshots (e2e/README.md)
+e2e/output/
