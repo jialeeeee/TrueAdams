@@ -343,6 +343,28 @@ class SafetyRejectionChangesLocalTests(AppTestCase):
         event = self.db.session.get(Event, self.event_id)
         return {column.name: getattr(event, column.name) for column in Event.__table__.columns}
 
+    # TC-92-07 / AC3: with no assigned coordinator the decision is still recorded,
+    # nobody is notified, and the reply says so.
+    def test_decision_without_a_coordinator_notifies_nobody(self):
+        self.event.coordinator_id = None
+        self.db.session.commit()
+        for action, decision in ACTIONS.items():
+            with self.subTest(action=action):
+                self.event.safety_decision = None
+                self.event.safety_decided_by_id = None
+                self.event.safety_comment = None
+                self.event.safety_decided_at = None
+                self.db.session.commit()
+                response = self.client.post(DECISION_PATH.format(event_id=self.event_id, action=action),
+                                            json={"comment": COMMENT},
+                                            headers=self.auth_headers(self.officer))
+                self.assertEqual(response.status_code, 200, response.get_json())
+                self.assertEqual(response.get_json()["notification"],
+                                 {"in_app": False, "email_queued": False})
+                self.assertEqual(self.stored()["safety_decision"], decision)
+                self.assertEqual(Notification.query.filter_by(event_id=self.event_id).count(), 0)
+                self.email.assert_not_called()
+
     # TC-92-03/06 / AC3/6: a real flush then failed commit must leave no partial
     # decision or notification; retry and independent coordinator read prove storage.
     def test_flushed_failure_is_atomic_and_retry_persists_coordinator_visible_decision(self):

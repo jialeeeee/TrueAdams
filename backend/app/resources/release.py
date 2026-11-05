@@ -40,7 +40,9 @@ def _changed(session, obj, names):
         if not history.added:
             continue
         if history.deleted:
-            if history.added[0] != history.deleted[0]:
+            # SQLAlchemy reports a value set equal to the loaded one as unchanged (no
+            # added value), so a loaded old value here always differs from the new one.
+            if history.added[0] != history.deleted[0]:  # pragma: no branch
                 return True
         else:
             unknown.append(name)

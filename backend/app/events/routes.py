@@ -3472,7 +3472,9 @@ def _equipment_page(user, event):
 
 
 def _with_requirement(page, requirement_id):
-    requirement = next(r for r in page["requirements"] if r["id"] == requirement_id)
+    # The requirement was just saved and the page read back with it, so it is always found.
+    requirement = next(r for r in page["requirements"]  # pragma: no branch
+                       if r["id"] == requirement_id)
     return {"requirement": requirement, **page}
 
 
@@ -3766,8 +3768,11 @@ def _suitable_resources(equipment_types, lock=False):
         query = query.order_by(Resource.id).with_for_update().populate_existing()
     else:
         query = query.order_by(Resource.name, Resource.id)
+    # SQL has already narrowed the query to items whose category key matches one of the
+    # types, so any() always finds one; is_suitable stays the single rule (SCRUM-44 review).
     return [r for r in query.all()
-            if any(availability.is_suitable(r, t) for t in equipment_types)]
+            if any(availability.is_suitable(r, t)  # pragma: no branch
+                   for t in equipment_types)]
 
 
 def _availability_inputs(event, requirements):
@@ -4617,8 +4622,10 @@ def decide_change_request(event_id: int, request_id: int):
             for name, value in change_review.applied_values(row.changes).items():
                 setattr(event, name, value)
             _flag_affected_bookings(affected_bookings, row, user)
-            # AC11: the safety decision was made on the old arrangements.
-            if change_review.is_significant(row.changes):
+            # AC11: the safety decision was made on the old arrangements. Every permitted
+            # field is significant today (SIGNIFICANT_FIELDS = PERMITTED_FIELDS), so this is
+            # always true; the check stays for when a non-significant field is permitted.
+            if change_review.is_significant(row.changes):  # pragma: no branch
                 safety_cleared = safety.clear_safety_decision(event)
         title = event.title
         message = _change_decision_message(title, status, user, row)
