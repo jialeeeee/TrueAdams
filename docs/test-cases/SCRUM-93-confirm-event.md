@@ -12,7 +12,7 @@
 | ID | Criterion (verbatim) |
 |---|---|
 | AC1 | Only the event's coordinator can mark it Confirmed. Anyone else is denied and nothing changes. |
-| AC2 | The event can be marked Confirmed only when its venue booking is Confirmed, its equipment is reserved (or none is required) and its safety check is Approved. Otherwise it is refused and the message lists what is missing. |
+| AC2 | The event can be marked Confirmed only when all its active venue bookings are Confirmed and together cover the event's whole period, its equipment is reserved (or none is required) and its safety check is Approved. Otherwise it is refused and the message lists what is missing. *(Reworded 5 Nov 2026 to match the product backlog; see A5.)* |
 | AC3 | On success the status becomes Confirmed and who and when are recorded. |
 | AC4 | If saving fails, the status is unchanged and an error is shown. |
 
@@ -39,8 +39,9 @@ Scouting inspected relevant code/tests/documentation only; it changed no files a
 Each assumption is linked to an open question; proposed API/field names are implementation choices, not additional Jira criteria.
 
 - **A1 / Q1 — Implemented action/response:** `POST /api/events/<id>/confirm` with `{}`. HTTP 200 returns `{status: "confirmed", message: "Event confirmed.", confirmation: {coordinator: {id, email}, confirmed_at: ISO timestamp}}`. Missing prerequisites return 409 with a plain `error` and `missing`, an unordered list containing only applicable labels: `Confirmed venue booking`, `Reserved equipment`, `Approved safety check`. The error sentence includes those missing labels. Failed saves return 503 with `retryable: true` and no success summary. UI offers “Mark event Confirmed”, displays the backend error, keeps the previous event status and permits another attempt. There is no readiness payload requirement on the existing planning GET.
-- **A2 / Q2 — Existing prerequisite meaning:** reuse SCRUM-90/44's current schedule coverage, active quantities and no-equipment interpretation. No structured requirements plus a blank/null organiser note means none required; a nonblank unprocessed note remains missing equipment. Required venue identities are not separately modeled, so do not invent a requirement that every historical/pending booking be confirmed. Confirmation starts from `approved`, the existing booking/reservation planning stage (`CONFIRMABLE_EVENT_STATUS`); other states, including repeat confirmation, return 409 rather than creating unrelated transitions or overwriting audit values. This source-state choice is an implementation assumption, not an additional agreed Jira AC; no lifecycle test matrix was added.
+- **A2 / Q2 — Existing prerequisite meaning:** reuse SCRUM-90/44's current schedule coverage, active quantities and no-equipment interpretation. No structured requirements plus a blank/null organiser note means none required; a nonblank unprocessed note remains missing equipment. Required venue identities are not separately modeled, so do not invent a requirement that every historical/pending booking be confirmed. *(Superseded for pending requests and holds by A5, 5 Nov 2026.)* Confirmation starts from `approved`, the existing booking/reservation planning stage (`CONFIRMABLE_EVENT_STATUS`); other states, including repeat confirmation, return 409 rather than creating unrelated transitions or overwriting audit values. This source-state choice is an implementation assumption, not an additional agreed Jira AC; no lifecycle test matrix was added.
 - **A4 / Q4 — After confirmation (added 3 Nov 2026):** a confirmed event stays published and keeps taking registrations, and its coordinator can still set up registration, exactly as when it was approved (`REGISTRABLE_STATUSES` in `app/registrations/routes.py`, which SCRUM-74's `PUBLISHED_STATUSES` reads). Before this, confirming an event removed it from the public list, gave its registered attendees "not found" and refused new registrations. Venue, equipment and change-request workflows still need `approved`; SCRUM-88 already returns a confirmed event to `approved` when one of its venues becomes unavailable.
+- **A5 / Q2 — Every venue request and hold decided first (added 5 Nov 2026):** G4 clarification #26 answers Q2: essential arrangements "must all be approved before an event can be confirmed". So a venue booking of the event that is still `pending`, or a `tentative` hold that has not expired (`scheduling.current_status`), blocks confirmation with the missing label `A decision on every pending venue request and hold`, and keeps the event off the SCRUM-90 safety check list, even when its confirmed bookings already cover it. Expired holds and rejected, cancelled and replaced bookings are decided and do not block. The coordinator cancels a request that is no longer needed (SCRUM-94). Because the reminders (SCRUM-99) reuse this check, they list it too. This changes TC-93-02's "Tentative first venue phase" scenario, which now expects the new label as well.
 - **A3 / Q3 — Separate audit record:** the GREEN brief explicitly authorized nullable `confirmed_by_id` and `confirmed_at`, following existing naive UTC conventions. They remain non-editable through normal planning PATCH. Preserve the earlier request decision and safety audit fields. Save status and these two fields in one transaction; record no new notifications or audit history.
 
 ## Seed data — CF-SEED
@@ -139,7 +140,7 @@ The frontend uses a coordinator planning response with a confirmed venue booking
 | AC | Cases | Current execution |
 |---|---|---|
 | AC1 | TC-93-01; positive TC-93-03/05 | GREEN: stored-role/current-assignment denial and authorized success |
-| AC2 | TC-93-02/06 | GREEN: seven backend scenarios and missing-only UI feedback |
+| AC2 | TC-93-02/06/08 | GREEN: seven backend scenarios and missing-only UI feedback; TC-93-08 added 5 Nov 2026 (A5) |
 | AC3 | TC-93-03/05/07 | GREEN: HTTP/UI plus actual PostgreSQL reload; stale frontend response ignored |
 | AC4 | TC-93-04/06 | GREEN: HTTP/UI plus actual flushed transaction rollback |
 | SCRUM-91 AC3 dependency | TC-93-02 approved vs absent persisted safety; TC-93-03 | GREEN backend gate; no SCRUM-91 files changed |
@@ -251,3 +252,23 @@ Original Jira user story and all four ACs remain verbatim. No backend confirmati
 - A confirmed booking flagged because its venue became unavailable (SCRUM-88) does not count towards covering the event. When only flagged bookings would cover it, the missing item is "Replacement for an unavailable venue"; otherwise it stays "Confirmed venue booking" (SCRUM-88 A11). **Automated:** `test_tc_88_a11_07`…`10` in `test_venue_unavailable_safety.py`.
 - Accepting a change request (SCRUM-70 AC11) or a venue becoming unavailable (SCRUM-88 A11) clears the safety decision, so confirming asks for a new "Approved safety check". **Automated:** `test_tc_70_34_accepting_clears_an_approved_safety_check`.
 - A live venue booking flagged by an accepted change request (SCRUM-70 AC10) needs the coordinator's decision first: missing "A decision on the venue bookings an accepted change affects". **Automated:** `test_tc_70_42_confirming_waits_for_a_decision_on_every_flagged_booking`.
+
+## Undecided venue requests and holds (added 5 Nov 2026)
+
+**TC-93-08 · A pending request or an unexpired hold blocks confirmation**
+
+- **Traces to:** AC2, A5 (G4 clarification #26) · **Type:** Negative and boundary business rule
+- **Preconditions:** CF-SEED with confirmed bookings covering the event, equipment reserved and safety approved; one extra booking of the same event at another venue.
+- **Steps:** POST confirm with the extra booking in each state below.
+
+| Extra booking | Expected |
+|---|---|
+| Pending request | 409; only `A decision on every pending venue request and hold` missing; nothing changes; not on the safety check list |
+| Tentative hold expiring tomorrow | 409; same |
+| Tentative hold expiring exactly now (boundary: a hold has expired at its expiry) | 200; confirmed |
+| Tentative hold that expired a minute ago (not yet recorded by the expiry job) | 200; confirmed |
+| Recorded `expired`, `rejected`, `cancelled` or `replaced` booking | 200; confirmed |
+| A pending booking of another event | 200; confirmed |
+
+- **Automated:** `EventConfirmationUnitTests.test_tc_93_08_an_undecided_venue_booking_blocks_confirmation` (eight subtests), `test_tc_93_08_another_events_undecided_booking_does_not_block`; TC-93-02's `all_missing` subtest now also expects the new label.
+

@@ -366,7 +366,8 @@ def update_venue(venue_id: int):
 
 # ---------- Delete (archive) and restore a venue (CF08) ----------
 
-ARCHIVED_NOT_EDITABLE = "This venue is archived. Restore it before editing it."
+# SCRUM-101: users see "delete", the customer's word (G4 #15); the code keeps "archive".
+ARCHIVED_NOT_EDITABLE = "This venue has been deleted. Restore it before editing it."
 # A booking at the venue that holds, or may yet hold, it and hasn't ended (SCRUM-94 AC1).
 UPCOMING_BOOKING_STATUSES = {"pending", "tentative", "confirmed"}
 
@@ -378,7 +379,7 @@ def _catalogue_venue(venue_id):
     if venue is None:
         raise _Rejected("Venue not found.", 404)
     if not has_any_role(user, CATALOGUE_ROLES):
-        raise _Rejected("Only Venue Staff can archive or restore venues.", 403)
+        raise _Rejected("Only Venue Staff can delete or restore venues.", 403)
     return user, venue
 
 
@@ -402,14 +403,14 @@ def archive_venue(venue_id: int):
     try:
         user, venue = _catalogue_venue(venue_id)
         if venue.archived_at is not None:
-            raise _Rejected(f"{venue.name} is already archived.", 409, reason="archived")
+            raise _Rejected(f"{venue.name} has already been deleted.", 409, reason="archived")
         upcoming = _upcoming_bookings(venue, singapore_now())
         if upcoming:
             count = len(upcoming)
             raise _Rejected(
                 f"{venue.name} has {count} upcoming booking{'s' if count != 1 else ''}, so "
-                "it can't be archived yet. Record it as unavailable so their coordinators "
-                "find replacement venues, or archive it once they are over.", 409,
+                "it can't be deleted yet. Record it as unavailable so their coordinators "
+                "find replacement venues, or delete it once they are over.", 409,
                 reason="upcoming_bookings", bookings=sorted(row.id for row in upcoming))
         venue.archived_at = datetime.utcnow()
         db.session.add(VenueChange(
@@ -422,8 +423,8 @@ def archive_venue(venue_id: int):
         return _error(rejected.message, rejected.status_code, **rejected.extra)
     except SQLAlchemyError:
         db.session.rollback()
-        return _error("The venue was not archived. Please try again.", 503, retryable=True)
-    return jsonify({"message": f"{payload['name']} was archived. It is no longer offered for "
+        return _error("The venue was not deleted. Please try again.", 503, retryable=True)
+    return jsonify({"message": f"{payload['name']} was deleted. It is no longer offered for "
                                "new bookings, and its records are kept.", "venue": payload})
 
 
@@ -434,7 +435,7 @@ def restore_venue(venue_id: int):
     try:
         user, venue = _catalogue_venue(venue_id)
         if venue.archived_at is None:
-            raise _Rejected(f"{venue.name} isn't archived.", 409, reason="not_archived")
+            raise _Rejected(f"{venue.name} hasn't been deleted.", 409, reason="not_archived")
         archived_at, venue.archived_at = venue.archived_at, None
         db.session.add(VenueChange(
             venue_id=venue.id, action="restored", changed_by_id=user.id,

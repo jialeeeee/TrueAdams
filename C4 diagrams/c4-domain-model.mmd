@@ -1,0 +1,70 @@
+%% C4 level 4 (code): UML class diagram of the core domain model in backend/app/models.py.
+%% Selected classes and attributes only. Audit columns (who and when) and the three flag
+%% classes (VenueBookingFlag, VenueReplacementFlag, VenueBookingChangeFlag) are described
+%% in the document text rather than drawn, to keep the diagram readable.
+classDiagram
+    direction TB
+    class User {
+        email
+        role
+        additional_roles : list
+    }
+    class Event {
+        status
+        start_time, end_time
+        expected_attendance
+        required_layouts
+        equipment_requirements
+        safety_decision
+    }
+    class Venue {
+        capacity
+        facilities, room_layouts
+        setup_minutes
+        turnaround_minutes
+        archived_at
+    }
+    class VenueBooking {
+        status
+        start_time, end_time
+        hold_expires_at
+    }
+    class VenueBlock {
+        reason
+        start_time, end_time
+    }
+    class EquipmentRequirement {
+        equipment_type
+        quantity
+        status
+    }
+    class EquipmentReservation {
+        quantity
+        start_time, end_time
+        status
+    }
+    class Resource {
+        name
+        quantity_available
+    }
+    class Registration {
+        status
+        registered_at
+    }
+    class EventChangeRequest {
+        status
+        changes
+    }
+
+    User "1" --> "0..*" Event : organises
+    User "0..1" --> "0..*" Event : coordinates
+    Event "1" *-- "0..*" EquipmentRequirement : needs
+    Event "0..1" --> "0..*" VenueBooking : books
+    VenueBooking "0..*" --> "1" Venue : at
+    VenueBooking "0..1" --> "0..1" VenueBooking : replaces
+    Venue "1" *-- "0..*" VenueBlock : unavailable for
+    EquipmentRequirement "0..1" --> "0..*" EquipmentReservation : fulfilled by
+    EquipmentReservation "0..*" --> "1" Resource : draws on
+    Event "1" --> "0..*" Registration : has
+    Registration "0..*" --> "1" User : attendee
+    Event "1" *-- "0..*" EventChangeRequest : changed through

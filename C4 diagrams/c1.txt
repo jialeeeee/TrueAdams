@@ -6,7 +6,7 @@ workspace "ConnectSphere - System Context" "C4 level 1 (system context) of the C
         organiser = person "Event Organiser" "Drafts and submits event requests, answers clarifications, and requests changes to approved events."
         lead = person "Event Coordinator Lead" "Assigns and reassigns coordinators and oversees the events they assigned."
         coordinator = person "Event Coordinator" "Reviews and plans events, decides change requests, sets up registration, and confirms or cancels events."
-        venueStaff = person "Venue Staff" "Maintains and archives venues, decides booking requests, and manages holds and unavailability."
+        venueStaff = person "Venue Staff" "Maintains and deletes venues, decides booking requests, and manages holds and unavailability."
         techStaff = person "Technical Support Staff" "Checks equipment availability and reserves equipment for events."
         safetyOfficer = person "Safety Officer" "Approves, rejects or requests changes to an event's safety arrangements."
         attendee = person "Attendee" "Browses published events, registers and withdraws."

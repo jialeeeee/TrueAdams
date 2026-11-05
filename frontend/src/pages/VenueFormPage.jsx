@@ -23,8 +23,9 @@ const EMPTY = {
 };
 const label = (option) => option.charAt(0).toUpperCase() + option.slice(1);
 // SCRUM-63 AC7 and CF08: what each change history action is called.
-const ACTIONS = { added: "Added", archived: "Archived", restored: "Restored" };
-const NOT_ARCHIVED = "The venue was not archived. Check your connection and try again.";
+// SCRUM-101: users see "delete", the customer's word (G4 #15); the code keeps "archive".
+const ACTIONS = { added: "Added", archived: "Deleted", restored: "Restored" };
+const NOT_ARCHIVED = "The venue was not deleted. Check your connection and try again.";
 const NOT_RESTORED = "The venue was not restored. Check your connection and try again.";
 
 export default function VenueFormPage() {
@@ -178,21 +179,21 @@ export default function VenueFormPage() {
       </form>
 
       {venueId && archivedAt && (
-        <section aria-label="Archived venue">
-          <p>{`Archived on ${formatSavedAt(archivedAt)}. It isn't offered for new bookings, and its records are kept. Restore it to edit it.`}</p>
+        <section aria-label="Deleted venue">
+          <p>{`Deleted on ${formatSavedAt(archivedAt)}. It isn't offered for new bookings, and its records are kept. Restore it to edit it.`}</p>
           <button type="button" onClick={() => archiveOrRestore("restore")} disabled={saving}>Restore venue</button>
         </section>
       )}
       {venueId && !archivedAt && !confirmingArchive && (
-        <button type="button" onClick={() => setConfirmingArchive(true)}>Archive venue</button>
+        <button type="button" onClick={() => setConfirmingArchive(true)}>Delete venue</button>
       )}
       {venueId && !archivedAt && confirmingArchive && (
-        <section aria-label="Archive this venue">
+        <section aria-label="Delete this venue">
           <p>
-            Archiving removes the venue from the catalogue, venue search and new bookings. Its
+            Deleting removes the venue from the catalogue, venue search and new bookings. Its
             bookings and history are kept, and it can be restored.
           </p>
-          <button type="button" onClick={() => archiveOrRestore("archive")} disabled={saving}>Archive</button>
+          <button type="button" onClick={() => archiveOrRestore("archive")} disabled={saving}>Delete</button>
           <button type="button" onClick={() => setConfirmingArchive(false)} disabled={saving}>Back</button>
         </section>
       )}

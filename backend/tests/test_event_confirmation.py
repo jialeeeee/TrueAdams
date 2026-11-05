@@ -31,6 +31,8 @@ START = datetime(2030, 1, 16, 17)
 VENUE_MISSING = "Confirmed venue booking"
 EQUIPMENT_MISSING = "Reserved equipment"
 SAFETY_MISSING = "Approved safety check"
+# TC-93-08 (A5, G4 clarification #26): every venue request and hold must be decided first.
+DECISION_MISSING = "A decision on every pending venue request and hold"
 
 
 class _ReadQuery:
@@ -183,7 +185,8 @@ class EventConfirmationUnitTests(unittest.TestCase):
                 if scenario == "all_missing":
                     self.rows[VenueBooking][0].status = "tentative"
                     self.rows[EquipmentReservation] = []
-                    missing.extend([VENUE_MISSING, EQUIPMENT_MISSING])
+                    # A5 (G4 #26, 5 Nov 2026): a hold not yet confirmed is also undecided.
+                    missing.extend([VENUE_MISSING, EQUIPMENT_MISSING, DECISION_MISSING])
                 if scenario == "none_note":
                     # CF02: "None" is the organiser's answer of no equipment.
                     self.rows[EquipmentRequirement] = []
@@ -196,7 +199,8 @@ class EventConfirmationUnitTests(unittest.TestCase):
                 # Validate fixture readiness with actual SCRUM-90 rules too;
                 # a missing confirmation route must not hide a broken seed.
                 self.assertEqual(bool(routes._safety_check_items([self.event])),
-                    not bool(set(missing) & {VENUE_MISSING, EQUIPMENT_MISSING}))
+                    not bool(set(missing) & {VENUE_MISSING, EQUIPMENT_MISSING,
+                                             DECISION_MISSING}))
                 before = self.snapshot()
                 response = self.confirm()
                 self.assertEqual(response.status_code, 409 if missing else 200, response.get_json())
@@ -205,13 +209,60 @@ class EventConfirmationUnitTests(unittest.TestCase):
                     self.assertCountEqual(body["missing"], missing)
                     for label in missing:
                         self.assertIn(label.lower(), body["error"].lower())
-                    for label in {VENUE_MISSING, EQUIPMENT_MISSING, SAFETY_MISSING} - set(missing):
+                    for label in ({VENUE_MISSING, EQUIPMENT_MISSING, SAFETY_MISSING,
+                                   DECISION_MISSING} - set(missing)):
                         self.assertNotIn(label.lower(), body["error"].lower())
                     self.assertEqual(self.snapshot(), before)
                     self.session.commit.assert_not_called()
                 else:
                     self.assertEqual(self.event.status, "confirmed")
                     self.session.commit.assert_called_once()
+
+    # TC-93-08 / AC2, A5: G4 clarification #26 says every essential arrangement "must all
+    # be approved before an event can be confirmed", so a venue request still pending or
+    # a hold not yet confirmed blocks confirmation and the safety check list, even when
+    # the confirmed bookings already cover the event. Decided bookings do not.
+    def test_tc_93_08_an_undecided_venue_booking_blocks_confirmation(self):
+        original = copy.deepcopy(self.rows)
+        now = START - timedelta(hours=1)
+        scenarios = {
+            "pending request": ("pending", None, True),
+            "unexpired hold": ("tentative", now + timedelta(days=1), True),
+            "hold expiring exactly now": ("tentative", now, False),
+            "expired hold": ("tentative", now - timedelta(minutes=1), False),
+            "recorded expiry": ("expired", now - timedelta(days=1), False),
+            "rejected request": ("rejected", None, False),
+            "cancelled booking": ("cancelled", None, False),
+            "replaced booking": ("replaced", None, False),
+        }
+        for name, (status, expires, blocks) in scenarios.items():
+            with self.subTest(booking=name):
+                self.rows = copy.deepcopy(original)
+                self.event = self.rows[Event][0]
+                self.session.reset_mock()
+                extra = self.booking(22, 11, START, self.event.end_time)
+                extra.status, extra.hold_expires_at = status, expires
+                self.rows[VenueBooking].append(extra)
+                self.assertEqual(bool(routes._safety_check_items([self.event])), not blocks)
+                before = self.snapshot()
+                response = self.confirm()
+                body = response.get_json()
+                if blocks:
+                    self.assertEqual(response.status_code, 409, body)
+                    self.assertEqual(body["missing"], [DECISION_MISSING])
+                    self.assertIn(DECISION_MISSING.lower(), body["error"].lower())
+                    self.assertEqual(self.snapshot(), before)
+                    self.session.commit.assert_not_called()
+                else:
+                    self.assertEqual(response.status_code, 200, body)
+                    self.assertEqual(self.event.status, "confirmed")
+
+    def test_tc_93_08_another_events_undecided_booking_does_not_block(self):
+        other = self.booking(23, 11, START, self.event.end_time)
+        other.event_id, other.status = 99, "pending"
+        self.rows[VenueBooking].append(other)
+        response = self.confirm()
+        self.assertEqual(response.status_code, 200, response.get_json())
 
     # TC-93-03 / AC3: attribution must be mapped, separate from prior decisions.
     def test_confirmation_sets_status_and_separate_coordinator_and_utc_timestamp(self):
