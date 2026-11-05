@@ -104,7 +104,7 @@ class ArchiveTests(ArchiveTestCase):
         venue = self.stored()
         self.assertTrue(before <= venue.archived_at <= datetime.utcnow())
         self.assertEqual(body["venue"]["archived_at"], venue.archived_at.isoformat())
-        self.assertIn("was archived", body["message"])
+        self.assertIn("was deleted", body["message"])
         self.assertEqual(self.history(), [("archived", self.gus.id)])
         for user in (self.alice, self.gus):
             listed = self.listed_ids(user)
@@ -148,7 +148,10 @@ class ArchiveTests(ArchiveTestCase):
 
         edit = self.client.put(f"/api/venues/{self.hall.id}", json={"name": "Renamed"},
                                headers=self.auth_headers(self.gus))
-        self.assertEqual(self.assert_error(edit, 409)["reason"], "archived")
+        edited = self.assert_error(edit, 409)
+        self.assertEqual(edited["reason"], "archived")
+        self.assertEqual(edited["error"],
+                         "This venue has been deleted. Restore it before editing it.")
         self.assertEqual(self.stored().name, "Archive Test Hall")
 
     # TC-CF08-04 · A1
@@ -180,6 +183,8 @@ class UpcomingBookingTests(ArchiveTestCase):
                                  ("upcoming_bookings", [booking.id]))
                 self.assertIn("1 upcoming booking,", body["error"])
                 self.assertIn("Record it as unavailable", body["error"])
+                # SCRUM-101: the customer's word is "delete" (G4 #15).
+                self.assertIn("can't be deleted yet", body["error"])
                 self.assertIsNone(self.stored().archived_at)
                 self.db.session.delete(booking)
                 self.db.session.commit()
@@ -280,7 +285,7 @@ class FailureTests(ArchiveTestCase):
     def test_tc_cf08_08_a_failed_archive_or_restore_changes_nothing(self):
         body = self.assert_error(self.while_failing("archive"), 503)
         self.assertEqual((body["error"], body["retryable"]),
-                         ("The venue was not archived. Please try again.", True))
+                         ("The venue was not deleted. Please try again.", True))
         self.assertIsNone(self.stored().archived_at)
 
         self.archived()
