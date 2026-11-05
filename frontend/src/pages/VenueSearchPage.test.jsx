@@ -270,11 +270,15 @@ describe("venue search edge cases", () => {
     expect((await screen.findByRole("alert")).textContent).toBe("The venue search could not be completed. Please try again.");
   });
 
-  it("says what is not recorded in a result and its details", async () => {
+  // Changed 5 Nov 2026 (SCRUM-35 AC3, CF08): an empty list is a recorded absence, shown as
+  // "None"; only fields that were never recorded say "Not recorded". This case used to
+  // expect "Not recorded" for the empty facilities and layouts too.
+  it("says what is not recorded in a result and its details, and what is recorded as none", async () => {
     apiClient.get
       .mockResolvedValueOnce(found({ ...EVERGREEN, capacity: null }))
       .mockResolvedValueOnce({ data: { description: null, facilities: [], accessibility_features: null,
-        room_layouts: [], operating_hours: null } });
+        room_layouts: [], operating_hours: null,
+        not_recorded: ["description", "accessibility_features", "operating_hours"] } });
     const user = renderPage();
     await user.click(searchButton());
     const result = within(await screen.findByRole("listitem", { name: "Evergreen Loft" }));
@@ -282,8 +286,13 @@ describe("venue search edge cases", () => {
 
     await user.click(result.getByRole("button", { name: "View details" }));
 
-    const details = await screen.findByLabelText("Evergreen Loft details");
-    expect(within(details).getAllByText("Not recorded")).toHaveLength(5);
+    const details = within(await screen.findByLabelText("Evergreen Loft details"));
+    const value = (term) => details.getByText(term).nextElementSibling.textContent;
+    expect(value("Description")).toBe("Not recorded");
+    expect(value("Accessibility")).toBe("Not recorded");
+    expect(value("Operating hours")).toBe("Not recorded");
+    expect(value("Facilities")).toBe("None");
+    expect(value("Layouts")).toBe("None");
   });
 
   it("shows why a venue's details could not be loaded", async () => {

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import apiClient from "../api/client.js";
+import VenueDetails from "../utils/VenueDetails.jsx";
 
 // SCRUM-37: search for available venues using an event's requirements.
 // Talks to GET /api/venues/search (backend/app/venues/routes.py).
@@ -68,14 +69,7 @@ function VenueResult({ venue }) {
       <p>Capacity: {venue.capacity ?? "Not recorded"}</p>
       {matched && <p>Matches: {matched}</p>}
       {details ? (
-        <dl aria-label={`${venue.name} details`}>
-          <dt>Description</dt><dd>{details.description ?? "Not recorded"}</dd>
-          <dt>Facilities</dt><dd>{details.facilities?.join(", ") || "Not recorded"}</dd>
-          <dt>Accessibility</dt>
-          <dd>{details.accessibility_features?.join(", ") || "Not recorded"}</dd>
-          <dt>Layouts</dt><dd>{details.room_layouts?.join(", ") || "Not recorded"}</dd>
-          <dt>Operating hours</dt><dd>{details.operating_hours ?? "Not recorded"}</dd>
-        </dl>
+        <VenueDetails details={details} name={venue.name} />
       ) : (
         <button type="button" onClick={showDetails}>View details</button>
       )}
