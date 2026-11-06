@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import apiClient from "../api/client.js";
 import decidedBy from "../utils/decidedBy.js";
 import formatSavedAt from "../utils/formatSavedAt.js";
@@ -53,6 +54,14 @@ export default function MyRequestsPage() {
               {request.decided_at && <p>{decidedBy(request)}</p>}
               {request.decision_note && (
                 <p>{`${request.status === "rejected" ? "Reason" : "Note"}: ${request.decision_note}`}</p>
+              )}
+              {/* SCRUM-32 A2: a rejected request can't be reopened; whether it should be is
+                  open question Q4 (a new story if so). */}
+              {request.status === "rejected" && (
+                <p>
+                  A rejected request can't be revised or resubmitted.{" "}
+                  <Link to="/events/drafts/new">Start a new event request</Link>
+                </p>
               )}
             </li>
           ))}

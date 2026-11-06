@@ -26,13 +26,16 @@ function VenueItem({ venue, canEdit }) {
 
   return (
     <li aria-label={venue.name}>
-      {venue.archived_at ? `${venue.name} (deleted)` : venue.name}
-      {canEdit && <Link to={`/venues/${venue.id}/edit`} aria-label={`Edit ${venue.name}`}>Edit</Link>}
+      <strong>{venue.archived_at ? `${venue.name} (deleted)` : venue.name}</strong>
+      {/* The actions get a line of their own, apart from the name. */}
       {canEdit && (
-        <Link to={`/venues/${venue.id}/unavailable`}
-          aria-label={`Record unavailable period for ${venue.name}`}>
-          Record unavailable period
-        </Link>
+        <p>
+          <Link to={`/venues/${venue.id}/edit`} aria-label={`Edit ${venue.name}`}>Edit</Link>
+          <Link to={`/venues/${venue.id}/unavailable`}
+            aria-label={`Record unavailable period for ${venue.name}`}>
+            Record unavailable period
+          </Link>
+        </p>
       )}
       <p>Location: {venue.location ?? "Not recorded"}</p>
       <p>Capacity: {venue.capacity ?? "Not recorded"}</p>

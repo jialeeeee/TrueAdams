@@ -69,8 +69,9 @@ it("signs out, refuses navigation and browser back, then allows sign-in again", 
   apiClient.get.mockClear();
   await user.click(screen.getByRole("button", { name: "Browser back" }));
   expect(screen.getByRole("heading", { name: "Login" })).toBeTruthy();
-  await user.click(screen.getByRole("link", { name: "My managed events" }));
-  expect(screen.getByRole("heading", { name: "Login" })).toBeTruthy();
+  // Signed out, there is no menu to open a protected page from.
+  expect(screen.queryByRole("navigation")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Menu" })).toBeNull();
   expect(apiClient.get).not.toHaveBeenCalled();
   await enterCredentials(user);
   await user.click(screen.getByRole("button", { name: "Login" }));
@@ -155,8 +156,9 @@ it.each([
   await user.click(screen.getByRole("button", { name: "Login" }));
   await waitFor(() => expect(sessionStorage.getItem("user_role")).toBe(role));
 
-  const shown = within(screen.getByRole("navigation")).getAllByRole("link").map((link) => link.textContent);
-  expect(shown).toEqual(links);
+  // The menu appears once the signed-in page renders.
+  const shown = () => within(screen.getByRole("navigation")).getAllByRole("link").map((link) => link.textContent);
+  await waitFor(() => expect(shown()).toEqual(links));
 
   await user.click(screen.getByRole("button", { name: "Sign out" }));
   expect(sessionStorage.getItem("user_role")).toBeNull();

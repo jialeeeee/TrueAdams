@@ -301,6 +301,9 @@ describe("SCRUM-32 review an event request", () => {
     expect(screen.getByText("Reason: No licensed venue is available")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
     expect(screen.queryByLabelText(/reason or note/i)).toBeNull();
+    // SCRUM-31 A2: no more questions once the request is decided.
+    await screen.findByText("No questions have been sent for this event yet.");
+    expect(screen.queryByRole("link", { name: "Ask the organiser a question" })).toBeNull();
   });
 
   it("shows a retryable error when the request cannot be loaded", async () => {
@@ -468,10 +471,14 @@ describe("SCRUM-31 start reviewing a request", () => {
       data: { message: 'You started reviewing "Harbour Lights Festival".', request: UNDER_REVIEW },
     });
     const user = await renderPage();
+    // Starting is optional (A12, A13), and the page says so beside the button.
+    const optional = /It is\s+optional: you can approve or reject the request without starting it\./;
+    expect(screen.getByText(optional)).toBeTruthy();
 
     await user.click(button("Start review"));
 
     expect(apiClient.post).toHaveBeenCalledWith("/events/7/review");
+    expect(screen.queryByText(optional)).toBeNull();
     expect(await screen.findByText("Status: Under review")).toBeTruthy();
     expect(screen.getByRole("status").textContent).toContain('You started reviewing "Harbour Lights Festival".');
     expect(screen.getByText(`Review started by ${ALICE.email} on ${localTime("2026-10-26T02:00:00")}`)).toBeTruthy();
@@ -508,6 +515,16 @@ describe("SCRUM-31 start reviewing a request", () => {
     expect(button("Approve")).toBeTruthy();
     expect(button("Reject")).toBeTruthy();
   });
+
+  // SCRUM-31 AC1, A2: an undecided request links to the page where questions are sent.
+  it.each([["submitted", request()], ["under review", UNDER_REVIEW]])(
+    "links a %s request to asking the organiser a question", async (_label, loaded) => {
+      await renderPage(loaded);
+
+      expect(screen.getByRole("link", { name: "Ask the organiser a question" }).getAttribute("href"))
+        .toBe("/events/7/clarifications");
+    },
+  );
 });
 
 describe("SCRUM-32 edge cases", () => {

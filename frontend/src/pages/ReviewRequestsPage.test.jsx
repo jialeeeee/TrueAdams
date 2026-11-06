@@ -67,6 +67,9 @@ describe("SCRUM-55 submitted requests list (UNEXECUTED)", () => {
     const reviewingLink = screen.getByRole("link", { name: UNDER_REVIEW.title });
     expect(within(reviewingLink.closest("li, tr")).getByText(/Under review/)).toBeTruthy();
     expect(reviewingLink.getAttribute("href")).toBe("/events/11/review");
+    // Each request also opens its clarification questions (SCRUM-31 AC1).
+    expect(screen.getByRole("link", { name: `Clarification questions for ${SUMMARY.title}` })
+      .getAttribute("href")).toBe("/events/8/clarifications");
     await user.click(link);
     expect(await screen.findByRole("heading", { name: `Review: ${SUMMARY.title}` })).toBeTruthy();
     expect(screen.getByText("Improve access")).toBeTruthy();

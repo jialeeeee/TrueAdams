@@ -166,10 +166,12 @@ export default function App() {
     <div className="app-shell">
       <a className="skip-link" href="#main">Skip to main content</a>
       <header className="app-header">
-        <button type="button" className="menu-toggle" aria-expanded={menuOpen}
-          aria-controls="primary-nav" onClick={() => setMenuOpen((open) => !open)}>
-          Menu
-        </button>
+        {signedIn && (
+          <button type="button" className="menu-toggle" aria-expanded={menuOpen}
+            aria-controls="primary-nav" onClick={() => setMenuOpen((open) => !open)}>
+            Menu
+          </button>
+        )}
         <Link to="/" className="brand">
           <span className="brand-mark" aria-hidden="true" />
           ConnectSphere
@@ -186,16 +188,18 @@ export default function App() {
             : <Link to="/login" className="button-link">Login</Link>}
         </div>
       </header>
-      <div className="app-body">
-        {/* Shown signed out too: a protected page then sends the visitor to Login. */}
-        <nav id="primary-nav" aria-label="Main" className={menuOpen ? "side-nav open" : "side-nav"}>
-          {groupLinks(visibleLinks(roles)).map((group, index) => (
-            <div key={group.name} className="nav-group" role="group" aria-labelledby={`nav-group-${index}`}>
-              <p className="nav-group-title" id={`nav-group-${index}`}>{group.name}</p>
-              {group.links.map(([path, label]) => <NavLink key={path} to={path} end>{label}</NavLink>)}
-            </div>
-          ))}
-        </nav>
+      <div className={signedIn ? "app-body" : "app-body signed-out"}>
+        {/* Signed out, every page but Login sends the visitor to Login, so there is no menu. */}
+        {signedIn && (
+          <nav id="primary-nav" aria-label="Main" className={menuOpen ? "side-nav open" : "side-nav"}>
+            {groupLinks(visibleLinks(roles)).map((group, index) => (
+              <div key={group.name} className="nav-group" role="group" aria-labelledby={`nav-group-${index}`}>
+                <p className="nav-group-title" id={`nav-group-${index}`}>{group.name}</p>
+                {group.links.map(([path, label]) => <NavLink key={path} to={path} end>{label}</NavLink>)}
+              </div>
+            ))}
+          </nav>
+        )}
         <main id="main" className="content" tabIndex={-1}>
       <Routes>
         <Route path="/login" element={<LoginPage loginAttempt={loginAttempt} />} />

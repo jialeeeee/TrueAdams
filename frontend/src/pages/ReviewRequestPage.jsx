@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import apiClient from "../api/client.js";
 import decidedBy from "../utils/decidedBy.js";
 import formatSavedAt from "../utils/formatSavedAt.js";
@@ -54,7 +54,9 @@ function explain(failure, fallback) {
   return typeof error === "string" && error.trim() ? error : fallback;
 }
 
-function ClarificationHistory({ eventId }) {
+// The coordinator asks the organiser questions on the clarification page, open while
+// the request is undecided (CLARIFIABLE_STATUSES in backend/app/events/routes.py).
+function ClarificationHistory({ eventId, canAsk }) {
   const [thread, setThread] = useState(null);
   const [loadError, setLoadError] = useState("");
   const [attempt, setAttempt] = useState(0);
@@ -95,6 +97,7 @@ function ClarificationHistory({ eventId }) {
           ))}
         </ol>
       )}
+      {canAsk && <Link to={`/events/${eventId}/clarifications`}>Ask the organiser a question</Link>}
     </section>
   );
 }
@@ -200,7 +203,14 @@ function ReviewRequest({ eventId }) {
       {started && <p role="status">{started}</p>}
       {startError && <p role="alert">{startError}</p>}
       {request.status === "submitted" && (
-        <button type="button" onClick={startReview}>Start review</button>
+        <>
+          {/* SCRUM-31 A12/A13: starting is optional and only shows the organiser "Under review". */}
+          <p>
+            Starting the review shows the organiser that you are looking at their request. It is
+            optional: you can approve or reject the request without starting it.
+          </p>
+          <button type="button" onClick={startReview}>Start review</button>
+        </>
       )}
       {request.decision_note && (
         <p>{`${request.status === "rejected" ? "Reason" : "Note"}: ${request.decision_note}`}</p>
@@ -221,7 +231,7 @@ function ReviewRequest({ eventId }) {
         ))}
       </dl>
 
-      <ClarificationHistory eventId={eventId} />
+      <ClarificationHistory eventId={eventId} canAsk={undecided} />
 
       {confirmation && (
         <div role="status">

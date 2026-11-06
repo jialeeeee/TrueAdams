@@ -151,6 +151,13 @@ export default function VenueBookingRequestsPage() {
       )}
 
       {result && result.bookings.length === 0 && <p>{result.message}</p>}
+      {/* SCRUM-40 / SCRUM-87: a hold is an alternative to approving, not a step before it. */}
+      {result && result.bookings.length > 0 && (
+        <p>
+          Approve confirms the booking straight away; no hold is needed first. Place a tentative
+          hold instead to keep the venue for the event only until the expiry you set.
+        </p>
+      )}
       {result && result.bookings.length > 0 && (
         <ul>
           {result.bookings.map((booking) => (

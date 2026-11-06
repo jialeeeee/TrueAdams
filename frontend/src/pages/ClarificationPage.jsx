@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import apiClient from "../api/client.js";
+import formatSavedAt from "../utils/formatSavedAt.js";
+import statusLabel from "../utils/statusLabel.js";
 
 // Must match MAX_CLARIFICATION_WORDS in backend/app/events/routes.py.
 const MAX_WORDS = 1000;
@@ -132,7 +134,7 @@ export default function ClarificationPage() {
     <section>
       <h1>Clarification questions: {event.title}</h1>
       <p>
-        Organiser: {event.organiser.email} · Status: {event.status}
+        Organiser: {event.organiser.email} · Status: {statusLabel(event.status)}
       </p>
 
       {clarifications.length === 0 ? (
@@ -143,7 +145,7 @@ export default function ClarificationPage() {
             <li key={clarification.id}>
               <p>{clarification.message}</p>
               <small>
-                {clarification.sender.email} · {clarification.created_at}
+                {clarification.sender.email} · {formatSavedAt(clarification.created_at)}
               </small>
             </li>
           ))}
