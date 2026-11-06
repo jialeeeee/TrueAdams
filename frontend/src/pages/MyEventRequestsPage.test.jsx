@@ -85,9 +85,11 @@ describe("SCRUM-59 my event requests", () => {
 
     const submitted = section("Submitted requests");
     // SCRUM-46 adds approved change requests; SCRUM-95 adds open clarification
-    // threads. Neither may open a submitted request in the draft editor.
+    // threads; a rejected request offers a new one. None may open a submitted request in
+    // the draft editor.
     expect(within(submitted).queryAllByRole("link").map((a) => a.getAttribute("href")))
-      .toEqual(["/events/13/change-request", "/events/12/clarifications", "/events/11/clarifications"]);
+      .toEqual(["/events/13/change-request", "/events/12/clarifications", "/events/11/clarifications",
+        "/events/drafts/new"]);
     const editorLinks = screen.getAllByRole("link").map((a) => a.getAttribute("href"));
     for (const request of SUBMITTED) {
       expect(editorLinks).not.toContain(`/events/drafts/${request.id}`);

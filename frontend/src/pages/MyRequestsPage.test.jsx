@@ -47,6 +47,26 @@ describe("SCRUM-32 my event requests", () => {
     expect(screen.getByText("Note: Venue confirmed")).toBeTruthy();
   });
 
+  // SCRUM-32 A2 / Q4: only a rejected request says it can't be resubmitted, and offers a new one.
+  it("tells the organiser a rejected request can't be resubmitted and offers a new request", async () => {
+    apiClient.get.mockResolvedValue({
+      data: {
+        requests: [
+          { id: 6, title: "Rooftop Cinema", status: "rejected", submitted_at: "2026-09-06T01:00:00", decided_at: "2026-09-12T01:00:00", decision_note: "No licensed venue is available" },
+          { id: 5, title: "Product Launch", status: "approved", submitted_at: "2026-09-05T01:00:00", decided_at: "2026-09-10T01:00:00", decision_note: null },
+        ],
+        message: null,
+      },
+    });
+    renderPage();
+
+    const [rejected, approved] = await screen.findAllByRole("listitem");
+    expect(within(rejected).getByText(/A rejected request can't be revised or resubmitted/)).toBeTruthy();
+    expect(within(rejected).getByRole("link", { name: "Start a new event request" }).getAttribute("href"))
+      .toBe("/events/drafts/new");
+    expect(within(approved).queryByRole("link")).toBeNull();
+  });
+
   it("shows the empty state", async () => {
     apiClient.get.mockResolvedValue({ data: { requests: [], message: "You have not submitted any event requests yet." } });
     renderPage();

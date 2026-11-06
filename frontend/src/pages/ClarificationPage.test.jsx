@@ -87,6 +87,10 @@ describe("SCRUM-31 request clarification", () => {
     expect(apiClient.get).toHaveBeenCalledWith("/events/7/clarifications");
     expect(screen.getByText(new RegExp(ORGANISER))).toBeTruthy();
     expect(screen.getByText(EARLIER.message)).toBeTruthy();
+    // Status and times are shown as words and local time, not as stored.
+    expect(screen.getByText(/Status: Submitted$/)).toBeTruthy();
+    const sentAt = new Date(`${EARLIER.created_at}Z`).toLocaleString();
+    expect(screen.getByText(`${EARLIER.sender.email} · ${sentAt}`)).toBeTruthy();
   });
 
   it("shows an empty state when no questions have been sent", async () => {

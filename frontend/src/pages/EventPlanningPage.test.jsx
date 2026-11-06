@@ -229,6 +229,17 @@ describe("SCRUM-42 record equipment requirements from the planning view", () => 
   });
 });
 
+// SCRUM-31/95: the coordinator reaches the event's clarification questions from planning.
+describe("clarification questions from the planning view", () => {
+  it("links to the event's clarification questions", async () => {
+    apiClient.get.mockResolvedValue({ data: FESTIVAL });
+    renderPage();
+
+    const link = await screen.findByRole("link", { name: "Clarification questions" });
+    expect(link.getAttribute("href")).toBe("/events/1/clarifications");
+  });
+});
+
 // SCRUM-85: TC-85-24 and 25 in docs/test-cases/SCRUM-85-several-venues-for-one-event.md.
 // The API is backend/tests/test_several_venues.py's `venue_bookings`.
 describe("SCRUM-85 venue bookings in the planning view", () => {

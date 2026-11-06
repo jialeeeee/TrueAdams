@@ -59,6 +59,14 @@ function SubmittedSection({ requests }) {
               {request.decision_note && (
                 <p>{`${request.status === "rejected" ? "Reason" : "Note"}: ${request.decision_note}`}</p>
               )}
+              {/* SCRUM-32 A2: a rejected request can't be reopened; whether it should be is
+                  open question Q4 (a new story if so). */}
+              {request.status === "rejected" && (
+                <p>
+                  A rejected request can't be revised or resubmitted.{" "}
+                  <Link to="/events/drafts/new">Start a new event request</Link>
+                </p>
+              )}
               {/* SCRUM-46 AC1: approved and confirmed events can take a change request.
                   The server also refuses one once the event has started. */}
               {CHANGEABLE_STATUSES.includes(request.status) && (

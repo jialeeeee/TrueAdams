@@ -241,6 +241,15 @@ a:hover {
   min-height: calc(100vh - var(--header-height));
 }
 
+/* Signed out there is no menu, so the page takes the full width. */
+.app-body.signed-out {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.app-body.signed-out .content {
+  margin: 0 auto;
+}
+
 .side-nav {
   position: sticky;
   top: var(--header-height);
@@ -376,9 +385,15 @@ a:hover {
 }
 
 .content ul > li > a:first-child,
-.content ol > li > a:first-child {
+.content ol > li > a:first-child,
+.content ul > li > strong:first-child {
   font-weight: 700;
   font-size: 1.05rem;
+}
+
+/* Links side by side in a card (e.g. a venue's Edit and Record unavailable period). */
+.content li > p > a + a {
+  margin-left: var(--space-4);
 }
 
 /* A list inside a card is plain, not another card. */

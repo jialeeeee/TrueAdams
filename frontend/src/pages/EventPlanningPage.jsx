@@ -426,6 +426,8 @@ export default function EventPlanningPage() {
       )}
       {/* SCRUM-38: a read-only check of a venue against the event's requirements. */}
       <Link to={`/events/${event.id}/venue-suitability`}>Check venue suitability</Link>
+      {/* SCRUM-31/95: the questions asked of the organiser, and their replies. */}
+      <Link to={`/events/${event.id}/clarifications`}>Clarification questions</Link>
       {/* SCRUM-42: record what equipment the event needs, for Technical Support Staff. */}
       <Link to={`/events/${event.id}/equipment`}>Equipment requirements</Link>
       {/* Must match REGISTRABLE_STATUSES in backend/app/registrations/routes.py (SCRUM-93 A4). */}

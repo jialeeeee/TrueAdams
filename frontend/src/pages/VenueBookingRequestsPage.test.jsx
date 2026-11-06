@@ -52,12 +52,16 @@ describe("SCRUM-39 venue booking requests for Venue Staff", () => {
     expect(text).toContain("Requirements: Open-air waterfront space for 250, stage power");
     expect(text).toContain(`Requested by alice.coordinator@connectsphere.test on ${localTime("2026-10-14T03:00:00")}`);
     expect(text).toContain("Status: Pending");
+    // A hold is an alternative to approving, not a step before it (SCRUM-40, SCRUM-87).
+    expect(screen.getByText(/Approve confirms the booking straight away; no hold is needed first\./))
+      .toBeTruthy();
   });
 
   it("shows the empty state", async () => {
     apiClient.get.mockResolvedValue({ data: { bookings: [], message: "There are no pending venue requests." } });
     renderPage();
     expect(await screen.findByText("There are no pending venue requests.")).toBeTruthy();
+    expect(screen.queryByText(/no hold is needed first/)).toBeNull();
   });
 
   it("shows a retryable error when the requests cannot be loaded", async () => {

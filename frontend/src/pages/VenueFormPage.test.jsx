@@ -244,6 +244,11 @@ describe("who can see add and edit", () => {
     // SCRUM-88 TC1/TC2: Venue Staff can record an unavailable period from the catalogue.
     expect(screen.getByRole("link", { name: "Record unavailable period for Orchard Hall" })
       .getAttribute("href")).toBe("/venues/1/unavailable");
+    // The name and the actions are on separate lines, not run together.
+    const actions = screen.getByRole("link", { name: "Edit Orchard Hall" }).parentElement;
+    expect(actions.tagName).toBe("P");
+    expect(actions.textContent).toBe("EditRecord unavailable period");
+    expect(screen.getByText("Orchard Hall").tagName).toBe("STRONG");
   });
 });
 

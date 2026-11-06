@@ -47,6 +47,10 @@ export default function ReviewRequestsPage() {
               <p>{`Proposed date: ${request.start_time ? request.start_time.slice(0, 16).replace("T", " ") : NOT_RECORDED}`}</p>
               <p>{`Submitted: ${request.submitted_at ? formatSavedAt(request.submitted_at) : NOT_RECORDED}`}</p>
               <p>{`Status: ${statusLabel(request.status)}`}</p>
+              <Link to={`/events/${request.id}/clarifications`}
+                aria-label={`Clarification questions for ${request.title || NOT_RECORDED}`}>
+                Clarification questions
+              </Link>
             </li>
           ))}
         </ul>
